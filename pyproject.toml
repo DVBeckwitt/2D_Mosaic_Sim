@@ -1,0 +1,10 @@
+[project]
+name = "mosaic_sim"
+version = "0.1.0"
+description = "Rocking-curve and detector simulations for Bi2Se3 mosaics"
+requires-python = ">=3.11"
+dependencies = ["plotly>=6.0", "numba>=0.59", "numpy>=1.26"]
+
+[project.scripts]
+mosaic-detector = "mosaic_sim.detector:main"
+mosaic-rocking = "mosaic_sim.animation:main"
