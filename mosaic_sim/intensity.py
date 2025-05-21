@@ -7,28 +7,31 @@ __all__ = ["cap_intensity", "belt_intensity", "mosaic_intensity"]
 
 @njit
 def cap_intensity(Qx, Qy, Qz, sigma):
-    """Return pseudo-Voigt CAP intensity for arbitrary array shapes."""
+    """Gaussian mosaic cap centred on +z.
+
+    Works with inputs of any dimensionality by iterating over the flattened
+    arrays. The output has the same shape as ``Qx``.
+    """
     I = np.empty_like(Qx)
-    for idx in range(Qx.size):
-        qx, qy, qz = Qx.flat[idx], Qy.flat[idx], Qz.flat[idx]
+    for n in range(Qx.size):
+        qx, qy, qz = Qx.flat[n], Qy.flat[n], Qz.flat[n]
         Qmag = math.sqrt(qx*qx + qy*qy + qz*qz) or 1e-14
         alpha = math.acos(max(-1.0, min(1.0, qz / Qmag)))
-        I.flat[idx] = math.exp(-0.5 * (alpha / sigma) ** 2)
+        I.flat[n] = math.exp(-0.5 * (alpha / sigma) ** 2)
+    return I / I.max()
 
 @njit
 def belt_intensity(Qx, Qy, Qz, Gx, Gy, Gz, sigma, gamma, eta):
-    """Return pseudo-Voigt BELT intensity for arbitrary array shapes."""
+    """Pseudo-Voigt belt intensity around the vector ``(Gx, Gy, Gz)``."""
     I = np.empty_like(Qx)
-    Gmag = math.sqrt(Gx*Gx + Gy*Gy + Gz*Gz)
+    Gmag = math.sqrt(Gx * Gx + Gy * Gy + Gz * Gz)
     nu_c = math.acos(max(-1.0, min(1.0, Gz / Gmag)))
-    for idx in range(Qx.size):
-        qx, qy, qz = Qx.flat[idx], Qy.flat[idx], Qz.flat[idx]
+    for n in range(Qx.size):
+        qx, qy, qz = Qx.flat[n], Qy.flat[n], Qz.flat[n]
         Qmag = math.sqrt(qx*qx + qy*qy + qz*qz) or 1e-14
         nu_p = math.acos(max(-1.0, min(1.0, qz / Qmag)))
         dnu = abs(nu_p - nu_c)
-        I.flat[idx] = (
-            (1 - eta) * math.exp(-dnu*dnu / (2 * sigma * sigma))
-            + eta / (1 + (dnu / gamma) ** 2)
+        I.flat[n] = (1 - eta) * math.exp(-dnu*dnu / (2 * sigma * sigma)) + eta / (1 + (dnu / gamma) ** 2)
 
     return I / I.max()
 
