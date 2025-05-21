@@ -50,6 +50,7 @@ def belt_intensity(Qx, Qy, Qz, Gx, Gy, Gz, sigma, gamma, eta):
         I1 /= maxval
     return I
 
+
 def mosaic_intensity(Qx, Qy, Qz, H, K, L, sigma, gamma, eta):
     if H == 0 and K == 0:
         return cap_intensity(Qx, Qy, Qz, sigma)
