@@ -1,4 +1,8 @@
-"""Public API for mosaic_sim."""
+"""Public API for :mod:`mosaic_sim`.
+
+Importing from this package exposes the key helpers for constructing geometry,
+intensity kernels and interactive Plotly figures used in the examples.
+"""
 from .constants import λ, a_hex, c_hex, K_MAG, d_hex
 from .geometry import sphere, rot_x, intersection_circle
 from .intensity import cap_intensity, belt_intensity, mosaic_intensity
