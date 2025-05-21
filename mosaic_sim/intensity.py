@@ -6,8 +6,13 @@ from numba import njit
 __all__ = ["cap_intensity", "belt_intensity", "mosaic_intensity"]
 
 @njit
-def cap_intensity(Qx, Qy, Qz, sigma):
-    """Gaussian mosaic cap centred on +z.
+def cap_intensity(Qx, Qy, Qz, sigma, gamma, eta):
+    """Pseudo-Voigt mosaic cap centred on +z.
+
+    Parameters mirror :func:`belt_intensity` so that a Gaussian width
+    ``sigma``, Lorentzian width ``gamma`` and mixing factor ``eta`` can be
+    provided.  ``eta=0`` yields a pure Gaussian while ``eta=1`` produces a
+    Lorentzian cap.
 
     Works with inputs of any dimensionality by iterating over the flattened
     arrays. The output has the same shape as ``Qx``.
@@ -16,8 +21,9 @@ def cap_intensity(Qx, Qy, Qz, sigma):
     for n in range(Qx.size):
         qx, qy, qz = Qx.flat[n], Qy.flat[n], Qz.flat[n]
         Qmag = math.sqrt(qx*qx + qy*qy + qz*qz) or 1e-14
-        alpha = math.acos(max(-1.0, min(1.0, qz / Qmag)))
-        I.flat[n] = math.exp(-0.5 * (alpha / sigma) ** 2)
+        nu_p = math.acos(max(-1.0, min(1.0, qz / Qmag)))
+        I.flat[n] = ((1 - eta) * math.exp(-nu_p * nu_p / (2 * sigma * sigma)) +
+                     eta / (1 + (nu_p / gamma) ** 2))
     return I / I.max()
 
 @njit
@@ -37,5 +43,5 @@ def belt_intensity(Qx, Qy, Qz, Gx, Gy, Gz, sigma, gamma, eta):
 
 def mosaic_intensity(Qx, Qy, Qz, H, K, L, sigma, gamma, eta):
     if H == 0 and K == 0:
-        return cap_intensity(Qx, Qy, Qz, sigma)
+        return cap_intensity(Qx, Qy, Qz, sigma, gamma, eta)
     return belt_intensity(Qx, Qy, Qz, H, K, L, sigma, gamma, eta)
