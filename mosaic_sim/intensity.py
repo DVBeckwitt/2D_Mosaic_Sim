@@ -32,6 +32,7 @@ def belt_intensity(Qx, Qy, Qz, Gx, Gy, Gz, sigma, gamma, eta):
         nu_p = math.acos(max(-1.0, min(1.0, qz / Qmag)))
         dnu = abs(nu_p - nu_c)
         I.flat[n] = (1 - eta) * math.exp(-dnu*dnu / (2 * sigma * sigma)) + eta / (1 + (dnu / gamma) ** 2)
+
     return I / I.max()
 
 def mosaic_intensity(Qx, Qy, Qz, H, K, L, sigma, gamma, eta):
