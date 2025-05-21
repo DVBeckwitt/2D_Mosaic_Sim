@@ -1,4 +1,10 @@
-"""Dynamic Bragg-sphere rotation animation."""
+"""Dynamic Bragg-sphere rotation animation.
+
+The functions here generate a Plotly animation that illustrates how the
+Bragg sphere rotates relative to the fixed Ewald sphere as the sample is
+rocked.  The colour of the Bragg sphere represents the mosaic intensity
+distribution calculated via :func:`mosaic_sim.intensity.mosaic_intensity`.
+"""
 import math
 import numpy as np
 import plotly.graph_objects as go
@@ -8,15 +14,32 @@ from .geometry import sphere, rot_x, intersection_circle
 from .intensity import mosaic_intensity
 
 
-def build_animation(H=0, K=0, L=1,
-                    sigma=np.deg2rad(0.8),
-                    gamma=np.deg2rad(5.0),
-                    eta=0.5):
+def build_animation(H: int = 0, K: int = 0, L: int = 1,
+                    sigma: float = np.deg2rad(0.8),
+                    gamma: float = np.deg2rad(5.0),
+                    eta: float = 0.5) -> go.Figure:
+    """Construct the Plotly animation for the given Miller index.
+
+    Parameters
+    ----------
+    H, K, L:
+        Miller indices of the reflection.
+    sigma, gamma, eta:
+        Parameters of the pseudo-Voigt mosaic spread.
+
+    Returns
+    -------
+    :class:`plotly.graph_objects.Figure`
+        Interactive animation figure.
+    """
+
+    # Length of the scattering vector |G| for the chosen reflection
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     G_MAG = 2 * math.pi / d_hkl
 
+    # Angles covering a unit sphere
     phi, theta = np.meshgrid(np.linspace(0, math.pi, 100),
-                             np.linspace(0, 2*math.pi, 200))
+                             np.linspace(0, 2 * math.pi, 200))
     Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
@@ -28,14 +51,18 @@ def build_animation(H=0, K=0, L=1,
     cone_vec = -k_head
     R_MAX = max(G_MAG, K_MAG)
 
-    def dyn_state(th):
+    def dyn_state(th: float) -> dict[str, np.ndarray]:
+        """Return dynamic state for a rotation angle ``th``."""
+
+        # Rotate the Bragg sphere
         Bx, By, Bz = rot_x(B0_x, B0_y, B0_z, -th)
+        # Small arc used to annotate the rocking angle
         r_arc = 0.5
         t_arc = np.linspace(0, th, 50)
         ax = np.zeros_like(t_arc)
-        ay = -r_arc*np.cos(t_arc)
-        az = -r_arc*np.sin(t_arc)
-        theta_lab = (0, -r_arc*math.cos(th/2), -r_arc*math.sin(th/2))
+        ay = -r_arc * np.cos(t_arc)
+        az = -r_arc * np.sin(t_arc)
+        theta_lab = (0, -r_arc * math.cos(th / 2), -r_arc * math.sin(th / 2))
         return dict(Bx=Bx, By=By, Bz=Bz, Arc=(ax, ay, az), Theta_lab=theta_lab)
 
     fig = go.Figure()
@@ -91,17 +118,23 @@ def build_animation(H=0, K=0, L=1,
     frames = []
     for i, th in enumerate(theta_all):
         st = dyn_state(th)
-        frames.append(go.Frame(name=f"f{i}",
-            data=[
-                go.Surface(x=st["Bx"], y=st["By"], z=st["Bz"],
-                           surfacecolor=I_surface,
-                           colorscale=bragg.colorscale, showscale=False),
-                go.Scatter3d(x=st["Arc"][0], y=st["Arc"][1], z=st["Arc"][2],
-                             mode="lines",
-                             line=dict(color="purple", width=3, dash="dash")),
-                go.Scatter3d(x=[st["Theta_lab"][0]], y=[st["Theta_lab"][1]], z=[st["Theta_lab"][2]], mode="text", text=["θᵢ"], showlegend=False)
-            ],
-            traces=[bragg_idx, len(fig.data)-2, len(fig.data)-1]))
+        frames.append(
+            go.Frame(
+                name=f"f{i}",
+                data=[
+                    go.Surface(x=st["Bx"], y=st["By"], z=st["Bz"],
+                               surfacecolor=I_surface,
+                               colorscale=bragg.colorscale, showscale=False),
+                    go.Scatter3d(x=st["Arc"][0], y=st["Arc"][1], z=st["Arc"][2],
+                                 mode="lines",
+                                 line=dict(color="purple", width=3, dash="dash")),
+                    go.Scatter3d(x=[st["Theta_lab"][0]], y=[st["Theta_lab"][1]],
+                                 z=[st["Theta_lab"][2]], mode="text",
+                                 text=["θᵢ"], showlegend=False),
+                ],
+                traces=[bragg_idx, len(fig.data) - 2, len(fig.data) - 1],
+            )
+        )
     fig.frames = frames
 
     fig.update_layout(updatemenus=[dict(type="buttons",
@@ -119,7 +152,9 @@ def build_animation(H=0, K=0, L=1,
     return fig
 
 
-def main():
+def main() -> None:
+    """Entry point for the ``mosaic-rocking`` script."""
+
     import plotly.io as pio
     pio.renderers.default = "browser"
     fig = build_animation()

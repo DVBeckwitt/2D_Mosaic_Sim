@@ -1,4 +1,9 @@
-"""3-panel rocking-curve detector simulation."""
+"""3-panel rocking-curve detector simulation.
+
+The detector view shows how the Bragg sphere intersects the Ewald sphere and
+how this maps onto a 2-D detector.  The third panel displays the integrated
+intensity through the diffraction peak as the sample rocks.
+"""
 import math
 import numpy as np
 import plotly.graph_objects as go
@@ -9,17 +14,19 @@ from .geometry import sphere, rot_x, intersection_circle
 from .intensity import mosaic_intensity
 
 
-def build_detector_figure(H=0, K=0, L=12,
-                          sigma=np.deg2rad(0.8),
-                          gamma=np.deg2rad(5.0),
-                          eta=0.5):
+def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
+                          sigma: float = np.deg2rad(0.8),
+                          gamma: float = np.deg2rad(5.0),
+                          eta: float = 0.5) -> go.Figure:
     """Return a Plotly Figure replicating the detector simulation."""
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     G_MAG = 2 * math.pi / d_hkl
 
-    def gaussian_blur(a, sigma_blur=5):
+    def gaussian_blur(a: np.ndarray, sigma_blur: float = 5) -> np.ndarray:
+        """Apply a simple 1-D Gaussian blur used for smoothing."""
+
         r = int(3 * sigma_blur)
-        k = np.exp(-0.5 * (np.arange(-r, r+1) / sigma_blur) ** 2)
+        k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma_blur) ** 2)
         k /= k.sum()
         return np.convolve(a, k, mode="same")
 
@@ -44,19 +51,31 @@ def build_detector_figure(H=0, K=0, L=12,
     frame_to_tail = {fid: k for k, fid in enumerate(sample_ids)}
 
     tails, tail_idx = [], []
+    # Pre-compute a handful of intensity traces that will appear sequentially
+    # during the animation.  Each trace corresponds to a different rocking
+    # angle and fades in as the animation progresses.
     for op, idx in zip(opacity_vals, sample_ids):
         th = theta_all[idx]
         rx, ry, rz = rot_x(hr_x, hr_y, hr_z, th)
-        I_blur = gaussian_blur(mosaic_intensity(rx, ry, rz, H, K, L, sigma, gamma, eta), 5)
+        I_blur = gaussian_blur(
+            mosaic_intensity(rx, ry, rz, H, K, L, sigma, gamma, eta), 5
+        )
         subset = hr_t >= 1.0
         pk = np.argmax(I_blur * subset)
         phi_pk = hr_t[pk]
         dphi = hr_t - phi_pk
         keep = subset & (np.abs(dphi) <= 1.0)
-        tails.append(go.Scatter(x=dphi[keep], y=I_blur[keep],
-                                mode="lines",
-                                line=dict(color="crimson", width=2),
-                                opacity=op, visible=False, showlegend=False))
+        tails.append(
+            go.Scatter(
+                x=dphi[keep],
+                y=I_blur[keep],
+                mode="lines",
+                line=dict(color="crimson", width=2),
+                opacity=op,
+                visible=False,
+                showlegend=False,
+            )
+        )
 
     fig = make_subplots(rows=1, cols=3,
                         specs=[[{"type": "scene"}, {"type": "xy"}, {"type": "xy"}]],
@@ -196,7 +215,9 @@ def build_detector_figure(H=0, K=0, L=12,
     return fig
 
 
-def main():
+def main() -> None:
+    """Entry point for the ``mosaic-detector`` script."""
+
     import plotly.io as pio
     pio.renderers.default = "browser"
     fig = build_detector_figure()
