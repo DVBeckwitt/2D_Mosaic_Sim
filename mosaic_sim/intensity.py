@@ -14,7 +14,6 @@ def cap_intensity(Qx, Qy, Qz, sigma):
         Qmag = math.sqrt(qx*qx + qy*qy + qz*qz) or 1e-14
         alpha = math.acos(max(-1.0, min(1.0, qz / Qmag)))
         I.flat[idx] = math.exp(-0.5 * (alpha / sigma) ** 2)
-    return I / I.max()
 
 @njit
 def belt_intensity(Qx, Qy, Qz, Gx, Gy, Gz, sigma, gamma, eta):
@@ -30,7 +29,7 @@ def belt_intensity(Qx, Qy, Qz, Gx, Gy, Gz, sigma, gamma, eta):
         I.flat[idx] = (
             (1 - eta) * math.exp(-dnu*dnu / (2 * sigma * sigma))
             + eta / (1 + (dnu / gamma) ** 2)
-        )
+
     return I / I.max()
 
 def mosaic_intensity(Qx, Qy, Qz, H, K, L, sigma, gamma, eta):

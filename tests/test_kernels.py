@@ -9,7 +9,6 @@ def test_cap_normalisation():
     I = cap_intensity(Qx, Qy, Qz, np.deg2rad(0.8))
     assert np.isclose(I.max(), 1.0)
 
-
 def test_belt_handles_1d():
     t = np.linspace(0, 2*np.pi, 200)
     x = np.cos(t)
