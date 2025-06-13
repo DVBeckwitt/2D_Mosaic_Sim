@@ -117,6 +117,23 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                           colorscale=[[0, "black"], [1, "black"]],
                           showscale=False))
 
+    # Arrow showing the cylinder axis (rotation direction)
+    axis_len = 4.0 * abs(gr)
+    axis_line = go.Scatter3d(x=[0.0, 0.0],
+                             y=[0.0, 0.0],
+                             z=[0.0, 0.75 * axis_len],
+                             mode="lines",
+                             line=dict(color="purple", width=5),
+                             name="Rotation axis")
+    fig.add_trace(axis_line)
+    axis_idx = len(fig.data) - 1
+    fig.add_trace(go.Cone(x=[0.0], y=[0.0], z=[0.75 * axis_len],
+                          u=[0.0], v=[0.0], w=[0.25 * axis_len],
+                          anchor="tail", sizemode="absolute", sizeref=0.2,
+                          colorscale=[[0, "purple"], [1, "purple"]],
+                          showscale=False))
+    cone_idx = len(fig.data) - 1
+
     R_MAX = max(G_MAG, K_MAG)
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
                 ([0, 0], [-R_MAX, 2 * R_MAX], [0, 0]),
@@ -151,6 +168,24 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             K_MAG * math.sin(th),
         )
         Lx, Ly, Lz = rot_x(Lx_r, Ly_r, Lz_r, -th)
+        ax_line_x, ax_line_y, ax_line_z = rot_x(
+            np.array([0.0, 0.0]),
+            np.array([0.0, 0.0]),
+            np.array([0.0, 0.75 * axis_len]),
+            -th,
+        )
+        ax_tail_x, ax_tail_y, ax_tail_z = rot_x(
+            np.array([0.0]),
+            np.array([0.0]),
+            np.array([0.75 * axis_len]),
+            -th,
+        )
+        ax_vec_x, ax_vec_y, ax_vec_z = rot_x(
+            np.array([0.0]),
+            np.array([0.0]),
+            np.array([0.25 * axis_len]),
+            -th,
+        )
         frames.append(
             go.Frame(
                 name=f"f{i}",
@@ -178,8 +213,28 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                         mode="lines",
                         line=dict(color="green", width=5),
                     ),
+                    go.Scatter3d(
+                        x=ax_line_x,
+                        y=ax_line_y,
+                        z=ax_line_z,
+                        mode="lines",
+                        line=dict(color="purple", width=5),
+                    ),
+                    go.Cone(
+                        x=[ax_tail_x[0]],
+                        y=[ax_tail_y[0]],
+                        z=[ax_tail_z[0]],
+                        u=[ax_vec_x[0]],
+                        v=[ax_vec_y[0]],
+                        w=[ax_vec_z[0]],
+                        anchor="tail",
+                        sizemode="absolute",
+                        sizeref=0.2,
+                        colorscale=[[0, "purple"], [1, "purple"]],
+                        showscale=False,
+                    ),
                 ],
-                traces=[bragg_idx, cyl_idx, overlap_idx],
+                traces=[bragg_idx, cyl_idx, overlap_idx, axis_idx, cone_idx],
             )
         )
     fig.frames = frames
