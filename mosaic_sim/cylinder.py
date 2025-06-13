@@ -21,7 +21,7 @@ from .geometry import (
 )
 from .intensity import mosaic_intensity
 
-__all__ = ["build_cylinder_figure", "main"]
+__all__ = ["build_cylinder_figure", "main", "dash_main"]
 
 
 def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
@@ -434,6 +434,47 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     fig.update_layout(sliders=sliders, updatemenus=updatemenus)
 
     return fig
+
+
+def dash_main() -> None:
+    """Launch a Dash app allowing live Miller index updates."""
+
+    import dash
+    from dash import dcc, html
+    from dash.dependencies import Input, Output
+
+    app = dash.Dash(__name__)
+
+    app.layout = html.Div(
+        [
+            dcc.Graph(id="cylinder-fig", figure=build_cylinder_figure()),
+            html.Div(
+                [
+                    html.Label("H"),
+                    dcc.Input(id="H", type="number", value=0, step=1),
+                    html.Label("K"),
+                    dcc.Input(id="K", type="number", value=0, step=1),
+                    html.Label("L"),
+                    dcc.Input(id="L", type="number", value=12, step=1),
+                ],
+                style={"display": "flex", "gap": "0.5rem"},
+            ),
+        ]
+    )
+
+    @app.callback(
+        Output("cylinder-fig", "figure"),
+        Input("H", "value"),
+        Input("K", "value"),
+        Input("L", "value"),
+    )
+    def update(h, k, l):  # pragma: no cover - UI callback
+        h = int(h) if h is not None else 0
+        k = int(k) if k is not None else 0
+        l = int(l) if l is not None else 0
+        return build_cylinder_figure(h, k, l)
+
+    app.run_server(debug=False)
 
 
 def main() -> None:
