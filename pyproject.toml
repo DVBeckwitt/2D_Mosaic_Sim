@@ -9,3 +9,4 @@ dependencies = ["plotly>=6.0", "numba>=0.59", "numpy>=1.26"]
 mosaic-detector = "mosaic_sim.detector:main"
 mosaic-rocking = "mosaic_sim.animation:main"
 mosaic-cylinder = "mosaic_sim.cylinder:main"
+mosaic-screen = "mosaic_sim.screen:main"

@@ -30,7 +30,8 @@ Run the examples directly:
 python simulate_detector.py    # Open the static detector figure
 python simulate_mosaic.py      # Launch the interactive animation
 python simulate_cylinder.py    # Cylinder intersection with slider
+python simulate_screen.py      # Pattern on a distant flat detector
 ```
 
 When installed as a package the scripts are available as console entry points
-`mosaic-detector`, `mosaic-rocking` and `mosaic-cylinder`.
+`mosaic-detector`, `mosaic-rocking`, `mosaic-cylinder` and `mosaic-screen`.
