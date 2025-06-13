@@ -7,7 +7,12 @@ visualisation scripts to build the Bragg and Ewald spheres.
 import math
 import numpy as np
 
-__all__ = ["sphere", "rot_x", "intersection_circle"]
+__all__ = [
+    "sphere",
+    "rot_x",
+    "intersection_circle",
+    "intersection_cylinder_sphere",
+]
 
 def sphere(R: float, phi: np.ndarray, theta: np.ndarray,
            center: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -65,3 +70,47 @@ def intersection_circle(Rg: float, Re: float, d: float) -> tuple[np.ndarray, np.
     r = math.sqrt(max(Rg * Rg - y0 * y0, 0.0))
     t = np.linspace(0.0, 2 * math.pi, 400)
     return r * np.cos(t), np.full_like(t, y0), r * np.sin(t)
+
+
+def intersection_cylinder_sphere(rc: float, Re: float, d: float,
+                                 npts: int = 400) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Points where a cylinder intersects a sphere.
+
+    The cylinder is assumed to run along the ``qz`` axis and to be centred on
+    the origin.  ``rc`` gives its radius.  The sphere of radius ``Re`` is
+    offset along ``qy`` by ``d``.
+
+    Parameters
+    ----------
+    rc:
+        Radius of the cylinder.
+    Re:
+        Radius of the sphere.
+    d:
+        Offset of the sphere centre along ``qy``.
+    npts:
+        Number of points used to sample the intersection curve.
+
+    Returns
+    -------
+    tuple of ``numpy.ndarray``
+        Arrays ``(x, y, z)`` describing the intersection curve.  The arrays are
+        empty if the cylinder and sphere do not intersect.
+    """
+
+    t = np.linspace(0.0, 2 * math.pi, npts)
+    x = rc * np.cos(t)
+    y = rc * np.sin(t)
+    zsq = Re * Re - d * d - rc * rc + 2 * rc * d * np.sin(t)
+    mask = zsq >= 0
+    if not np.any(mask):
+        return np.array([]), np.array([]), np.array([])
+
+    z = np.sqrt(zsq[mask])
+    x = x[mask]
+    y = y[mask]
+    return (
+        np.concatenate([x, x[::-1]]),
+        np.concatenate([y, y[::-1]]),
+        np.concatenate([z, -z[::-1]]),
+    )
