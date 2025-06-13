@@ -72,13 +72,18 @@ def intersection_circle(Rg: float, Re: float, d: float) -> tuple[np.ndarray, np.
     return r * np.cos(t), np.full_like(t, y0), r * np.sin(t)
 
 
-def intersection_cylinder_sphere(rc: float, Re: float, d: float,
-                                 npts: int = 400) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def intersection_cylinder_sphere(
+    rc: float,
+    Re: float,
+    dy: float,
+    dz: float = 0.0,
+    npts: int = 400,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Points where a cylinder intersects a sphere.
 
     The cylinder is assumed to run along the ``qz`` axis and to be centred on
-    the origin.  ``rc`` gives its radius.  The sphere of radius ``Re`` is
-    offset along ``qy`` by ``d``.
+    the origin. ``rc`` gives its radius.  The sphere of radius ``Re`` is offset
+    along ``qy`` by ``dy`` and optionally along ``qz`` by ``dz``.
 
     Parameters
     ----------
@@ -86,8 +91,10 @@ def intersection_cylinder_sphere(rc: float, Re: float, d: float,
         Radius of the cylinder.
     Re:
         Radius of the sphere.
-    d:
+    dy:
         Offset of the sphere centre along ``qy``.
+    dz:
+        Optional offset of the sphere centre along ``qz``.
     npts:
         Number of points used to sample the intersection curve.
 
@@ -101,7 +108,7 @@ def intersection_cylinder_sphere(rc: float, Re: float, d: float,
     t = np.linspace(0.0, 2 * math.pi, npts)
     x = rc * np.cos(t)
     y = rc * np.sin(t)
-    zsq = Re * Re - d * d - rc * rc + 2 * rc * d * np.sin(t)
+    zsq = Re * Re - rc * rc - dy * dy + 2 * rc * dy * np.sin(t)
     mask = zsq >= 0
     if not np.any(mask):
         return np.array([]), np.array([]), np.array([])
@@ -112,5 +119,5 @@ def intersection_cylinder_sphere(rc: float, Re: float, d: float,
     return (
         np.concatenate([x, x[::-1]]),
         np.concatenate([y, y[::-1]]),
-        np.concatenate([z, -z[::-1]]),
+        np.concatenate([dz + z, dz - z[::-1]]),
     )

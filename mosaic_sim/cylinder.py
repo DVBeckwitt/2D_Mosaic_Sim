@@ -51,7 +51,10 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     gr = math.sqrt(br_x[0] ** 2 + br_z[0] ** 2)
 
     cyl_line_x, cyl_line_y, cyl_line_z = intersection_cylinder_sphere(
-        gr, K_MAG, K_MAG
+        gr,
+        K_MAG,
+        K_MAG,
+        0.0,
     )
 
     t_cyl, z_cyl = np.meshgrid(np.linspace(0, 2 * math.pi, 60),
@@ -82,7 +85,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             z=cyl_z,
             opacity=0.5,
             showscale=False,
-            colorscale=[[0, "grey"], [1, "grey"]],
+            colorscale=[[0, "rgb(255,191,0)"], [1, "rgb(255,191,0)"]],
             name="Cylinder",
         )
     )
@@ -138,7 +141,15 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     for i, th in enumerate(theta_all):
         Bx, By, Bz = rot_x(B0_x, B0_y, B0_z, -th)
         Cx, Cy, Cz = rot_x(cyl_x, cyl_y, cyl_z, -th)
-        Lx, Ly, Lz = rot_x(cyl_line_x, cyl_line_y, cyl_line_z, -th)
+
+        # Intersection line for the rotated cylinder
+        Lx_r, Ly_r, Lz_r = intersection_cylinder_sphere(
+            gr,
+            K_MAG,
+            K_MAG * math.cos(th),
+            K_MAG * math.sin(th),
+        )
+        Lx, Ly, Lz = rot_x(Lx_r, Ly_r, Lz_r, -th)
         frames.append(
             go.Frame(
                 name=f"f{i}",
@@ -157,7 +168,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                         z=Cz,
                         opacity=0.5,
                         showscale=False,
-                        colorscale=[[0, "grey"], [1, "grey"]],
+                        colorscale=[[0, "rgb(255,191,0)"], [1, "rgb(255,191,0)"]],
                     ),
                     go.Scatter3d(
                         x=Lx,
