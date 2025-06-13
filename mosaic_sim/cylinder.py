@@ -33,7 +33,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     Parameters mirror :func:`mosaic_sim.animation.build_animation` but the
     result is a static figure with a slider.  The radius of the cylinder
     matches the Bragg-ring radius and spans ``qz=-4·|gr|`` to ``qz=4·|gr|``.
-    """
+
 
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     G_MAG = 2 * math.pi / d_hkl
@@ -58,6 +58,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
 
     t_cyl, z_cyl = np.meshgrid(
         np.linspace(0, 2 * math.pi, 60), np.linspace(-4.0 * abs(gr), 4.0 * abs(gr), 60)
+
     )
     cyl_x = gr * np.cos(t_cyl)
     cyl_y = gr * np.sin(t_cyl)
