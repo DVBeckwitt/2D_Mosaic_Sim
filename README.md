@@ -8,7 +8,9 @@ Three command line scripts are provided:
 
 - `simulate_detector.py` – static 3‑panel detector simulation
 - `simulate_mosaic.py`  – dynamic Bragg‑sphere animation
-- `simulate_cylinder.py` – static Ewald sphere with cylinder slider
+- `simulate_cylinder.py` – static Ewald sphere with cylinder slider prompting
+  for the Miller indices to update the figure and optionally showing the
+  cylinder/Bragg intersection line
 
 Both scripts rely on the shared `mosaic_sim` package which exposes physical
 constants, geometry helpers and intensity kernels.

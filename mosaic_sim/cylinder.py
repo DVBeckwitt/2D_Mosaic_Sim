@@ -43,7 +43,10 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
-    I_surface = mosaic_intensity(B0_x, B0_y, B0_z, H, K, L,
+    # ``H``, ``K`` and ``L`` only define the Bragg-sphere radius.  The mosaic
+    # intensity is always centred on ``+qz`` so that the reflection orientation
+    # does not depend on the Miller indices.
+    I_surface = mosaic_intensity(B0_x, B0_y, B0_z, 0, 0, 1,
                                  sigma, gamma, eta)
 
     ring_x, ring_y, ring_z = intersection_circle(G_MAG, K_MAG, K_MAG)
@@ -53,6 +56,15 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
         gr,
         K_MAG,
         K_MAG,
+        0.0,
+    )
+
+    # Intersection of the cylinder with the Bragg sphere (independent of the
+    # rocking angle)
+    br_line_x, br_line_y, br_line_z = intersection_cylinder_sphere(
+        gr,
+        G_MAG,
+        0.0,
         0.0,
     )
 
@@ -125,6 +137,18 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     )
     overlap_idx = len(fig.data) - 1
 
+    fig.add_trace(
+        go.Scatter3d(
+            x=br_line_x,
+            y=br_line_y,
+            z=br_line_z,
+            mode="lines",
+            line=dict(color="orange", width=5),
+            name="Cylinder/Bragg overlap",
+        )
+    )
+    br_overlap_idx = len(fig.data) - 1
+
     k_tail = np.array([0.0, K_MAG, 0.0])
     k_head = k_tail * 0.25
     fig.add_trace(go.Scatter3d(x=[k_tail[0], k_head[0]],
@@ -189,6 +213,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             K_MAG * math.sin(th),
         )
         Lx, Ly, Lz = rot_x(Lx_r, Ly_r, Lz_r, -th)
+        Bcx, Bcy, Bcz = rot_x(br_line_x, br_line_y, br_line_z, -th)
         ax_line_x, ax_line_y, ax_line_z = rot_x(
             np.array([0.0, 0.0]),
             np.array([0.0, 0.0]),
@@ -235,6 +260,13 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                         line=dict(color="green", width=5),
                     ),
                     go.Scatter3d(
+                        x=Bcx,
+                        y=Bcy,
+                        z=Bcz,
+                        mode="lines",
+                        line=dict(color="orange", width=5),
+                    ),
+                    go.Scatter3d(
                         x=ax_line_x,
                         y=ax_line_y,
                         z=ax_line_z,
@@ -255,7 +287,8 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                         showscale=False,
                     ),
                 ],
-                traces=[bragg_idx, cyl_idx, overlap_idx, axis_idx, cone_idx],
+                traces=[bragg_idx, cyl_idx, overlap_idx, br_overlap_idx,
+                        axis_idx, cone_idx],
             )
         )
     fig.frames = frames
@@ -325,6 +358,19 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
         dict(
             type="buttons",
             showactive=False,
+            x=1.61,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            direction="down",
+            buttons=[
+                dict(label="Cyl/Br on", method="restyle", args=[{"visible": True}, [br_overlap_idx]]),
+                dict(label="Cyl/Br off", method="restyle", args=[{"visible": False}, [br_overlap_idx]]),
+            ],
+        ),
+        dict(
+            type="buttons",
+            showactive=False,
             x=1.70,
             y=1.0,
             xanchor="left",
@@ -343,12 +389,38 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
 
 
 def main() -> None:
-    """Launch the static cylinder figure in a browser."""
+    """Launch an interactive cylinder figure that can be updated."""
 
     import plotly.io as pio
+
     pio.renderers.default = "browser"
-    fig = build_cylinder_figure()
-    fig.show()
+
+    print("Interactive cylinder simulation")
+    print("Enter Miller indices as three integers separated by spaces.")
+    print("Press <Enter> for the default (0 0 12) or 'q' to quit.")
+
+    while True:
+        try:
+            line = input("H K L> ").strip()
+        except EOFError:
+            break
+        if not line:
+            h, k, l = 0, 0, 12
+        elif line.lower() in {"q", "quit", "exit"}:
+            break
+        else:
+            parts = line.split()
+            if len(parts) != 3:
+                print("Please enter three integers, e.g. '0 0 12'.")
+                continue
+            try:
+                h, k, l = map(int, parts)
+            except ValueError:
+                print("Invalid input; please enter integers only.")
+                continue
+
+        fig = build_cylinder_figure(h, k, l)
+        fig.show()
 
 
 if __name__ == "__main__":
