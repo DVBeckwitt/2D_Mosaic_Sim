@@ -13,7 +13,12 @@ import numpy as np
 import plotly.graph_objects as go
 
 from .constants import a_hex, c_hex, K_MAG, d_hex
-from .geometry import sphere, rot_x, intersection_circle
+from .geometry import (
+    sphere,
+    rot_x,
+    intersection_circle,
+    intersection_cylinder_sphere,
+)
 from .intensity import mosaic_intensity
 
 __all__ = ["build_cylinder_figure", "main"]
@@ -42,8 +47,12 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     I_surface = mosaic_intensity(B0_x, B0_y, B0_z, H, K, L,
                                  sigma, gamma, eta)
 
-    ring_x, ring_y, ring_z = intersection_circle(G_MAG, K_MAG, K_MAG)
-    gr = math.sqrt(ring_x[0] ** 2 + ring_z[0] ** 2)
+    br_x, br_y, br_z = intersection_circle(G_MAG, K_MAG, K_MAG)
+    gr = math.sqrt(br_x[0] ** 2 + br_z[0] ** 2)
+
+    cyl_line_x, cyl_line_y, cyl_line_z = intersection_cylinder_sphere(
+        gr, K_MAG, K_MAG
+    )
 
     t_cyl, z_cyl = np.meshgrid(np.linspace(0, 2 * math.pi, 60),
                                np.linspace(0, 5 * abs(gr), 60))
@@ -71,10 +80,16 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                              colorscale=[[0, "grey"], [1, "grey"]],
                              name="Cylinder"))
 
-    fig.add_trace(go.Scatter3d(x=ring_x, y=ring_y, z=ring_z,
-                               mode="lines",
-                               line=dict(color="green", width=5),
-                               name="2θB ring"))
+    fig.add_trace(
+        go.Scatter3d(
+            x=cyl_line_x,
+            y=cyl_line_y,
+            z=cyl_line_z,
+            mode="lines",
+            line=dict(color="green", width=5),
+            name="Cylinder/Ewald overlap",
+        )
+    )
 
     k_tail = np.array([0.0, K_MAG, 0.0])
     k_head = k_tail * 0.25
