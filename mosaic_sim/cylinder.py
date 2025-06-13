@@ -46,8 +46,8 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     I_surface = mosaic_intensity(B0_x, B0_y, B0_z, H, K, L,
                                  sigma, gamma, eta)
 
-    br_x, br_y, br_z = intersection_circle(G_MAG, K_MAG, K_MAG)
-    gr = math.sqrt(br_x[0] ** 2 + br_z[0] ** 2)
+    ring_x, ring_y, ring_z = intersection_circle(G_MAG, K_MAG, K_MAG)
+    gr = math.sqrt(ring_x[0] ** 2 + ring_z[0] ** 2)
 
     cyl_line_x, cyl_line_y, cyl_line_z = intersection_cylinder_sphere(
         gr,
@@ -75,9 +75,30 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     fig.add_trace(bragg)
     bragg_idx = len(fig.data) - 1
 
-    fig.add_trace(go.Surface(x=Ew_x, y=Ew_y, z=Ew_z,
-                             opacity=0.3, colorscale="Blues", showscale=False,
-                             name="Ewald sphere"))
+    fig.add_trace(
+        go.Surface(
+            x=Ew_x,
+            y=Ew_y,
+            z=Ew_z,
+            opacity=0.3,
+            colorscale="Blues",
+            showscale=False,
+            name="Ewald sphere",
+        )
+    )
+    ewald_idx = len(fig.data) - 1
+
+    fig.add_trace(
+        go.Scatter3d(
+            x=ring_x,
+            y=ring_y,
+            z=ring_z,
+            mode="lines",
+            line=dict(color="red", width=5),
+            name="Ewald/Bragg overlap",
+        )
+    )
+    ring_idx = len(fig.data) - 1
 
     fig.add_trace(
         go.Surface(
@@ -248,7 +269,75 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
              for i, f in enumerate(fig.frames)]
     sliders = [dict(steps=steps, currentvalue=dict(prefix="θ index: "),
                     x=0.5, xanchor="center", y=-0.1, len=0.9)]
-    fig.update_layout(sliders=sliders)
+    updatemenus = [
+        dict(
+            type="buttons",
+            showactive=False,
+            x=1.05,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            direction="down",
+            buttons=[
+                dict(label="Bragg on", method="restyle", args=[{"visible": True}, [bragg_idx]]),
+                dict(label="Bragg off", method="restyle", args=[{"visible": False}, [bragg_idx]]),
+            ],
+        ),
+        dict(
+            type="buttons",
+            showactive=False,
+            x=1.18,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            direction="down",
+            buttons=[
+                dict(label="Ewald on", method="restyle", args=[{"visible": True}, [ewald_idx]]),
+                dict(label="Ewald off", method="restyle", args=[{"visible": False}, [ewald_idx]]),
+            ],
+        ),
+        dict(
+            type="buttons",
+            showactive=False,
+            x=1.31,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            direction="down",
+            buttons=[
+                dict(label="Cylinder on", method="restyle", args=[{"visible": True}, [cyl_idx]]),
+                dict(label="Cylinder off", method="restyle", args=[{"visible": False}, [cyl_idx]]),
+            ],
+        ),
+        dict(
+            type="buttons",
+            showactive=False,
+            x=1.48,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            direction="down",
+            buttons=[
+                dict(label="Cyl/Ew on", method="restyle", args=[{"visible": True}, [overlap_idx]]),
+                dict(label="Cyl/Ew off", method="restyle", args=[{"visible": False}, [overlap_idx]]),
+            ],
+        ),
+        dict(
+            type="buttons",
+            showactive=False,
+            x=1.70,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            direction="down",
+            buttons=[
+                dict(label="Ew/Br on", method="restyle", args=[{"visible": True}, [ring_idx]]),
+                dict(label="Ew/Br off", method="restyle", args=[{"visible": False}, [ring_idx]]),
+            ],
+        ),
+    ]
+
+    fig.update_layout(sliders=sliders, updatemenus=updatemenus)
 
     return fig
 
