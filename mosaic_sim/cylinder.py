@@ -75,10 +75,18 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                              opacity=0.3, colorscale="Blues", showscale=False,
                              name="Ewald sphere"))
 
-    fig.add_trace(go.Surface(x=cyl_x, y=cyl_y, z=cyl_z,
-                             opacity=0.5, showscale=False,
-                             colorscale=[[0, "grey"], [1, "grey"]],
-                             name="Cylinder"))
+    fig.add_trace(
+        go.Surface(
+            x=cyl_x,
+            y=cyl_y,
+            z=cyl_z,
+            opacity=0.5,
+            showscale=False,
+            colorscale=[[0, "grey"], [1, "grey"]],
+            name="Cylinder",
+        )
+    )
+    cyl_idx = len(fig.data) - 1
 
     fig.add_trace(
         go.Scatter3d(
@@ -90,6 +98,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             name="Cylinder/Ewald overlap",
         )
     )
+    overlap_idx = len(fig.data) - 1
 
     k_tail = np.array([0.0, K_MAG, 0.0])
     k_head = k_tail * 0.25
@@ -128,14 +137,37 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     frames = []
     for i, th in enumerate(theta_all):
         Bx, By, Bz = rot_x(B0_x, B0_y, B0_z, -th)
+        Cx, Cy, Cz = rot_x(cyl_x, cyl_y, cyl_z, -th)
+        Lx, Ly, Lz = rot_x(cyl_line_x, cyl_line_y, cyl_line_z, -th)
         frames.append(
             go.Frame(
                 name=f"f{i}",
-                data=[go.Surface(x=Bx, y=By, z=Bz,
-                                  surfacecolor=I_surface,
-                                  colorscale=bragg.colorscale,
-                                  showscale=False)],
-                traces=[bragg_idx],
+                data=[
+                    go.Surface(
+                        x=Bx,
+                        y=By,
+                        z=Bz,
+                        surfacecolor=I_surface,
+                        colorscale=bragg.colorscale,
+                        showscale=False,
+                    ),
+                    go.Surface(
+                        x=Cx,
+                        y=Cy,
+                        z=Cz,
+                        opacity=0.5,
+                        showscale=False,
+                        colorscale=[[0, "grey"], [1, "grey"]],
+                    ),
+                    go.Scatter3d(
+                        x=Lx,
+                        y=Ly,
+                        z=Lz,
+                        mode="lines",
+                        line=dict(color="green", width=5),
+                    ),
+                ],
+                traces=[bragg_idx, cyl_idx, overlap_idx],
             )
         )
     fig.frames = frames
