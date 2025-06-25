@@ -30,10 +30,10 @@ app.layout = html.Div([
                         value=[0, 1], marks={0: '0', 1: '1'}),
     ], style={'padding': '10px'}),
     html.Div([
-        html.Label("x₀:"),  dcc.Input(id='x0-input',  type='number', value=1.5,  step=0.1),
-        html.Label("y₀:"),  dcc.Input(id='y0-input',  type='number', value=-0.5, step=0.1),
-        html.Label("σ_I:"), dcc.Input(id='sigmaI-input',   type='number', value=1.2, step=0.1),
-        html.Label("σ_φ:"), dcc.Input(id='sigmaPhi-input', type='number', value=0.5, step=0.1),
+        html.Label("x₀:"),  dcc.Input(id='x0-input',  type='number', value=2.0,  step=0.1),
+        html.Label("y₀:"),  dcc.Input(id='y0-input',  type='number', value=2.0, step=0.1),
+        html.Label("σ_I:"), dcc.Input(id='sigmaI-input',   type='number', value=10000, step=0.1),
+        html.Label("σ_φ:"), dcc.Input(id='sigmaPhi-input', type='number', value=0.2, step=0.1),
     ], style={'padding': '10px', 'display': 'flex', 'gap': '10px',
               'alignItems': 'center'}),
     html.Div([
