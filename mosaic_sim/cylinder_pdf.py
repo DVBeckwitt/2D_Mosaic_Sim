@@ -190,7 +190,7 @@ def dash_main() -> None:
 
     app = build_cylinder_pdf_app()
     webbrowser.open_new("http://127.0.0.1:8050")
-    app.run_server(debug=True, host="127.0.0.1", port=8050)
+    app.run(debug=True, host="127.0.0.1", port=8050)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual entry point
