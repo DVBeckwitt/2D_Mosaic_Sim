@@ -1,26 +1,28 @@
-# mosaic_sim
+# 2D Mosaic Simulation
 
-Utilities for visualising 2‑D oriented powder X‑ray diffraction conditions.
-The code produces interactive Plotly figures showing how the Bragg sphere
-rotates relative to the Ewald sphere and how this maps onto a detector.
+This repository collects small utilities for visualising diffraction from two‑dimensionally oriented powders.
+Each tool shows how reciprocal‑lattice rods from a layered material intersect a three‑dimensional Bragg sphere,
+rotate relative to the Ewald construction and map onto an area detector.  The visualisations build intuition for
+the hybrid ring–cap patterns produced by thin films and other samples with a common out‑of‑plane axis but random
+in‑plane orientation.
 
-Four command line scripts are provided:
+Interactive figures are implemented with Plotly and expose physical constants, geometry helpers and intensity
+kernels through the shared `mosaic_sim` package.
 
-- `simulate_detector.py` – static 3‑panel detector simulation
-- `simulate_mosaic.py`  – dynamic Bragg‑sphere animation
-- `simulate_cylinder.py` – static Ewald sphere with cylinder slider prompting
-  for the Miller indices to update the figure and optionally showing the
-  cylinder/Bragg intersection line
-- `simulate_cylinder_pdf.py` – interactive probability-density display for a
-  tilted rod
+## Command‑line scripts
 
-Both scripts rely on the shared `mosaic_sim` package which exposes physical
-constants, geometry helpers and intensity kernels.
+The following scripts demonstrate different aspects of the geometry.  Run them with `python <script>` from the
+project root or via the console entry points installed with the package.
+
+- `simulate_detector.py` – static three‑panel view of reciprocal space, Bragg sphere and detector
+- `simulate_mosaic.py` – animated Bragg sphere showing rotation and mosaic spread
+- `simulate_cylinder.py` – Ewald sphere with a cylindrical reciprocal‑space rod that updates with Miller indices
+- `simulate_cylinder_pdf.py` – interactive probability‑density plot for a tilted rod
+- `simulate_screen.py` – diffraction pattern on a distant flat detector
 
 ## Installation
 
-The project targets Python 3.11 or newer.  After cloning the repository install
-the dependencies with `pip`:
+The project targets Python 3.11 or newer.  After cloning the repository install the dependencies with `pip`:
 
 ```bash
 pip install -e .
@@ -28,15 +30,15 @@ pip install -e .
 
 ## Usage
 
-Run the examples directly:
+Run the examples directly from the source tree:
 
 ```bash
-python simulate_detector.py    # Open the static detector figure
-python simulate_mosaic.py      # Launch the interactive animation
-python simulate_cylinder.py       # Cylinder intersection with slider
-python simulate_cylinder_pdf.py   # Explore orientation PDF interactively
-python simulate_screen.py      # Pattern on a distant flat detector
+python simulate_detector.py         # Open the static detector figure
+python simulate_mosaic.py           # Launch the interactive animation
+python simulate_cylinder.py         # Cylinder intersection with slider
+python simulate_cylinder_pdf.py     # Explore orientation PDF interactively
+python simulate_screen.py           # Pattern on a distant flat detector
 ```
 
-When installed as a package the scripts are available as console entry points
+When installed as a package the scripts are also available as console entry points
 `mosaic-detector`, `mosaic-rocking`, `mosaic-cylinder`, `mosaic-cylinder-pdf` and `mosaic-screen`.
