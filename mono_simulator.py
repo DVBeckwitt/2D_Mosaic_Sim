@@ -107,16 +107,16 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     grid_coords = np.arange(-5, 6)
     gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
-    fig.add_trace(
-        go.Scatter3d(
-            x=gx.ravel(),
-            y=gy.ravel(),
-            z=gz.ravel(),
-            mode="markers",
-            marker=dict(size=3, color="black", opacity=0.6),
-            name="Integer lattice",
-        )
+    lattice_trace = go.Scatter3d(
+        x=gx.ravel(),
+        y=gy.ravel(),
+        z=gz.ravel(),
+        mode="markers",
+        marker=dict(size=4, color="red", opacity=0.8),
+        name="Integer lattice",
     )
+    fig.add_trace(lattice_trace)
+    lattice_idx = len(fig.data) - 1
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -154,9 +154,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         colorscale=[[0, "black"], [1, "black"]],
                         showscale=False,
                     ),
-                    fig.data[-1],
+                    lattice_trace,
                 ],
-                traces=[ewald_idx, cone_idx - 1, cone_idx, len(fig.data) - 1],
+                traces=[ewald_idx, cone_idx - 1, cone_idx, lattice_idx],
             )
         )
     fig.frames = frames
