@@ -237,7 +237,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         x, y, z = hits[:, 0], hits[:, 1], hits[:, 2]
         labels = [f"({int(hx)}, {int(hy)}, {int(hz)})" for hx, hy, hz in hits]
         distances = np.linalg.norm(hits - CAMERA_EYE, axis=1)
-        sizes = (14.0 * distances).tolist()
+        reference = np.linalg.norm(CAMERA_EYE)
+        scale = np.sqrt(np.maximum(distances, 1e-6) / reference)
+        sizes = np.clip(14.0 * scale, 12.0, 18.0).tolist()
         return go.Scatter3d(
             x=x,
             y=y,
