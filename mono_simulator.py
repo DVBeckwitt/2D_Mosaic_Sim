@@ -202,7 +202,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             mode="text",
             text=labels,
             textposition="top center",
-            textfont=dict(color="orange"),
+            textfont=dict(color="orange", size=14),
             showlegend=False,
         )
 
