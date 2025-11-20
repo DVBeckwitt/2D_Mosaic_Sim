@@ -477,39 +477,18 @@ def dash_main() -> None:
     app.run_server(debug=False)
 
 
-def main() -> None:
-    """Launch an interactive cylinder figure that can be updated."""
+def main(H: int = 0, K: int = 0, L: int = 12,
+         sigma: float = np.deg2rad(0.8),
+         gamma: float = np.deg2rad(5.0),
+         eta: float = 0.5) -> None:
+    """Launch a cylinder figure for the requested parameters."""
 
     import plotly.io as pio
 
     pio.renderers.default = "browser"
 
-    print("Interactive cylinder simulation")
-    print("Enter Miller indices as three integers separated by spaces.")
-    print("Press <Enter> for the default (0 0 12) or 'q' to quit.")
-
-    while True:
-        try:
-            line = input("H K L> ").strip()
-        except EOFError:
-            break
-        if not line:
-            h, k, l = 0, 0, 12
-        elif line.lower() in {"q", "quit", "exit"}:
-            break
-        else:
-            parts = line.split()
-            if len(parts) != 3:
-                print("Please enter three integers, e.g. '0 0 12'.")
-                continue
-            try:
-                h, k, l = map(int, parts)
-            except ValueError:
-                print("Invalid input; please enter integers only.")
-                continue
-
-        fig = build_cylinder_figure(h, k, l)
-        fig.show()
+    fig = build_cylinder_figure(H, K, L, sigma, gamma, eta)
+    fig.show()
 
 
 if __name__ == "__main__":
