@@ -25,14 +25,30 @@ def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.
 
 
 def _k_vector(theta_i: float) -> tuple[list[float], list[float], list[float]]:
-    k_tail = np.array([0.0, K_MAG_PLOT, 0.0])
-    k_head = k_tail * 0.25
-    tail_x, tail_y, tail_z = rot_x(np.array([k_tail[0]]), np.array([k_tail[1]]), np.array([k_tail[2]]), theta_i)
-    head_x, head_y, head_z = rot_x(np.array([k_head[0]]), np.array([k_head[1]]), np.array([k_head[2]]), theta_i)
+    """Return the incident wavevector from its tip back to the origin."""
+
+    k_tip = np.array([0.0, K_MAG_PLOT, 0.0])
+    tip_x, tip_y, tip_z = rot_x(np.array([k_tip[0]]), np.array([k_tip[1]]), np.array([k_tip[2]]), theta_i)
     return (
-        [tail_x[0], head_x[0]],
-        [tail_y[0], head_y[0]],
-        [tail_z[0], head_z[0]],
+        [tip_x[0], 0.0],
+        [tip_y[0], 0.0],
+        [tip_z[0], 0.0],
+    )
+
+
+def _k_label(x: list[float], y: list[float], z: list[float]) -> go.Scatter3d:
+    mid_x = 0.5 * (x[0] + x[1])
+    mid_y = 0.5 * (y[0] + y[1])
+    mid_z = 0.5 * (z[0] + z[1])
+    return go.Scatter3d(
+        x=[mid_x],
+        y=[mid_y],
+        z=[mid_z],
+        mode="text",
+        text=["kᵢ"],
+        textposition="middle left",
+        textfont=dict(color="black", size=14),
+        showlegend=False,
     )
 
 
@@ -105,12 +121,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     )
     fig.add_trace(
         go.Cone(
-            x=[kx[1]],
-            y=[ky[1]],
-            z=[kz[1]],
-            u=[kx[0] - kx[1]],
-            v=[ky[0] - ky[1]],
-            w=[kz[0] - kz[1]],
+            x=[kx[0]],
+            y=[ky[0]],
+            z=[kz[0]],
+            u=[kx[1] - kx[0]],
+            v=[ky[1] - ky[0]],
+            w=[kz[1] - kz[0]],
             anchor="tail",
             sizemode="absolute",
             sizeref=0.2,
@@ -118,7 +134,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             showscale=False,
         )
     )
-    cone_idx = len(fig.data) - 1
+    fig.add_trace(_k_label(kx, ky, kz))
+    k_label_idx = len(fig.data) - 1
+    cone_idx = k_label_idx - 1
 
     R_MAX = K_MAG_PLOT
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
@@ -198,7 +216,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     label_trace = hit_labels(theta_all[0])
     fig.add_trace(label_trace)
-    label_idx = len(fig.data) - 1
+    hit_label_idx = len(fig.data) - 1
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -224,18 +242,19 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         line=dict(color="black", width=5),
                     ),
                     go.Cone(
-                        x=[kx[1]],
-                        y=[ky[1]],
-                        z=[kz[1]],
-                        u=[kx[0] - kx[1]],
-                        v=[ky[0] - ky[1]],
-                        w=[kz[0] - kz[1]],
+                        x=[kx[0]],
+                        y=[ky[0]],
+                        z=[kz[0]],
+                        u=[kx[1] - kx[0]],
+                        v=[ky[1] - ky[0]],
+                        w=[kz[1] - kz[0]],
                         anchor="tail",
                         sizemode="absolute",
                         sizeref=0.2,
                         colorscale=[[0, "black"], [1, "black"]],
                         showscale=False,
                     ),
+                    _k_label(kx, ky, kz),
                     lattice_marker(th),
                     hit_projection(th),
                     hit_labels(th),
@@ -244,9 +263,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     ewald_idx,
                     cone_idx - 1,
                     cone_idx,
+                    k_label_idx,
                     lattice_idx,
                     projection_idx,
-                    label_idx,
+                    hit_label_idx,
                 ],
             )
         )
