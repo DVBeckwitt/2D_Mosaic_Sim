@@ -134,12 +134,16 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
     lattice_points = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
 
-    def lattice_marker(theta: float) -> go.Scatter3d:
+    def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
         distances = np.linalg.norm(lattice_points - center, axis=1)
-        hits = np.isclose(distances, K_MAG_PLOT, atol=1e-3)
-        sizes = np.where(hits, 9.0, 3.0)
-        colors = np.where(hits, "orange", "#a0a0a0")
+        mask = np.isclose(distances, K_MAG_PLOT, atol=1e-3)
+        return mask, lattice_points[mask]
+
+    def lattice_marker(theta: float) -> go.Scatter3d:
+        hit_mask, _ = lattice_hits(theta)
+        sizes = np.where(hit_mask, 9.0, 3.0)
+        colors = np.where(hit_mask, "orange", "#a0a0a0")
         return go.Scatter3d(
             x=lattice_points[:, 0],
             y=lattice_points[:, 1],
@@ -150,9 +154,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         )
 
     def hit_projection(theta: float) -> go.Scatter3d:
-        center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
-        distances = np.linalg.norm(lattice_points - center, axis=1)
-        hits = lattice_points[np.isclose(distances, K_MAG_PLOT, atol=1e-3)]
+        _, hits = lattice_hits(theta)
         x: list[float] = []
         y: list[float] = []
         z: list[float] = []
@@ -169,6 +171,23 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             showlegend=False,
         )
 
+    def hit_labels(theta: float) -> go.Scatter3d:
+        _, hits = lattice_hits(theta)
+        if hits.size == 0:
+            return go.Scatter3d(x=[], y=[], z=[], mode="text", showlegend=False)
+        x, y, z = hits[:, 0], hits[:, 1], hits[:, 2]
+        labels = [f"({int(hx)}, {int(hy)}, {int(hz)})" for hx, hy, hz in hits]
+        return go.Scatter3d(
+            x=x,
+            y=y,
+            z=z + 0.2,
+            mode="text",
+            text=labels,
+            textposition="top center",
+            textfont=dict(color="orange"),
+            showlegend=False,
+        )
+
     lattice_trace = lattice_marker(theta_all[0])
     fig.add_trace(lattice_trace)
     lattice_idx = len(fig.data) - 1
@@ -176,6 +195,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     projection_trace = hit_projection(theta_all[0])
     fig.add_trace(projection_trace)
     projection_idx = len(fig.data) - 1
+
+    label_trace = hit_labels(theta_all[0])
+    fig.add_trace(label_trace)
+    label_idx = len(fig.data) - 1
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -215,8 +238,16 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     ),
                     lattice_marker(th),
                     hit_projection(th),
+                    hit_labels(th),
                 ],
-                traces=[ewald_idx, cone_idx - 1, cone_idx, lattice_idx, projection_idx],
+                traces=[
+                    ewald_idx,
+                    cone_idx - 1,
+                    cone_idx,
+                    lattice_idx,
+                    projection_idx,
+                    label_idx,
+                ],
             )
         )
     fig.frames = frames
