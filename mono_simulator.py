@@ -19,6 +19,7 @@ THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
 N_FRAMES_DEFAULT = 60
 CAMERA_EYE = np.array([2.0, 2.0, 1.6])
+AXIS_RANGE = 3.0
 ARC_RADIUS = 0.6
 
 
@@ -332,16 +333,23 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     currentvalue=dict(prefix="θᵢ: "),
                     x=0.5, xanchor="center", y=-0.1, len=0.9)]
 
-    fig.update_layout(scene=dict(xaxis=dict(visible=False),
-                                 yaxis=dict(visible=False),
-                                 zaxis=dict(visible=False),
-                                 bgcolor="rgba(0,0,0,0)"),
+    fig.update_layout(scene=dict(xaxis=dict(visible=False,
+                                            range=[-AXIS_RANGE, AXIS_RANGE],
+                                            autorange=False),
+                                 yaxis=dict(visible=False,
+                                            range=[-AXIS_RANGE, AXIS_RANGE],
+                                            autorange=False),
+                                 zaxis=dict(visible=False,
+                                            range=[-AXIS_RANGE, AXIS_RANGE],
+                                            autorange=False),
+                                 aspectmode="cube",
+                                 bgcolor="rgba(0,0,0,0)",
+                                 camera=dict(eye=dict(x=CAMERA_EYE[0],
+                                                     y=CAMERA_EYE[1],
+                                                     z=CAMERA_EYE[2]))),
                       paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, b=0, t=0),
-                      sliders=sliders,
-                      scene_camera=dict(eye=dict(x=CAMERA_EYE[0],
-                                                 y=CAMERA_EYE[1],
-                                                 z=CAMERA_EYE[2])))
+                      sliders=sliders)
 
     return fig
 
