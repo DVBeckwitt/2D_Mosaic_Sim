@@ -13,10 +13,11 @@ import plotly.graph_objects as go
 from mosaic_sim.geometry import rot_x, sphere
 
 
-THETA_DEFAULT_MIN = 5.0
-THETA_DEFAULT_MAX = 30.0
-N_FRAMES_DEFAULT = 60
 K_MAG_PLOT = 1.5
+THETA_BRAGG_002 = math.degrees(math.asin(1.0 / K_MAG_PLOT))
+THETA_DEFAULT_MIN = THETA_BRAGG_002
+THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
+N_FRAMES_DEFAULT = 60
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -106,14 +107,24 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     grid_coords = np.arange(-2, 3)
     gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
-    lattice_trace = go.Scatter3d(
-        x=gx.ravel(),
-        y=gy.ravel(),
-        z=gz.ravel(),
-        mode="markers",
-        marker=dict(size=4, color="red", opacity=0.8),
-        name="Integer lattice",
-    )
+    lattice_points = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
+
+    def lattice_marker(theta: float) -> go.Scatter3d:
+        center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
+        distances = np.linalg.norm(lattice_points - center, axis=1)
+        hits = np.isclose(distances, K_MAG_PLOT, atol=1e-3)
+        sizes = np.where(hits, 9.0, 3.0)
+        colors = np.where(hits, "orange", "#a0a0a0")
+        return go.Scatter3d(
+            x=lattice_points[:, 0],
+            y=lattice_points[:, 1],
+            z=lattice_points[:, 2],
+            mode="markers",
+            marker=dict(size=sizes, color=colors, opacity=0.95),
+            name="Integer lattice",
+        )
+
+    lattice_trace = lattice_marker(theta_all[0])
     fig.add_trace(lattice_trace)
     lattice_idx = len(fig.data) - 1
 
@@ -153,7 +164,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         colorscale=[[0, "black"], [1, "black"]],
                         showscale=False,
                     ),
-                    lattice_trace,
+                    lattice_marker(th),
                 ],
                 traces=[ewald_idx, cone_idx - 1, cone_idx, lattice_idx],
             )
