@@ -18,6 +18,7 @@ THETA_BRAGG_002 = math.degrees(math.asin(1.0 / K_MAG_PLOT))
 THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
 N_FRAMES_DEFAULT = 60
+CAMERA_EYE = np.array([2.0, 2.0, 1.6])
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -195,6 +196,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             return go.Scatter3d(x=[], y=[], z=[], mode="text", showlegend=False)
         x, y, z = hits[:, 0], hits[:, 1], hits[:, 2]
         labels = [f"({int(hx)}, {int(hy)}, {int(hz)})" for hx, hy, hz in hits]
+        ref_distance = np.linalg.norm(CAMERA_EYE)
+        distances = np.linalg.norm(hits - CAMERA_EYE, axis=1)
+        sizes = (14.0 * distances / ref_distance).tolist()
         return go.Scatter3d(
             x=x,
             y=y,
@@ -202,7 +206,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             mode="text",
             text=labels,
             textposition="top center",
-            textfont=dict(color="orange", size=14),
+            textfont=dict(color="orange", size=sizes),
             showlegend=False,
         )
 
@@ -289,7 +293,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                  bgcolor="rgba(0,0,0,0)"),
                       paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, b=0, t=0),
-                      sliders=sliders)
+                      sliders=sliders,
+                      scene_camera=dict(eye=dict(x=CAMERA_EYE[0],
+                                                 y=CAMERA_EYE[1],
+                                                 z=CAMERA_EYE[2])))
 
     return fig
 
