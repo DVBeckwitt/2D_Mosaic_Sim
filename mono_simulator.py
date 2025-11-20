@@ -15,7 +15,7 @@ from mosaic_sim.geometry import rot_x, sphere
 
 K_MAG_PLOT = 1.5
 THETA_BRAGG_002 = math.degrees(math.asin(1.0 / K_MAG_PLOT))
-THETA_DEFAULT_MIN = THETA_BRAGG_002
+THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
 N_FRAMES_DEFAULT = 60
 
@@ -49,7 +49,32 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                              np.linspace(0, 2 * math.pi, 200))
     Ew_x, Ew_y, Ew_z = sphere(K_MAG_PLOT, phi, theta, (0, K_MAG_PLOT, 0))
 
+    def _intersection_thetas() -> list[float]:
+        grid_coords = np.arange(-2, 3)
+        gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
+        lattice_points = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
+        thetas: list[float] = []
+        for hx, hy, hz in lattice_points:
+            if hx == hy == hz == 0:
+                continue
+            rhs = (hx * hx + hy * hy + hz * hz) / (2.0 * K_MAG_PLOT)
+            amplitude = math.hypot(hy, hz)
+            if amplitude == 0:
+                continue
+            ratio = rhs / amplitude
+            if abs(ratio) > 1.0:
+                continue
+            base = math.atan2(hz, hy)
+            delta = math.acos(ratio)
+            thetas.extend([base + delta, base - delta])
+        return thetas
+
+    intersection_thetas = _intersection_thetas()
+    theta_min = min(theta_min, 0.0, *intersection_thetas)
+    theta_max = max(theta_max, 0.0, *intersection_thetas)
+
     theta_all = np.linspace(theta_min, theta_max, n_frames)
+    theta_all = np.unique(np.concatenate([theta_all, [0.0], intersection_thetas]))
 
     fig = go.Figure()
 
