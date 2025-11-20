@@ -149,9 +149,33 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             name="Integer lattice",
         )
 
+    def hit_projection(theta: float) -> go.Scatter3d:
+        center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
+        distances = np.linalg.norm(lattice_points - center, axis=1)
+        hits = lattice_points[np.isclose(distances, K_MAG_PLOT, atol=1e-3)]
+        x: list[float] = []
+        y: list[float] = []
+        z: list[float] = []
+        for hx, hy, hz in hits:
+            x.extend([hx, hx, np.nan])
+            y.extend([hy, hy, np.nan])
+            z.extend([hz, 0.0, np.nan])
+        return go.Scatter3d(
+            x=x,
+            y=y,
+            z=z,
+            mode="lines",
+            line=dict(color="orange", width=2, dash="dash"),
+            showlegend=False,
+        )
+
     lattice_trace = lattice_marker(theta_all[0])
     fig.add_trace(lattice_trace)
     lattice_idx = len(fig.data) - 1
+
+    projection_trace = hit_projection(theta_all[0])
+    fig.add_trace(projection_trace)
+    projection_idx = len(fig.data) - 1
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -190,8 +214,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         showscale=False,
                     ),
                     lattice_marker(th),
+                    hit_projection(th),
                 ],
-                traces=[ewald_idx, cone_idx - 1, cone_idx, lattice_idx],
+                traces=[ewald_idx, cone_idx - 1, cone_idx, lattice_idx, projection_idx],
             )
         )
     fig.frames = frames
