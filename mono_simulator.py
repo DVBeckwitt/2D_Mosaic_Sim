@@ -21,14 +21,14 @@ N_FRAMES_DEFAULT = 60
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    return rot_x(Ew_x, Ew_y, Ew_z, -theta_i)
+    return rot_x(Ew_x, Ew_y, Ew_z, theta_i)
 
 
 def _k_vector(theta_i: float) -> tuple[list[float], list[float], list[float]]:
     k_tail = np.array([0.0, K_MAG, 0.0])
     k_head = k_tail * 0.25
-    tail_x, tail_y, tail_z = rot_x(np.array([k_tail[0]]), np.array([k_tail[1]]), np.array([k_tail[2]]), -theta_i)
-    head_x, head_y, head_z = rot_x(np.array([k_head[0]]), np.array([k_head[1]]), np.array([k_head[2]]), -theta_i)
+    tail_x, tail_y, tail_z = rot_x(np.array([k_tail[0]]), np.array([k_tail[1]]), np.array([k_tail[2]]), theta_i)
+    head_x, head_y, head_z = rot_x(np.array([k_head[0]]), np.array([k_head[1]]), np.array([k_head[2]]), theta_i)
     return (
         [tail_x[0], head_x[0]],
         [tail_y[0], head_y[0]],
@@ -105,6 +105,19 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                              width=2,
                                              dash="dash")))
 
+    grid_coords = np.arange(-5, 6)
+    gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
+    fig.add_trace(
+        go.Scatter3d(
+            x=gx.ravel(),
+            y=gy.ravel(),
+            z=gz.ravel(),
+            mode="markers",
+            marker=dict(size=3, color="black", opacity=0.6),
+            name="Integer lattice",
+        )
+    )
+
     frames = []
     for i, th in enumerate(theta_all):
         Bx, By, Bz = _ewald_surface(th, Ew_x, Ew_y, Ew_z)
@@ -141,8 +154,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         colorscale=[[0, "black"], [1, "black"]],
                         showscale=False,
                     ),
+                    fig.data[-1],
                 ],
-                traces=[ewald_idx, cone_idx - 1, cone_idx],
+                traces=[ewald_idx, cone_idx - 1, cone_idx, len(fig.data) - 1],
             )
         )
     fig.frames = frames
