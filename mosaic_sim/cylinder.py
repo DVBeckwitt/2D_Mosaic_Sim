@@ -43,10 +43,10 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
-    # ``H``, ``K`` and ``L`` only define the Bragg-sphere radius.  The mosaic
-    # intensity is always centred on ``+qz`` so that the reflection orientation
-    # does not depend on the Miller indices.
-    I_surface = mosaic_intensity(B0_x, B0_y, B0_z, 0, 0, 1,
+    # ``H``, ``K`` and ``L`` define both the Bragg-sphere radius and the
+    # mosaic profile.  Any in-plane component should switch to the belt model
+    # rather than the cap profile used for purely out-of-plane reflections.
+    I_surface = mosaic_intensity(B0_x, B0_y, B0_z, H, K, L,
                                  sigma, gamma, eta)
 
     ring_x, ring_y, ring_z = intersection_circle(G_MAG, K_MAG, K_MAG)
