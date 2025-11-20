@@ -193,6 +193,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     grid_coords = np.arange(-2, 3)
     gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
     lattice_points = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
+    lattice_points = lattice_points[~np.all(lattice_points == 0, axis=1)]
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
