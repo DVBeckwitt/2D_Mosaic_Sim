@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Command-line entry for the static cylinder figure.
+"""Command-line entry for the static fibrous-cylinder figure.
 
 This provides an executable wrapper similar to the existing examples and can
 be installed as a console script.

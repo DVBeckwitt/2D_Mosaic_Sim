@@ -16,7 +16,8 @@ project root or via the console entry points installed with the package.
 
 - `simulate_detector.py` – static three‑panel view of reciprocal space, Bragg sphere and detector
 - `simulate_mosaic.py` – animated Bragg sphere showing rotation and mosaic spread
-- `simulate_cylinder.py` – Ewald sphere with a cylindrical reciprocal‑space rod that updates with Miller indices
+- `fibrous_simulator.py` – Ewald sphere with a cylindrical reciprocal‑space rod that updates with Miller indices
+- `mono_simulator.py` – minimal Ewald-sphere view with adjustable incident angle
 - `simulate_cylinder_pdf.py` – interactive probability‑density plot for a tilted rod
 - `simulate_screen.py` – diffraction pattern on a distant flat detector
 
@@ -35,7 +36,8 @@ Run the examples directly from the source tree:
 ```bash
 python simulate_detector.py         # Open the static detector figure
 python simulate_mosaic.py           # Launch the interactive animation
-python simulate_cylinder.py         # Cylinder intersection with slider
+python fibrous_simulator.py         # Cylinder intersection with slider
+python mono_simulator.py            # Single Ewald sphere with θᵢ slider
 python simulate_cylinder_pdf.py     # Explore orientation PDF interactively
 python simulate_screen.py           # Pattern on a distant flat detector
 ```
