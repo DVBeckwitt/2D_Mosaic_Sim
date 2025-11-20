@@ -19,6 +19,7 @@ THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
 N_FRAMES_DEFAULT = 60
 CAMERA_EYE = np.array([2.0, 2.0, 1.6])
+ARC_RADIUS = 0.6
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -49,6 +50,37 @@ def _k_label(x: list[float], y: list[float], z: list[float]) -> go.Scatter3d:
         text=["kᵢ"],
         textposition="middle left",
         textfont=dict(color="black", size=14),
+        showlegend=False,
+    )
+
+
+def _theta_arc(theta: float) -> go.Scatter3d:
+    arc_thetas = np.linspace(0.0, theta, 50)
+    arc_x = np.zeros_like(arc_thetas)
+    arc_y = ARC_RADIUS * np.cos(arc_thetas)
+    arc_z = ARC_RADIUS * np.sin(arc_thetas)
+    return go.Scatter3d(
+        x=arc_x,
+        y=arc_y,
+        z=arc_z,
+        mode="lines",
+        line=dict(color="orange", width=4, dash="dash"),
+        showlegend=False,
+    )
+
+
+def _theta_arc_label(theta: float) -> go.Scatter3d:
+    mid_theta = 0.5 * theta
+    y = ARC_RADIUS * math.cos(mid_theta)
+    z = ARC_RADIUS * math.sin(mid_theta)
+    return go.Scatter3d(
+        x=[0.0],
+        y=[y],
+        z=[z],
+        mode="text",
+        text=["θᵢ"],
+        textfont=dict(color="orange", size=16),
+        textposition="middle right",
         showlegend=False,
     )
 
@@ -139,6 +171,14 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     k_label_idx = len(fig.data) - 1
     cone_idx = k_label_idx - 1
 
+    arc_trace = _theta_arc(theta_all[0])
+    fig.add_trace(arc_trace)
+    arc_idx = len(fig.data) - 1
+
+    arc_label = _theta_arc_label(theta_all[0])
+    fig.add_trace(arc_label)
+    arc_label_idx = len(fig.data) - 1
+
     R_MAX = K_MAG_PLOT
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
                 ([0, 0], [-R_MAX, 2 * R_MAX], [0, 0]),
@@ -196,9 +236,8 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             return go.Scatter3d(x=[], y=[], z=[], mode="text", showlegend=False)
         x, y, z = hits[:, 0], hits[:, 1], hits[:, 2]
         labels = [f"({int(hx)}, {int(hy)}, {int(hz)})" for hx, hy, hz in hits]
-        ref_distance = np.linalg.norm(CAMERA_EYE)
         distances = np.linalg.norm(hits - CAMERA_EYE, axis=1)
-        sizes = (14.0 * distances / ref_distance).tolist()
+        sizes = (14.0 * distances).tolist()
         return go.Scatter3d(
             x=x,
             y=y,
@@ -259,6 +298,8 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         showscale=False,
                     ),
                     _k_label(kx, ky, kz),
+                    _theta_arc(th),
+                    _theta_arc_label(th),
                     lattice_marker(th),
                     hit_projection(th),
                     hit_labels(th),
@@ -268,6 +309,8 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     cone_idx - 1,
                     cone_idx,
                     k_label_idx,
+                    arc_idx,
+                    arc_label_idx,
                     lattice_idx,
                     projection_idx,
                     hit_label_idx,
