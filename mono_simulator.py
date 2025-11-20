@@ -16,7 +16,7 @@ from mosaic_sim.geometry import rot_x, sphere
 THETA_DEFAULT_MIN = 5.0
 THETA_DEFAULT_MAX = 30.0
 N_FRAMES_DEFAULT = 60
-K_MAG_PLOT = 3.0
+K_MAG_PLOT = 1.5
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -104,7 +104,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                              width=2,
                                              dash="dash")))
 
-    grid_coords = np.arange(-5, 6)
+    grid_coords = np.arange(-2, 3)
     gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
     lattice_trace = go.Scatter3d(
         x=gx.ravel(),
