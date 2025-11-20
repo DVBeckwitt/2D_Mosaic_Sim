@@ -43,10 +43,10 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
     Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
-    # ``H``, ``K`` and ``L`` only define the Bragg-sphere radius.  The mosaic
-    # intensity is always centred on ``+qz`` so that the reflection orientation
-    # does not depend on the Miller indices.
-    I_surface = mosaic_intensity(B0_x, B0_y, B0_z, 0, 0, 1,
+    # ``H``, ``K`` and ``L`` define both the Bragg-sphere radius and the
+    # mosaic profile.  Any in-plane component should switch to the belt model
+    # rather than the cap profile used for purely out-of-plane reflections.
+    I_surface = mosaic_intensity(B0_x, B0_y, B0_z, H, K, L,
                                  sigma, gamma, eta)
 
     ring_x, ring_y, ring_z = intersection_circle(G_MAG, K_MAG, K_MAG)
@@ -477,39 +477,18 @@ def dash_main() -> None:
     app.run_server(debug=False)
 
 
-def main() -> None:
-    """Launch an interactive cylinder figure that can be updated."""
+def main(H: int = 0, K: int = 0, L: int = 12,
+         sigma: float = np.deg2rad(0.8),
+         gamma: float = np.deg2rad(5.0),
+         eta: float = 0.5) -> None:
+    """Launch a cylinder figure for the requested parameters."""
 
     import plotly.io as pio
 
     pio.renderers.default = "browser"
 
-    print("Interactive cylinder simulation")
-    print("Enter Miller indices as three integers separated by spaces.")
-    print("Press <Enter> for the default (0 0 12) or 'q' to quit.")
-
-    while True:
-        try:
-            line = input("H K L> ").strip()
-        except EOFError:
-            break
-        if not line:
-            h, k, l = 0, 0, 12
-        elif line.lower() in {"q", "quit", "exit"}:
-            break
-        else:
-            parts = line.split()
-            if len(parts) != 3:
-                print("Please enter three integers, e.g. '0 0 12'.")
-                continue
-            try:
-                h, k, l = map(int, parts)
-            except ValueError:
-                print("Invalid input; please enter integers only.")
-                continue
-
-        fig = build_cylinder_figure(h, k, l)
-        fig.show()
+    fig = build_cylinder_figure(H, K, L, sigma, gamma, eta)
+    fig.show()
 
 
 if __name__ == "__main__":
