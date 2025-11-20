@@ -10,14 +10,13 @@ import math
 
 import numpy as np
 import plotly.graph_objects as go
-
-from mosaic_sim.constants import K_MAG
 from mosaic_sim.geometry import rot_x, sphere
 
 
 THETA_DEFAULT_MIN = 5.0
 THETA_DEFAULT_MAX = 30.0
 N_FRAMES_DEFAULT = 60
+K_MAG_PLOT = 3.0
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -25,7 +24,7 @@ def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.
 
 
 def _k_vector(theta_i: float) -> tuple[list[float], list[float], list[float]]:
-    k_tail = np.array([0.0, K_MAG, 0.0])
+    k_tail = np.array([0.0, K_MAG_PLOT, 0.0])
     k_head = k_tail * 0.25
     tail_x, tail_y, tail_z = rot_x(np.array([k_tail[0]]), np.array([k_tail[1]]), np.array([k_tail[2]]), theta_i)
     head_x, head_y, head_z = rot_x(np.array([k_head[0]]), np.array([k_head[1]]), np.array([k_head[2]]), theta_i)
@@ -47,7 +46,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     phi, theta = np.meshgrid(np.linspace(0, math.pi, 100),
                              np.linspace(0, 2 * math.pi, 200))
-    Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
+    Ew_x, Ew_y, Ew_z = sphere(K_MAG_PLOT, phi, theta, (0, K_MAG_PLOT, 0))
 
     theta_all = np.linspace(theta_min, theta_max, n_frames)
 
@@ -95,7 +94,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     )
     cone_idx = len(fig.data) - 1
 
-    R_MAX = K_MAG
+    R_MAX = K_MAG_PLOT
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
                 ([0, 0], [-R_MAX, 2 * R_MAX], [0, 0]),
                 ([0, 0], [0, 0], [-R_MAX, R_MAX])]:
