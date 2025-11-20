@@ -69,8 +69,8 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             thetas.extend([base + delta, base - delta])
         return thetas
 
-    intersection_thetas = _intersection_thetas()
-    theta_min = min(theta_min, 0.0, *intersection_thetas)
+    intersection_thetas = [th for th in _intersection_thetas() if th >= 0.0]
+    theta_min = max(theta_min, 0.0)
     theta_max = max(theta_max, 0.0, *intersection_thetas)
 
     theta_all = np.linspace(theta_min, theta_max, n_frames)
