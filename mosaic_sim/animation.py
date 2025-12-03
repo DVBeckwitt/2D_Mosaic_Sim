@@ -38,8 +38,12 @@ def build_animation(H: int = 0, K: int = 0, L: int = 1,
     G_MAG = 2 * math.pi / d_hkl
 
     # Angles covering a unit sphere
-    phi, theta = np.meshgrid(np.linspace(0, math.pi, 100),
-                             np.linspace(0, 2 * math.pi, 200))
+    # Keep the surface meshes lightweight so interactive actions (zoom/pan)
+    # stay responsive. A coarser grid still renders smoothly while reducing
+    # the number of polygons Plotly needs to process by ~4x versus the
+    # previous 100x200 sampling.
+    phi, theta = np.meshgrid(np.linspace(0, math.pi, 50),
+                             np.linspace(0, 2 * math.pi, 100))
     Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
@@ -72,13 +76,15 @@ def build_animation(H: int = 0, K: int = 0, L: int = 1,
                        colorscale=[[0, "rgba(128,128,128,0.25)"],
                                    [1, "rgba(255,0,0,1)"]],
                        showscale=True,
+                       hoverinfo="skip",
                        colorbar=dict(title="Mosaic<br>Intensity"),
                        name=f"Bragg sphere {'cap' if H==0 and K==0 else 'band'}")
     fig.add_trace(bragg); bragg_idx = len(fig.data) - 1
 
     fig.add_trace(go.Surface(x=Ew_x, y=Ew_y, z=Ew_z,
                              opacity=0.3, colorscale="Blues",
-                             showscale=False, name="Ewald sphere"))
+                             showscale=False, hoverinfo="skip",
+                             name="Ewald sphere"))
     fig.add_trace(go.Scatter3d(x=ring_x, y=ring_y, z=ring_z,
                                mode="lines",
                                line=dict(color="green", width=5),
@@ -124,7 +130,8 @@ def build_animation(H: int = 0, K: int = 0, L: int = 1,
                 data=[
                     go.Surface(x=st["Bx"], y=st["By"], z=st["Bz"],
                                surfacecolor=I_surface,
-                               colorscale=bragg.colorscale, showscale=False),
+                               colorscale=bragg.colorscale,
+                               hoverinfo="skip", showscale=False),
                     go.Scatter3d(x=st["Arc"][0], y=st["Arc"][1], z=st["Arc"][2],
                                  mode="lines",
                                  line=dict(color="purple", width=3, dash="dash")),
