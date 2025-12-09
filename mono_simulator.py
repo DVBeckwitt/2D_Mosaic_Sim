@@ -6,7 +6,10 @@ interactive control of the incident angle ``theta_i``.
 """
 
 import argparse
+import json
 import math
+import tempfile
+import webbrowser
 
 import numpy as np
 import plotly.graph_objects as go
@@ -102,7 +105,7 @@ def _theta_arc_label(theta: float) -> go.Scatter3d:
 
 def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                       theta_max: float = math.radians(THETA_DEFAULT_MAX),
-                      n_frames: int = N_FRAMES_DEFAULT) -> go.Figure:
+                      n_frames: int = N_FRAMES_DEFAULT) -> tuple[go.Figure, dict]:
     """Return a Plotly figure showing only the Ewald sphere.
 
     A slider controls the incident angle ``theta_i`` by rotating the sphere
@@ -327,19 +330,27 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx,
                     arc_idx, arc_label_idx, *axis_indices}
 
-    def _mode_visibility(mode: str) -> list[bool]:
+    def _mode_visibility(mode: str, g_mask: list[bool] | None = None) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
-        vis = []
+        vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
                 vis.append(True)
             elif idx in lattice_related:
                 vis.append(mode == "lattice")
             elif idx in g_sphere_indices:
-                vis.append(mode == "g_spheres")
+                if mode != "g_spheres":
+                    vis.append(False)
+                else:
+                    pos = g_sphere_indices.index(idx)
+                    vis.append(False if g_mask is None else g_mask[pos])
             else:
                 vis.append(True)
         return vis
+
+    g_mask_default = [i == 0 for i in range(len(g_sphere_indices))]
+    lattice_visibility = _mode_visibility("lattice")
+    g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -413,10 +424,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     buttons = [
         dict(label="Single crystal",
              method="update",
-             args=[{"visible": _mode_visibility("lattice")}, {}]),
+             args=[{"visible": lattice_visibility}, {}]),
         dict(label="|G| spheres",
              method="update",
-             args=[{"visible": _mode_visibility("g_spheres")}, {}]),
+             args=[{"visible": g_sphere_visibility}, {}]),
     ]
 
     fig.update_layout(scene=dict(xaxis=dict(visible=False,
@@ -442,9 +453,124 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                         x=0.5,
                                         xanchor="center",
                                         y=1.1,
-                                        pad=dict(t=5, r=5))])
+                                        pad=dict(t=5, r=5))],
+                      meta=dict(lattice_visibility=lattice_visibility,
+                                g_sphere_visibility=g_sphere_visibility,
+                                g_sphere_indices=g_sphere_indices,
+                                g_values=unique_g.tolist()))
 
-    return fig
+    context = dict(
+        g_values=unique_g.tolist(),
+        g_sphere_indices=g_sphere_indices,
+        lattice_visibility=lattice_visibility,
+        g_sphere_visibility=g_sphere_visibility,
+    )
+
+    return fig, context
+
+
+def _selector_checkbox_html(g_values: list[float], g_sphere_indices: list[int]) -> str:
+    lines = ["<div id=\"g-selector\">"]
+    for i, (g_val, trace_idx) in enumerate(zip(g_values, g_sphere_indices, strict=True)):
+        checked = "checked" if i == 0 else ""
+        lines.append(
+            f'<label class="g-option"><input class="g-toggle" type="checkbox" '
+            f'data-trace="{trace_idx}" {checked}>|G| = {g_val:.3f} Å⁻¹</label>'
+        )
+    lines.append("</div>")
+    return "\n".join(lines)
+
+
+def build_interactive_page(fig: go.Figure, context: dict) -> str:
+    import plotly.io as pio
+
+    g_values: list[float] = context["g_values"]
+    g_sphere_indices: list[int] = context["g_sphere_indices"]
+    lattice_visibility: list[bool] = context["lattice_visibility"]
+    g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
+
+    figure_id = "mono-figure"
+    figure_html = pio.to_html(fig, include_plotlyjs="cdn", full_html=False,
+                              auto_play=False, div_id=figure_id)
+    selector_controls = _selector_checkbox_html(g_values, g_sphere_indices)
+
+    return f"""
+<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <title>Mono simulator</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; }}
+    #wrapper {{ display: flex; flex-direction: column; align-items: center; }}
+    #note {{ padding: 8px 12px; background: #f2f2f2; width: 100%; box-sizing: border-box; }}
+  </style>
+</head>
+<body>
+  <div id=\"wrapper\">
+    <div id=\"note\">Use the pop-out window to toggle |G| shells. Default shows the smallest shell only.</div>
+    {figure_html}
+  </div>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {{
+      const figure = document.getElementById('{figure_id}');
+      const latticeVis = {json.dumps(lattice_visibility)};
+      const gSphereBase = {json.dumps(g_sphere_visibility)};
+      const selectorWin = window.open('', 'g_selector_window', 'width=340,height=600');
+      if (!selectorWin) {{
+        console.warn('Pop-up blocked: unable to render |G| selector window.');
+        return;
+      }}
+      selectorWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>|G| selector</title>
+      <style>body {{ font-family: Arial, sans-serif; padding: 12px; margin: 0; }} .g-option {{ display: block; margin: 6px 0; }}</style>
+      </head><body><h3>|G| shells</h3>
+      <p>Select which |G| spheres to display. Default view shows only the smallest |G|.</p>
+      <div style="margin-bottom:8px;"><button id="check-all">Show all</button> <button id="check-none">Show none</button></div>
+      {selector_controls}
+      </body></html>`);
+      selectorWin.document.close();
+
+      const checkboxes = selectorWin.document.querySelectorAll('.g-toggle');
+
+      function applySelection() {{
+        const vis = Array.from(gSphereBase);
+        checkboxes.forEach((cb) => {{
+          const idx = Number(cb.getAttribute('data-trace'));
+          vis[idx] = cb.checked;
+        }});
+        Plotly.update(figure, {{visible: vis}});
+      }}
+
+      checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
+
+      const checkAll = selectorWin.document.getElementById('check-all');
+      if (checkAll) {{
+        checkAll.addEventListener('click', () => {{
+          checkboxes.forEach((cb) => {{ cb.checked = true; }});
+          applySelection();
+        }});
+      }}
+        const checkNone = selectorWin.document.getElementById('check-none');
+        if (checkNone) {{
+          checkNone.addEventListener('click', () => {{
+            checkboxes.forEach((cb) => {{ cb.checked = false; }});
+            applySelection();
+          }});
+        }}
+
+      figure.on('plotly_buttonclicked', (evt) => {{
+        const label = evt.button && evt.button.label;
+        if (label === 'Single crystal') {{
+          Plotly.update(figure, {{visible: latticeVis}});
+        }} else if (label === '|G| spheres') {{
+          applySelection();
+        }}
+      }});
+    }});
+  </script>
+</body>
+</html>
+"""
 
 
 def parse_args() -> argparse.Namespace:
@@ -470,8 +596,14 @@ def main(theta_min: float | None = None,
     th_min = math.radians(theta_min if theta_min is not None else THETA_DEFAULT_MIN)
     th_max = math.radians(theta_max if theta_max is not None else THETA_DEFAULT_MAX)
 
-    fig = build_mono_figure(th_min, th_max, frames)
-    fig.show()
+    fig, context = build_mono_figure(th_min, th_max, frames)
+    html = build_interactive_page(fig, context)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as handle:
+        handle.write(html)
+        html_path = handle.name
+
+    webbrowser.open(f"file://{html_path}")
 
 
 if __name__ == "__main__":
