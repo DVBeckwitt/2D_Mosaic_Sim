@@ -506,69 +506,105 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     #note {{ padding: 8px 12px; background: #f2f2f2; width: 100%; box-sizing: border-box; }}
   </style>
 </head>
-<body>
-  <div id=\"wrapper\">
-    <div id=\"note\">Use the pop-out window to toggle |G| shells. Default shows the smallest shell only.</div>
-    {figure_html}
-  </div>
-  <script>
-    window.addEventListener('DOMContentLoaded', () => {{
-      const figure = document.getElementById('{figure_id}');
-      const latticeVis = {json.dumps(lattice_visibility)};
-      const gSphereBase = {json.dumps(g_sphere_visibility)};
-      const selectorWin = window.open('', 'g_selector_window', 'width=340,height=600');
-      if (!selectorWin) {{
-        console.warn('Pop-up blocked: unable to render |G| selector window.');
-        return;
-      }}
-      selectorWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>|G| selector</title>
-      <style>body {{ font-family: Arial, sans-serif; padding: 12px; margin: 0; }} .g-option {{ display: block; margin: 6px 0; }}</style>
-      </head><body><h3>|G| shells</h3>
-      <p>Select which |G| spheres to display. Default view shows only the smallest |G|.</p>
-      <div style="margin-bottom:8px;"><button id="check-all">Show all</button> <button id="check-none">Show none</button></div>
-      {selector_controls}
-      </body></html>`);
-      selectorWin.document.close();
+  <body>
+    <div id=\"wrapper\">
+      <div id=\"note\">Use the pop-out window to toggle |G| shells. Default shows the smallest shell only.</div>
+      <div style="margin:8px 0;">
+        <button id="open-selector">Open |G| selector window</button>
+        <span id="selector-status" style="margin-left:8px;color:#444;"></span>
+      </div>
+      {figure_html}
+    </div>
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {{
+        const figure = document.getElementById('{figure_id}');
+        const latticeVis = {json.dumps(lattice_visibility)};
+        const gSphereBase = {json.dumps(g_sphere_visibility)};
+        const selectorBtn = document.getElementById('open-selector');
+        const selectorStatus = document.getElementById('selector-status');
 
-      const checkboxes = selectorWin.document.querySelectorAll('.g-toggle');
+        function writeSelectorDoc(targetWin) {{
+          targetWin.document.open();
+          targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>|G| selector</title>
+          <style>body {{ font-family: Arial, sans-serif; padding: 12px; margin: 0; }} .g-option {{ display: block; margin: 6px 0; }}
+    </style>
+          </head><body><h3>|G| shells</h3>
+          <p>Select which |G| spheres to display. Default view shows only the smallest |G|.</p>
+          <div style="margin-bottom:8px;"><button id="check-all">Show all</button> <button id="check-none">Show none</button></div>
+          {selector_controls}
+          </body></html>`);
+          targetWin.document.close();
+        }}
 
-      function applySelection() {{
-        const vis = Array.from(gSphereBase);
-        checkboxes.forEach((cb) => {{
-          const idx = Number(cb.getAttribute('data-trace'));
-          vis[idx] = cb.checked;
+        function hookSelector(targetWin) {{
+          const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
+
+          function applySelection() {{
+            const vis = Array.from(gSphereBase);
+            checkboxes.forEach((cb) => {{
+              const idx = Number(cb.getAttribute('data-trace'));
+              vis[idx] = cb.checked;
+            }});
+            Plotly.update(figure, {{visible: vis}});
+          }}
+
+          checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
+
+          const checkAll = targetWin.document.getElementById('check-all');
+          if (checkAll) {{
+            checkAll.addEventListener('click', () => {{
+              checkboxes.forEach((cb) => {{ cb.checked = true; }});
+              applySelection();
+            }});
+          }}
+          const checkNone = targetWin.document.getElementById('check-none');
+          if (checkNone) {{
+            checkNone.addEventListener('click', () => {{
+              checkboxes.forEach((cb) => {{ cb.checked = false; }});
+              applySelection();
+            }});
+          }}
+
+          return applySelection;
+        }}
+
+        function openSelectorWindow(focusOnly = false) {{
+          const selectorWin = window.open('', 'g_selector_window', 'width=340,height=600');
+          if (!selectorWin) {{
+            selectorStatus.textContent = 'Pop-up blocked. Click the button to retry after allowing pop-ups.';
+            return null;
+          }}
+          if (!focusOnly || selectorWin.document.body?.childElementCount === 0) {{
+            writeSelectorDoc(selectorWin);
+          }}
+          selectorWin.focus();
+          selectorStatus.textContent = 'Selector window opened.';
+          return hookSelector(selectorWin);
+        }}
+
+        let applySelection = openSelectorWindow(true);
+        if (!applySelection) {{
+          selectorStatus.textContent = 'Pop-up blocked. Please allow pop-ups and click the button.';
+        }}
+
+        selectorBtn.addEventListener('click', () => {{
+          const applyFn = openSelectorWindow();
+          if (applyFn) {{
+            applySelection = applyFn;
+          }}
         }});
-        Plotly.update(figure, {{visible: vis}});
-      }}
 
-      checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
-
-      const checkAll = selectorWin.document.getElementById('check-all');
-      if (checkAll) {{
-        checkAll.addEventListener('click', () => {{
-          checkboxes.forEach((cb) => {{ cb.checked = true; }});
-          applySelection();
-        }});
-      }}
-        const checkNone = selectorWin.document.getElementById('check-none');
-        if (checkNone) {{
-          checkNone.addEventListener('click', () => {{
-            checkboxes.forEach((cb) => {{ cb.checked = false; }});
+        figure.on('plotly_buttonclicked', (evt) => {{
+          const label = evt.button && evt.button.label;
+          if (label === 'Single crystal') {{
+            Plotly.update(figure, {{visible: latticeVis}});
+          }} else if (label === '|G| spheres' && applySelection) {{
             applySelection();
-          }});
-        }}
-
-      figure.on('plotly_buttonclicked', (evt) => {{
-        const label = evt.button && evt.button.label;
-        if (label === 'Single crystal') {{
-          Plotly.update(figure, {{visible: latticeVis}});
-        }} else if (label === '|G| spheres') {{
-          applySelection();
-        }}
+          }}
+        }});
       }});
-    }});
-  </script>
-</body>
+    </script>
+  </body>
 </html>
 """
 
