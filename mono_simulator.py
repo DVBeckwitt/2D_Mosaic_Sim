@@ -555,9 +555,27 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
+        center_vec = np.array([0.0, center_y, center_z])
+        offset = 0.03
         t_vals = np.linspace(0.0, 2 * math.pi, 400)
         sin_t = np.sin(t_vals)
         cos_t = np.cos(t_vals)
+
+        def _offset_on_surface(x_arr: np.ndarray, y_arr: np.ndarray, z_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            x_out = x_arr.astype(float, copy=True)
+            y_out = y_arr.astype(float, copy=True)
+            z_out = z_arr.astype(float, copy=True)
+            valid = ~np.isnan(z_out)
+            if not np.any(valid):
+                return x_out, y_out, z_out
+
+            pts = np.vstack([x_out[valid], y_out[valid], z_out[valid]])
+            normals = pts - center_vec.reshape(3, 1)
+            norms = np.linalg.norm(normals, axis=0)
+            norms[norms == 0.0] = 1.0
+            pts_offset = pts + offset * normals / norms
+            x_out[valid], y_out[valid], z_out[valid] = pts_offset
+            return x_out, y_out, z_out
 
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
@@ -579,8 +597,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             z_top = np.where(valid, center_z + sqrt_rhs, np.nan)
             z_bottom = np.where(valid, center_z - sqrt_rhs, np.nan)
 
-            x_combined = np.concatenate([x_vals, [np.nan], x_vals])
-            y_combined = np.concatenate([y_vals, [np.nan], y_vals])
+            x_top, y_top, z_top = _offset_on_surface(x_vals, y_vals, z_top)
+            x_bottom, y_bottom, z_bottom = _offset_on_surface(x_vals, y_vals, z_bottom)
+
+            x_combined = np.concatenate([x_top, [np.nan], x_bottom])
+            y_combined = np.concatenate([y_top, [np.nan], y_bottom])
             z_combined = np.concatenate([z_top, [np.nan], z_bottom])
 
             curves.append(
@@ -1001,6 +1022,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
       <div id=\"note\">Use the pop-out window to toggle 3D powder shells, 2D powder rings, or Gᵣ cylinders, or use the buttons to switch between lattice, 3D Powder, 2D Powder, and Cylinder views.</div>
       <div id=\"controls\">
         <button id=\"open-selector\">Open powder selector window</button>
+        <button id=\"download-all\" style=\"margin-left:8px;\">Download all views</button>
         <label style=\"margin-left:12px;\">Ewald opacity:
           <input id=\"ewald-opacity\" type=\"range\" min=\"0\" max=\"1\" step=\"0.05\" value=\"1\">
           <span id=\"ewald-opacity-value\">1.00</span>
@@ -1020,6 +1042,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const ringSelectorHtml = `{ring_selector_controls}`;
         const cylinderSelectorHtml = `{cylinder_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
+        const downloadBtn = document.getElementById('download-all');
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
         const ewaldValue = document.getElementById('ewald-opacity-value');
@@ -1056,6 +1079,55 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             applyEwaldOpacity(val);
           }});
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
+        }}
+
+        function traceVisibilitySnapshot() {{
+          return (figure.data || []).map((trace) => {{
+            if (trace.visible === undefined) {{
+              return true;
+            }}
+            return trace.visible;
+          }});
+        }}
+
+        async function downloadViewSeries() {{
+          if (!downloadBtn) {{
+            return;
+          }}
+
+          downloadBtn.disabled = true;
+          selectorStatus.textContent = 'Preparing downloads...';
+
+          const originalVis = traceVisibilitySnapshot();
+          const modes = [
+            {{ label: 'single_crystal', vis: latticeVis }},
+            {{ label: '3d_powder', vis: gSphereBase }},
+            {{ label: '2d_powder', vis: gRingBase }},
+            {{ label: 'cylinder', vis: gCylinderBase }},
+          ];
+
+          try {{
+            for (const mode of modes) {{
+              const vis = Array.from(mode.vis, (v) => !!v);
+              await Plotly.update(figure, {{ visible: vis }});
+              const uri = await Plotly.toImage(figure, {{ format: 'png', height: 900, width: 900 }});
+
+              const link = document.createElement('a');
+              link.href = uri;
+              link.download = `mono_${{mode.label}}.png`;
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+            }}
+
+            selectorStatus.textContent = 'Downloaded Single, 3D, 2D, and Cylinder views.';
+          }} catch (err) {{
+            selectorStatus.textContent = 'Download failed. Please retry.';
+            console.error(err);
+          }} finally {{
+            await Plotly.update(figure, {{ visible: originalVis }});
+            downloadBtn.disabled = false;
+          }}
         }}
 
         function writeSelectorDoc(targetWin, mode = '3d') {{
@@ -1146,6 +1218,12 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             applySelection = applyFn;
           }}
         }});
+
+        if (downloadBtn) {{
+          downloadBtn.addEventListener('click', () => {{
+            downloadViewSeries();
+          }});
+        }}
 
         figure.on('plotly_buttonclicked', (evt) => {{
           const label = evt.button && evt.button.label;
