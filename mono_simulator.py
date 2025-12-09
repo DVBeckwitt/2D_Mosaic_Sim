@@ -728,13 +728,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             : 'Select which |Gᵣ| rings to display for the chosen G_z plane.';
           const bodyHtml = is3D ? sphereSelectorHtml : ringSelectorHtml;
           targetWin.document.open();
-          targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${heading}</title>
+          targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${{heading}}</title>
           <style>body {{ font-family: Arial, sans-serif; padding: 12px; margin: 0; }} .g-option {{ display: block; margin: 6px 0; }}
     </style>
-          </head><body><h3>${heading}</h3>
-          <p>${intro}</p>
+          </head><body><h3>${{heading}}</h3>
+          <p>${{intro}}</p>
           <div style="margin-bottom:8px;"><button id="check-all">Show all</button> <button id="check-none">Show none</button></div>
-          ${bodyHtml}
+          ${{bodyHtml}}
           </body></html>`);
           targetWin.document.close();
           targetWin.__selectorMode = mode;
