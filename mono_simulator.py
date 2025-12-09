@@ -389,7 +389,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
-    def g_ring_intersection_points(theta: float) -> list[go.Scatter3d]:
+    def g_ring_intersection_points(
+        theta: float, *, visibility: bool | None = False
+    ) -> list[go.Scatter3d]:
         intersections: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
@@ -408,7 +410,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         mode="markers",
                         marker=dict(color=color, size=5, symbol="circle"),
                         name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
-                        visible=False,
+                        visible=visibility,
                         showlegend=False,
                     )
                 )
@@ -430,7 +432,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         z=[],
                         mode="markers",
                         showlegend=False,
-                        visible=False,
+                        visible=visibility,
                     )
                 )
                 continue
@@ -444,7 +446,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         z=[],
                         mode="markers",
                         showlegend=False,
-                        visible=False,
+                        visible=visibility,
                     )
                 )
                 continue
@@ -469,7 +471,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     mode="markers",
                     marker=dict(color=color, size=5, symbol="circle"),
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
-                    visible=False,
+                    visible=visibility,
                     showlegend=False,
                 )
             )
@@ -487,7 +489,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         zip(g_ring_indices, g_ring_intersection_indices, strict=True)
     )
 
-    def g_intersection_circle(theta: float, g_val: float, color: str) -> go.Scatter3d:
+    def g_intersection_circle(
+        theta: float, g_val: float, color: str, *, visibility: bool | None = False
+    ) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
         if g_val <= 0 or g_val > 2 * R_ewald:
@@ -520,7 +524,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             line=dict(color=color, width=5),
             showlegend=False,
             name=f"|G| ∩ Ewald ({g_val:.3f} Å⁻¹)",
-            visible=False,
+            visible=visibility,
         )
 
     g_circle_traces = [
@@ -587,10 +591,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         Bx, By, Bz = _ewald_surface(th, Ew_x, Ew_y, Ew_z)
         kx, ky, kz = _k_vector(th)
         circles = [
-            g_intersection_circle(th, g_val, palette[j % len(palette)])
-            for j, g_val in enumerate(unique_g)
-        ]
-        ring_intersections = g_ring_intersection_points(th)
+            g_intersection_circle(
+                th, g_val, palette[j % len(palette)], visibility=None
+            )
+        for j, g_val in enumerate(unique_g)
+    ]
+        ring_intersections = g_ring_intersection_points(th, visibility=None)
         frames.append(
             go.Frame(
                 name=f"f{i}",
