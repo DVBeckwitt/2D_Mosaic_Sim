@@ -328,6 +328,31 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_sphere_indices = list(range(len(fig.data) - len(g_sphere_traces), len(fig.data)))
 
+    def g_magnitude_points() -> list[go.Scatter3d]:
+        traces: list[go.Scatter3d] = []
+        rounded = np.round(g_magnitudes, 6)
+        for i, g_val in enumerate(unique_g):
+            mask = np.isclose(rounded, g_val, atol=1e-6)
+            pts = lattice_points[mask]
+            color = palette[i % len(palette)]
+            traces.append(
+                go.Scatter3d(
+                    x=pts[:, 0] if len(pts) else [],
+                    y=pts[:, 1] if len(pts) else [],
+                    z=pts[:, 2] if len(pts) else [],
+                    mode="markers",
+                    marker=dict(color=color, size=5, opacity=0.95),
+                    name=f"|G| shell points ({g_val:.3f} Å⁻¹)",
+                    visible=False,
+                )
+            )
+        return traces
+
+    g_point_traces = g_magnitude_points()
+    for trace in g_point_traces:
+        fig.add_trace(trace)
+    g_point_indices = list(range(len(fig.data) - len(g_point_traces), len(fig.data)))
+
     def g_intersection_circle(theta: float, g_val: float, color: str) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
@@ -377,7 +402,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     def _mode_visibility(mode: str, g_mask: list[bool] | None = None) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
-        g_related = g_sphere_indices + g_circle_indices
+        g_related = g_sphere_indices + g_circle_indices + g_point_indices
         vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
@@ -396,8 +421,19 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     g_mask_default = [i == 0 for i in range(len(g_sphere_indices))]
     g_mask_default.extend([i == 0 for i in range(len(g_circle_indices))])
+    g_mask_default.extend([i == 0 for i in range(len(g_point_indices))])
     lattice_visibility = _mode_visibility("lattice")
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
+
+    def _two_theta_str(g_mag: float) -> str:
+        ratio = g_mag / (2.0 * K_MAG_PLOT)
+        if ratio > 1.0:
+            return "n/a"
+        ratio = min(1.0, max(-1.0, ratio))
+        return f"{2.0 * math.degrees(math.asin(ratio)):.2f}°"
+
+    g_two_thetas = [_two_theta_str(val) for val in unique_g]
+    g_group_indices = list(zip(g_sphere_indices, g_circle_indices, g_point_indices, strict=True))
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -483,15 +519,24 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
              args=[{"visible": g_sphere_visibility}, {}]),
     ]
 
-    fig.update_layout(scene=dict(xaxis=dict(visible=False,
+    fig.update_layout(scene=dict(xaxis=dict(title="G_x (Å⁻¹)",
                                             range=[-axis_range, axis_range],
-                                            autorange=False),
-                                 yaxis=dict(visible=False,
+                                            autorange=False,
+                                            showbackground=False,
+                                            showticklabels=False,
+                                            zeroline=False),
+                                 yaxis=dict(title="G_y (Å⁻¹)",
                                             range=[-axis_range, axis_range],
-                                            autorange=False),
-                                 zaxis=dict(visible=False,
+                                            autorange=False,
+                                            showbackground=False,
+                                            showticklabels=False,
+                                            zeroline=False),
+                                 zaxis=dict(title="G_z (Å⁻¹)",
                                             range=[-axis_range, axis_range],
-                                            autorange=False),
+                                            autorange=False,
+                                            showbackground=False,
+                                            showticklabels=False,
+                                            zeroline=False),
                                  aspectmode="cube",
                                  bgcolor="rgba(0,0,0,0)",
                                  camera=dict(eye=dict(x=CAMERA_EYE[0],
@@ -511,26 +556,34 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                 g_sphere_visibility=g_sphere_visibility,
                                 g_sphere_indices=g_sphere_indices,
                                 g_circle_indices=g_circle_indices,
+                                g_point_indices=g_point_indices,
+                                g_group_indices=g_group_indices,
                                 g_values=unique_g.tolist()))
 
     context = dict(
         g_values=unique_g.tolist(),
         g_sphere_indices=g_sphere_indices,
         g_circle_indices=g_circle_indices,
+        g_point_indices=g_point_indices,
+        g_group_indices=g_group_indices,
         lattice_visibility=lattice_visibility,
         g_sphere_visibility=g_sphere_visibility,
+        g_two_thetas=g_two_thetas,
     )
 
     return fig, context
 
 
-def _selector_checkbox_html(g_values: list[float], g_sphere_indices: list[int]) -> str:
+def _selector_checkbox_html(g_values: list[float], group_indices: list[tuple[int, int, int]], two_thetas: list[str]) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, (g_val, trace_idx) in enumerate(zip(g_values, g_sphere_indices, strict=True)):
+    for i, (g_val, (sphere_idx, circle_idx, points_idx), two_theta) in enumerate(
+        zip(g_values, group_indices, two_thetas, strict=True)
+    ):
         checked = "checked" if i == 0 else ""
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-trace="{trace_idx}" {checked}>|G| = {g_val:.3f} Å⁻¹</label>'
+            f'data-pos="{i}" data-traces="{sphere_idx},{circle_idx},{points_idx}" {checked}>'
+            f'2θ ≈ {two_theta}</label>'
         )
     lines.append("</div>")
     return "\n".join(lines)
@@ -540,8 +593,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     import plotly.io as pio
 
     g_values: list[float] = context["g_values"]
-    g_sphere_indices: list[int] = context["g_sphere_indices"]
-    g_circle_indices: list[int] = context["g_circle_indices"]
+    g_group_indices: list[tuple[int, int, int]] = context["g_group_indices"]
+    g_two_thetas: list[str] = context["g_two_thetas"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
 
@@ -554,7 +607,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         div_id=figure_id,
         config={"responsive": True},
     )
-    selector_controls = _selector_checkbox_html(g_values, g_sphere_indices)
+    selector_controls = _selector_checkbox_html(g_values, g_group_indices, g_two_thetas)
 
     return f"""
 <!doctype html>
@@ -586,7 +639,6 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const figure = document.getElementById('{figure_id}');
         const latticeVis = {json.dumps(lattice_visibility)};
         const gSphereBase = {json.dumps(g_sphere_visibility)};
-        const gCircleIndices = {json.dumps(g_circle_indices)};
         const selectorBtn = document.getElementById('open-selector');
         const selectorStatus = document.getElementById('selector-status');
 
@@ -609,13 +661,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           function applySelection() {{
             const vis = Array.from(gSphereBase);
             checkboxes.forEach((cb) => {{
-              const idx = Number(cb.getAttribute('data-trace'));
-              const pos = Number(cb.getAttribute('data-pos'));
-              vis[idx] = cb.checked;
-              const circleIdx = gCircleIndices[pos];
-              if (!Number.isNaN(circleIdx)) {{
-                vis[circleIdx] = cb.checked;
-              }}
+              const traces = (cb.getAttribute('data-traces') || '').split(',').map(Number).filter((v) => !Number.isNaN(v));
+              traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
             }});
             Plotly.update(figure, {{visible: vis}});
           }}
