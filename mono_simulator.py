@@ -10,6 +10,7 @@ import math
 
 import numpy as np
 import plotly.graph_objects as go
+from plotly.colors import qualitative
 from mosaic_sim.geometry import rot_x, sphere
 
 
@@ -128,6 +129,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     lattice_indices = lattice_indices[nonzero_mask]
     lattice_points = lattice_points[nonzero_mask]
 
+    g_magnitudes = np.linalg.norm(lattice_points, axis=1)
+    unique_g = np.unique(np.round(g_magnitudes, 6))
+
     def _intersection_thetas() -> list[float]:
         thetas: list[float] = []
         for (hx, hy, hz), (x, y, z) in zip(lattice_indices, lattice_points, strict=True):
@@ -209,6 +213,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     lattice_max = float(np.max(np.abs(lattice_points)))
     axis_range = max(AXIS_RANGE, 1.2 * max(K_MAG_PLOT, lattice_max))
     R_MAX = axis_range
+    first_axis_idx = len(fig.data)
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
                 ([0, 0], [-R_MAX, 2 * R_MAX], [0, 0]),
                 ([0, 0], [0, 0], [-R_MAX, R_MAX])]:
@@ -217,6 +222,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                    line=dict(color="black",
                                              width=2,
                                              dash="dash")))
+    axis_indices = list(range(first_axis_idx, len(fig.data)))
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
@@ -289,6 +295,52 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     fig.add_trace(label_trace)
     hit_label_idx = len(fig.data) - 1
 
+    phi_g, theta_g = np.meshgrid(np.linspace(0, math.pi, 40),
+                                 np.linspace(0, 2 * math.pi, 80))
+
+    def g_magnitude_spheres() -> list[go.Surface]:
+        palette = qualitative.Plotly
+        traces: list[go.Surface] = []
+        for i, g_val in enumerate(unique_g):
+            color = palette[i % len(palette)]
+            sx, sy, sz = sphere(g_val, phi_g, theta_g)
+            traces.append(
+                go.Surface(
+                    x=sx,
+                    y=sy,
+                    z=sz,
+                    opacity=0.15,
+                    surfacecolor=np.full_like(sx, g_val),
+                    colorscale=[[0, color], [1, color]],
+                    showscale=False,
+                    name=f"|G| = {g_val:.3f} Å⁻¹",
+                    visible=False,
+                )
+            )
+        return traces
+
+    g_sphere_traces = g_magnitude_spheres()
+    for trace in g_sphere_traces:
+        fig.add_trace(trace)
+    g_sphere_indices = list(range(len(fig.data) - len(g_sphere_traces), len(fig.data)))
+
+    base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx,
+                    arc_idx, arc_label_idx, *axis_indices}
+
+    def _mode_visibility(mode: str) -> list[bool]:
+        lattice_related = {lattice_idx, projection_idx, hit_label_idx}
+        vis = []
+        for idx in range(len(fig.data)):
+            if idx in base_indices:
+                vis.append(True)
+            elif idx in lattice_related:
+                vis.append(mode == "lattice")
+            elif idx in g_sphere_indices:
+                vis.append(mode == "g_spheres")
+            else:
+                vis.append(True)
+        return vis
+
     frames = []
     for i, th in enumerate(theta_all):
         Bx, By, Bz = _ewald_surface(th, Ew_x, Ew_y, Ew_z)
@@ -358,6 +410,15 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     currentvalue=dict(prefix="θᵢ: "),
                     x=0.5, xanchor="center", y=-0.1, len=0.9)]
 
+    buttons = [
+        dict(label="Single crystal",
+             method="update",
+             args=[{"visible": _mode_visibility("lattice")}, {}]),
+        dict(label="|G| spheres",
+             method="update",
+             args=[{"visible": _mode_visibility("g_spheres")}, {}]),
+    ]
+
     fig.update_layout(scene=dict(xaxis=dict(visible=False,
                                             range=[-axis_range, axis_range],
                                             autorange=False),
@@ -374,7 +435,14 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                                      z=CAMERA_EYE[2]))),
                       paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, b=0, t=0),
-                      sliders=sliders)
+                      sliders=sliders,
+                      updatemenus=[dict(type="buttons",
+                                        buttons=buttons,
+                                        direction="right",
+                                        x=0.5,
+                                        xanchor="center",
+                                        y=1.1,
+                                        pad=dict(t=5, r=5))])
 
     return fig
 
