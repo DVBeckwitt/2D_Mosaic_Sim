@@ -489,6 +489,131 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         zip(g_ring_indices, g_ring_intersection_indices, strict=True)
     )
 
+    cylinder_values = sorted({float(val) for val in np.round(g_r[g_r > 0], 6)})
+
+    def g_radial_cylinders() -> list[go.Surface]:
+        cylinders: list[go.Surface] = []
+        theta_vals = np.linspace(0.0, 2 * math.pi, 80)
+        z_vals = np.linspace(-axis_range, axis_range, 60)
+        theta_grid, z_grid = np.meshgrid(theta_vals, z_vals)
+        for i, g_r_val in enumerate(cylinder_values):
+            color = palette[i % len(palette)]
+            x = g_r_val * np.cos(theta_grid)
+            y = g_r_val * np.sin(theta_grid)
+            cylinders.append(
+                go.Surface(
+                    x=x,
+                    y=y,
+                    z=z_grid,
+                    opacity=0.12,
+                    surfacecolor=np.full_like(x, g_r_val),
+                    colorscale=[[0, color], [1, color]],
+                    showscale=False,
+                    name=f"|Gᵣ| cylinder ({g_r_val:.3f} Å⁻¹)",
+                    visible=False,
+                )
+            )
+        return cylinders
+
+    g_cylinder_traces = g_radial_cylinders()
+    for trace in g_cylinder_traces:
+        fig.add_trace(trace)
+    g_cylinder_indices = list(
+        range(len(fig.data) - len(g_cylinder_traces), len(fig.data))
+    )
+
+    def g_cylinder_points() -> list[go.Scatter3d]:
+        traces: list[go.Scatter3d] = []
+        rounded = np.round(g_r, 6)
+        for i, g_r_val in enumerate(cylinder_values):
+            mask = np.isclose(rounded, g_r_val, atol=1e-6)
+            pts = lattice_points[mask]
+            color = palette[i % len(palette)]
+            traces.append(
+                go.Scatter3d(
+                    x=pts[:, 0] if len(pts) else [],
+                    y=pts[:, 1] if len(pts) else [],
+                    z=pts[:, 2] if len(pts) else [],
+                    mode="markers",
+                    marker=dict(color=color, size=6, opacity=0.95),
+                    name=f"|Gᵣ| points ({g_r_val:.3f} Å⁻¹)",
+                    visible=False,
+                )
+            )
+        return traces
+
+    g_cylinder_point_traces = g_cylinder_points()
+    for trace in g_cylinder_point_traces:
+        fig.add_trace(trace)
+    g_cylinder_point_indices = list(
+        range(len(fig.data) - len(g_cylinder_point_traces), len(fig.data))
+    )
+
+    def g_cylinder_intersection_curves(
+        theta: float, *, visibility: bool | None = False
+    ) -> list[go.Scatter3d]:
+        curves: list[go.Scatter3d] = []
+        center_y = K_MAG_PLOT * math.cos(theta)
+        center_z = K_MAG_PLOT * math.sin(theta)
+        t_vals = np.linspace(0.0, 2 * math.pi, 400)
+        sin_t = np.sin(t_vals)
+        cos_t = np.cos(t_vals)
+
+        for i, g_r_val in enumerate(cylinder_values):
+            color = palette[i % len(palette)]
+            rhs = K_MAG_PLOT * K_MAG_PLOT - g_r_val * g_r_val - (
+                g_r_val * sin_t - center_y
+            ) ** 2
+            valid = rhs >= 0.0
+            if not np.any(valid):
+                curves.append(
+                    go.Scatter3d(
+                        x=[], y=[], z=[], mode="lines", showlegend=False, visible=visibility
+                    )
+                )
+                continue
+
+            sqrt_rhs = np.sqrt(np.maximum(rhs, 0.0))
+            x_vals = g_r_val * cos_t
+            y_vals = g_r_val * sin_t
+            z_top = np.where(valid, center_z + sqrt_rhs, np.nan)
+            z_bottom = np.where(valid, center_z - sqrt_rhs, np.nan)
+
+            x_combined = np.concatenate([x_vals, [np.nan], x_vals])
+            y_combined = np.concatenate([y_vals, [np.nan], y_vals])
+            z_combined = np.concatenate([z_top, [np.nan], z_bottom])
+
+            curves.append(
+                go.Scatter3d(
+                    x=x_combined,
+                    y=y_combined,
+                    z=z_combined,
+                    mode="lines",
+                    line=dict(color=color, width=5),
+                    showlegend=False,
+                    name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹)",
+                    visible=visibility,
+                )
+            )
+
+        return curves
+
+    g_cylinder_intersection_traces = g_cylinder_intersection_curves(theta_all[0])
+    for trace in g_cylinder_intersection_traces:
+        fig.add_trace(trace)
+    g_cylinder_intersection_indices = list(
+        range(len(fig.data) - len(g_cylinder_intersection_traces), len(fig.data))
+    )
+
+    g_cylinder_groups = list(
+        zip(
+            g_cylinder_indices,
+            g_cylinder_intersection_indices,
+            g_cylinder_point_indices,
+            strict=True,
+        )
+    )
+
     def g_intersection_circle(
         theta: float, g_val: float, color: str, *, visibility: bool | None = False
     ) -> go.Scatter3d:
@@ -542,10 +667,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         mode: str,
         g_mask: list[bool] | None = None,
         ring_mask: list[bool] | None = None,
+        cylinder_mask: list[bool] | None = None,
     ) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
         g_related = g_sphere_indices + g_circle_indices + g_point_indices
         ring_related = [idx for pair in g_ring_groups for idx in pair]
+        cylinder_related = [idx for group in g_cylinder_groups for idx in group]
         vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
@@ -564,6 +691,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                 else:
                     pos = next(pos for pos, pair in enumerate(g_ring_groups) if idx in pair)
                     vis.append(True if ring_mask is None else ring_mask[pos])
+            elif idx in cylinder_related:
+                if mode != "g_cylinders":
+                    vis.append(False)
+                else:
+                    pos = next(pos for pos, group in enumerate(g_cylinder_groups) if idx in group)
+                    vis.append(True if cylinder_mask is None else cylinder_mask[pos])
             else:
                 vis.append(True)
         return vis
@@ -575,6 +708,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
     g_ring_mask_default = [True for _ in g_ring_indices]
     g_ring_visibility = _mode_visibility("g_rings", ring_mask=g_ring_mask_default)
+    g_cylinder_mask_default = [i == 0 for i in range(len(g_cylinder_groups))]
+    g_cylinder_visibility = _mode_visibility(
+        "g_cylinders", cylinder_mask=g_cylinder_mask_default
+    )
 
     def _two_theta_str(g_mag: float) -> str:
         ratio = g_mag / (2.0 * K_MAG_PLOT)
@@ -585,6 +722,14 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     g_two_thetas = [_two_theta_str(val) for val in unique_g]
     g_group_indices = list(zip(g_sphere_indices, g_circle_indices, g_point_indices, strict=True))
+    g_cylinder_group_indices = list(
+        zip(
+            g_cylinder_indices,
+            g_cylinder_intersection_indices,
+            g_cylinder_point_indices,
+            strict=True,
+        )
+    )
 
     frames = []
     for i, th in enumerate(theta_all):
@@ -597,6 +742,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         for j, g_val in enumerate(unique_g)
     ]
         ring_intersections = g_ring_intersection_points(th, visibility=None)
+        cylinder_intersections = g_cylinder_intersection_curves(th, visibility=None)
         frames.append(
             go.Frame(
                 name=f"f{i}",
@@ -636,6 +782,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     hit_projection(th),
                     hit_labels(th),
                     *ring_intersections,
+                    *cylinder_intersections,
                     *circles,
                 ],
                 traces=[
@@ -649,6 +796,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     projection_idx,
                     hit_label_idx,
                     *g_ring_intersection_indices,
+                    *g_cylinder_intersection_indices,
                     *g_circle_indices,
                 ],
             )
@@ -676,6 +824,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         dict(label="2D Powder",
              method="update",
              args=[{"visible": g_ring_visibility}, {}]),
+        dict(label="Cylinder",
+             method="update",
+             args=[{"visible": g_cylinder_visibility}, {}]),
     ]
 
     fig.update_layout(scene=dict(xaxis=dict(title="G_x (Å⁻¹)",
@@ -722,6 +873,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                 g_group_indices=g_group_indices,
                                 g_ring_groups=g_ring_groups,
                                 g_ring_visibility=g_ring_visibility,
+                                g_cylinder_indices=g_cylinder_indices,
+                                g_cylinder_intersection_indices=g_cylinder_intersection_indices,
+                                g_cylinder_point_indices=g_cylinder_point_indices,
+                                g_cylinder_group_indices=g_cylinder_group_indices,
+                                g_cylinder_visibility=g_cylinder_visibility,
                                 g_values=unique_g.tolist()))
 
     context = dict(
@@ -736,6 +892,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         lattice_visibility=lattice_visibility,
         g_sphere_visibility=g_sphere_visibility,
         g_ring_visibility=g_ring_visibility,
+        g_cylinder_visibility=g_cylinder_visibility,
+        g_cylinder_specs=cylinder_values,
+        g_cylinder_groups=g_cylinder_group_indices,
         g_two_thetas=g_two_thetas,
     )
 
@@ -773,6 +932,23 @@ def _ring_selector_checkbox_html(
     return "\n".join(lines)
 
 
+def _cylinder_selector_checkbox_html(
+    cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int]]
+) -> str:
+    lines = ["<div id=\"g-selector\">"]
+    for i, (g_r_val, (cyl_idx, intersection_idx, point_idx)) in enumerate(
+        zip(cylinder_specs, cylinder_groups, strict=True)
+    ):
+        checked = "checked" if i == 0 else ""
+        lines.append(
+            f'<label class="g-option"><input class="g-toggle" type="checkbox" '
+            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{point_idx}" {checked}>'
+            f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹</label>'
+        )
+    lines.append("</div>")
+    return "\n".join(lines)
+
+
 def build_interactive_page(fig: go.Figure, context: dict) -> str:
     import plotly.io as pio
 
@@ -785,6 +961,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
     g_ring_visibility: list[bool] = context["g_ring_visibility"]
+    g_cylinder_visibility: list[bool] = context["g_cylinder_visibility"]
+    g_cylinder_specs: list[float] = context["g_cylinder_specs"]
+    g_cylinder_groups: list[tuple[int, int, int]] = context["g_cylinder_groups"]
 
     figure_id = "mono-figure"
     figure_html = pio.to_html(
@@ -797,6 +976,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     )
     selector_controls = _selector_checkbox_html(g_values, g_group_indices, g_two_thetas)
     ring_selector_controls = _ring_selector_checkbox_html(g_ring_specs, g_ring_groups)
+    cylinder_selector_controls = _cylinder_selector_checkbox_html(
+        g_cylinder_specs, g_cylinder_groups
+    )
 
     return f"""
 <!doctype html>
@@ -816,7 +998,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 </head>
   <body>
     <div id=\"wrapper\">
-      <div id=\"note\">Use the pop-out window to toggle 3D powder shells or 2D powder rings, or use the buttons to switch between lattice, 3D Powder, and 2D Powder views.</div>
+      <div id=\"note\">Use the pop-out window to toggle 3D powder shells, 2D powder rings, or Gᵣ cylinders, or use the buttons to switch between lattice, 3D Powder, 2D Powder, and Cylinder views.</div>
       <div id=\"controls\">
         <button id=\"open-selector\">Open powder selector window</button>
         <label style=\"margin-left:12px;\">Ewald opacity:
@@ -833,8 +1015,10 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const latticeVis = {json.dumps(lattice_visibility)};
         const gSphereBase = {json.dumps(g_sphere_visibility)};
         const gRingBase = {json.dumps(g_ring_visibility)};
+        const gCylinderBase = {json.dumps(g_cylinder_visibility)};
         const sphereSelectorHtml = `{selector_controls}`;
         const ringSelectorHtml = `{ring_selector_controls}`;
+        const cylinderSelectorHtml = `{cylinder_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
@@ -876,11 +1060,14 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 
         function writeSelectorDoc(targetWin, mode = '3d') {{
           const is3D = mode === '3d';
-          const heading = is3D ? '3D powder shells' : '2D powder rings';
+          const isRing = mode === '2d';
+          const heading = is3D ? '3D powder shells' : isRing ? '2D powder rings' : 'Cylinders (|Gᵣ|)';
           const intro = is3D
             ? 'Select which |G| shells to display. Default view shows only the smallest |G|.'
-            : 'Select which |Gᵣ| rings to display for the chosen G_z plane.';
-          const bodyHtml = is3D ? sphereSelectorHtml : ringSelectorHtml;
+            : isRing
+              ? 'Select which |Gᵣ| rings to display for the chosen G_z plane.'
+              : 'Select which |Gᵣ| cylinders to display along G_z. Reciprocal points on each cylinder are highlighted and the Ewald intersection is traced.';
+          const bodyHtml = is3D ? sphereSelectorHtml : isRing ? ringSelectorHtml : cylinderSelectorHtml;
           targetWin.document.open();
           targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${{heading}}</title>
           <style>body {{ font-family: Arial, sans-serif; padding: 12px; margin: 0; }} .g-option {{ display: block; margin: 6px 0; }}
@@ -895,7 +1082,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         }}
 
         function hookSelector(targetWin, mode = '3d') {{
-          const base = mode === '3d' ? gSphereBase : gRingBase;
+          const base = mode === '3d' ? gSphereBase : mode === '2d' ? gRingBase : gCylinderBase;
           const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
 
           function applySelection() {{
@@ -940,7 +1127,11 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             writeSelectorDoc(selectorWin, mode);
           }}
           selectorWin.focus();
-          selectorStatus.textContent = mode === '3d' ? '3D powder selector opened.' : '2D powder selector opened.';
+          selectorStatus.textContent = mode === '3d'
+            ? '3D powder selector opened.'
+            : mode === '2d'
+              ? '2D powder selector opened.'
+              : 'Cylinder selector opened.';
           return hookSelector(selectorWin, mode);
         }}
 
@@ -970,6 +1161,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           }} else if (label === '2D Powder') {{
             selectorMode = '2d';
             const applyFn = openSelectorWindow(true, '2d');
+            if (applyFn) {{
+              applySelection = applyFn;
+              applySelection();
+            }}
+          }} else if (label === 'Cylinder') {{
+            selectorMode = 'cyl';
+            const applyFn = openSelectorWindow(true, 'cyl');
             if (applyFn) {{
               applySelection = applyFn;
               applySelection();
