@@ -716,6 +716,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                 g_sphere_indices=g_sphere_indices,
                                 g_circle_indices=g_circle_indices,
                                 g_point_indices=g_point_indices,
+                                ewald_idx=ewald_idx,
                                 g_ring_indices=g_ring_indices,
                                 g_ring_intersection_indices=g_ring_intersection_indices,
                                 g_group_indices=g_group_indices,
@@ -818,6 +819,10 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
       <div id=\"note\">Use the pop-out window to toggle 3D powder shells or 2D powder rings, or use the buttons to switch between lattice, 3D Powder, and 2D Powder views.</div>
       <div id=\"controls\">
         <button id=\"open-selector\">Open powder selector window</button>
+        <label style=\"margin-left:12px;\">Ewald opacity:
+          <input id=\"ewald-opacity\" type=\"range\" min=\"0\" max=\"1\" step=\"0.05\" value=\"1\">
+          <span id=\"ewald-opacity-value\">1.00</span>
+        </label>
         <span id=\"selector-status\" style=\"margin-left:8px;color:#444;\"></span>
       </div>
       <div id=\"figure-container\">{figure_html}</div>
@@ -832,8 +837,42 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const ringSelectorHtml = `{ring_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
         const selectorStatus = document.getElementById('selector-status');
+        const ewaldSlider = document.getElementById('ewald-opacity');
+        const ewaldValue = document.getElementById('ewald-opacity-value');
+        const meta = figure.layout && figure.layout.meta ? figure.layout.meta : {{}};
+        const ewaldIdx = typeof meta.ewald_idx === 'number'
+          ? meta.ewald_idx
+          : (figure.data || []).findIndex((trace) => trace && trace.name === 'Ewald sphere');
         let selectorMode = '3d';
         let selectorWin = null;
+
+        function applyEwaldOpacity(alpha) {{
+          const clamped = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 1));
+          if (ewaldValue) {{
+            ewaldValue.textContent = clamped.toFixed(2);
+          }}
+          if (ewaldSlider && clamped !== parseFloat(ewaldSlider.value)) {{
+            ewaldSlider.value = clamped.toString();
+          }}
+          if (ewaldIdx >= 0) {{
+            Plotly.restyle(figure, {{ opacity: clamped }}, [ewaldIdx]);
+          }}
+          if (Array.isArray(figure.frames)) {{
+            figure.frames.forEach((frame) => {{
+              if (frame && frame.data && frame.data.length > 0 && frame.data[0]) {{
+                frame.data[0].opacity = clamped;
+              }}
+            }});
+          }}
+        }}
+
+        if (ewaldSlider) {{
+          ewaldSlider.addEventListener('input', (evt) => {{
+            const val = parseFloat(evt.target.value);
+            applyEwaldOpacity(val);
+          }});
+          applyEwaldOpacity(parseFloat(ewaldSlider.value));
+        }}
 
         function writeSelectorDoc(targetWin, mode = '3d') {{
           const is3D = mode === '3d';
