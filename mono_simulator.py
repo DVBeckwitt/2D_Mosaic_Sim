@@ -389,6 +389,74 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
+    def g_ring_intersection_points() -> list[go.Scatter3d]:
+        intersections: list[go.Scatter3d] = []
+        for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
+            if g_r_val == 0:
+                intersections.append(
+                    go.Scatter3d(
+                        x=[],
+                        y=[],
+                        z=[],
+                        mode="markers",
+                        showlegend=False,
+                        visible=False,
+                    )
+                )
+                continue
+
+            ratio = (g_r_val * g_r_val + g_z_val * g_z_val) / (2.0 * K_MAG_PLOT * g_r_val)
+            if abs(ratio) > 1.0:
+                intersections.append(
+                    go.Scatter3d(
+                        x=[],
+                        y=[],
+                        z=[],
+                        mode="markers",
+                        showlegend=False,
+                        visible=False,
+                    )
+                )
+                continue
+
+            t0 = math.asin(ratio)
+            candidates = [(t0 % (2 * math.pi)), ((math.pi - t0) % (2 * math.pi))]
+
+            t_unique: list[float] = []
+            for t_val in candidates:
+                if not any(math.isclose(t_val, seen, rel_tol=1e-9, abs_tol=1e-9) for seen in t_unique):
+                    t_unique.append(t_val)
+
+            x_vals = [g_r_val * math.cos(t_val) for t_val in t_unique]
+            y_vals = [g_r_val * math.sin(t_val) for t_val in t_unique]
+            z_vals = [g_z_val for _ in t_unique]
+
+            intersections.append(
+                go.Scatter3d(
+                    x=x_vals,
+                    y=y_vals,
+                    z=z_vals,
+                    mode="markers",
+                    marker=dict(color=palette[i % len(palette)], size=10, symbol="x", line=dict(color="black", width=2)),
+                    name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
+                    visible=False,
+                    showlegend=False,
+                )
+            )
+
+        return intersections
+
+    g_ring_intersection_traces = g_ring_intersection_points()
+    for trace in g_ring_intersection_traces:
+        fig.add_trace(trace)
+    g_ring_intersection_indices = list(
+        range(len(fig.data) - len(g_ring_intersection_traces), len(fig.data))
+    )
+
+    g_ring_groups = list(
+        zip(g_ring_indices, g_ring_intersection_indices, strict=True)
+    )
+
     def g_intersection_circle(theta: float, g_val: float, color: str) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
@@ -443,7 +511,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     ) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
         g_related = g_sphere_indices + g_circle_indices + g_point_indices
-        ring_related = g_ring_indices
+        ring_related = [idx for pair in g_ring_groups for idx in pair]
         vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
@@ -460,7 +528,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                 if mode != "g_rings":
                     vis.append(False)
                 else:
-                    pos = ring_related.index(idx)
+                    pos = next(pos for pos, pair in enumerate(g_ring_groups) if idx in pair)
                     vis.append(True if ring_mask is None else ring_mask[pos])
             else:
                 vis.append(True)
