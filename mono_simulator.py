@@ -353,19 +353,20 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_point_indices = list(range(len(fig.data) - len(g_point_traces), len(fig.data)))
 
+    g_r = np.linalg.norm(lattice_points[:, :2], axis=1)
+    g_z = lattice_points[:, 2]
+    rounded_pairs: dict[tuple[float, float], tuple[float, float]] = {}
+    for g_r_val, g_z_val, g_r_round, g_z_round in zip(
+        g_r, g_z, np.round(g_r, 6), np.round(g_z, 6), strict=True
+    ):
+        key = (float(g_r_round), float(g_z_round))
+        rounded_pairs.setdefault(key, (float(g_r_val), float(g_z_val)))
+    g_ring_specs = list(rounded_pairs.values())
+
     def g_radial_rings() -> list[go.Scatter3d]:
         rings: list[go.Scatter3d] = []
-        g_r = np.linalg.norm(lattice_points[:, :2], axis=1)
-        g_z = lattice_points[:, 2]
-        rounded_pairs: dict[tuple[float, float], tuple[float, float]] = {}
-        for g_r_val, g_z_val, g_r_round, g_z_round in zip(
-            g_r, g_z, np.round(g_r, 6), np.round(g_z, 6), strict=True
-        ):
-            key = (float(g_r_round), float(g_z_round))
-            rounded_pairs.setdefault(key, (float(g_r_val), float(g_z_val)))
-
         t_vals = np.linspace(0.0, 2 * math.pi, 200)
-        for i, (_, (g_r_val, g_z_val)) in enumerate(rounded_pairs.items()):
+        for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
             color = palette[i % len(palette)]
             x = g_r_val * np.cos(t_vals)
             y = g_r_val * np.sin(t_vals)
@@ -562,10 +563,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         dict(label="Single crystal",
              method="update",
              args=[{"visible": lattice_visibility}, {}]),
-        dict(label="|G| spheres",
+        dict(label="3D Powder",
              method="update",
              args=[{"visible": g_sphere_visibility}, {}]),
-        dict(label="|Gᵣ| rings",
+        dict(label="2D Powder",
              method="update",
              args=[{"visible": g_ring_visibility}, {}]),
     ]
@@ -620,6 +621,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         g_point_indices=g_point_indices,
         g_ring_indices=g_ring_indices,
         g_group_indices=g_group_indices,
+        g_ring_specs=g_ring_specs,
         lattice_visibility=lattice_visibility,
         g_sphere_visibility=g_sphere_visibility,
         g_ring_visibility=g_ring_visibility,
@@ -644,12 +646,26 @@ def _selector_checkbox_html(g_values: list[float], group_indices: list[tuple[int
     return "\n".join(lines)
 
 
+def _ring_selector_checkbox_html(ring_specs: list[tuple[float, float]], ring_indices: list[int]) -> str:
+    lines = ["<div id=\"g-selector\">"]
+    for i, ((g_r_val, g_z_val), trace_idx) in enumerate(zip(ring_specs, ring_indices, strict=True)):
+        lines.append(
+            f'<label class="g-option"><input class="g-toggle" type="checkbox" '
+            f'data-pos="{i}" data-traces="{trace_idx}" checked>'
+            f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹, G_z ≈ {g_z_val:.3f} Å⁻¹</label>'
+        )
+    lines.append("</div>")
+    return "\n".join(lines)
+
+
 def build_interactive_page(fig: go.Figure, context: dict) -> str:
     import plotly.io as pio
 
     g_values: list[float] = context["g_values"]
     g_group_indices: list[tuple[int, int, int]] = context["g_group_indices"]
     g_two_thetas: list[str] = context["g_two_thetas"]
+    g_ring_specs: list[tuple[float, float]] = context["g_ring_specs"]
+    g_ring_indices: list[int] = context["g_ring_indices"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
     g_ring_visibility: list[bool] = context["g_ring_visibility"]
@@ -664,6 +680,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         config={"responsive": True},
     )
     selector_controls = _selector_checkbox_html(g_values, g_group_indices, g_two_thetas)
+    ring_selector_controls = _ring_selector_checkbox_html(g_ring_specs, g_ring_indices)
 
     return f"""
 <!doctype html>
@@ -683,9 +700,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 </head>
   <body>
     <div id=\"wrapper\">
-      <div id=\"note\">Use the pop-out window to toggle |G| shells, or the buttons to switch between lattice, |G| spheres, and |Gᵣ| rings.</div>
+      <div id=\"note\">Use the pop-out window to toggle 3D powder shells or 2D powder rings, or use the buttons to switch between lattice, 3D Powder, and 2D Powder views.</div>
       <div id=\"controls\">
-        <button id=\"open-selector\">Open |G| selector window</button>
+        <button id=\"open-selector\">Open powder selector window</button>
         <span id=\"selector-status\" style=\"margin-left:8px;color:#444;\"></span>
       </div>
       <div id=\"figure-container\">{figure_html}</div>
@@ -695,28 +712,40 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const figure = document.getElementById('{figure_id}');
         const latticeVis = {json.dumps(lattice_visibility)};
         const gSphereBase = {json.dumps(g_sphere_visibility)};
-        const gRingVis = {json.dumps(g_ring_visibility)};
+        const gRingBase = {json.dumps(g_ring_visibility)};
+        const sphereSelectorHtml = `{selector_controls}`;
+        const ringSelectorHtml = `{ring_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
         const selectorStatus = document.getElementById('selector-status');
+        let selectorMode = '3d';
+        let selectorWin = null;
 
-        function writeSelectorDoc(targetWin) {{
+        function writeSelectorDoc(targetWin, mode = '3d') {{
+          const is3D = mode === '3d';
+          const heading = is3D ? '3D powder shells' : '2D powder rings';
+          const intro = is3D
+            ? 'Select which |G| shells to display. Default view shows only the smallest |G|.'
+            : 'Select which |Gᵣ| rings to display for the chosen G_z plane.';
+          const bodyHtml = is3D ? sphereSelectorHtml : ringSelectorHtml;
           targetWin.document.open();
-          targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>|G| selector</title>
+          targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${heading}</title>
           <style>body {{ font-family: Arial, sans-serif; padding: 12px; margin: 0; }} .g-option {{ display: block; margin: 6px 0; }}
     </style>
-          </head><body><h3>|G| shells</h3>
-          <p>Select which |G| spheres to display. Default view shows only the smallest |G|.</p>
+          </head><body><h3>${heading}</h3>
+          <p>${intro}</p>
           <div style="margin-bottom:8px;"><button id="check-all">Show all</button> <button id="check-none">Show none</button></div>
-          {selector_controls}
+          ${bodyHtml}
           </body></html>`);
           targetWin.document.close();
+          targetWin.__selectorMode = mode;
         }}
 
-        function hookSelector(targetWin) {{
+        function hookSelector(targetWin, mode = '3d') {{
+          const base = mode === '3d' ? gSphereBase : gRingBase;
           const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
 
           function applySelection() {{
-            const vis = Array.from(gSphereBase);
+            const vis = Array.from(base);
             checkboxes.forEach((cb) => {{
               const traces = (cb.getAttribute('data-traces') || '').split(',').map(Number).filter((v) => !Number.isNaN(v));
               traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
@@ -744,18 +773,21 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           return applySelection;
         }}
 
-        function openSelectorWindow(focusOnly = false) {{
-          const selectorWin = window.open('', 'g_selector_window', 'width=340,height=600');
+        function openSelectorWindow(focusOnly = false, mode = selectorMode) {{
+          selectorMode = mode;
+          if (!selectorWin || selectorWin.closed) {{
+            selectorWin = window.open('', 'g_selector_window', 'width=340,height=600');
+          }}
           if (!selectorWin) {{
             selectorStatus.textContent = 'Pop-up blocked. Click the button to retry after allowing pop-ups.';
             return null;
           }}
-          if (!focusOnly || selectorWin.document.body?.childElementCount === 0) {{
-            writeSelectorDoc(selectorWin);
+          if (!focusOnly || selectorWin.document.body?.childElementCount === 0 || selectorWin.__selectorMode !== mode) {{
+            writeSelectorDoc(selectorWin, mode);
           }}
           selectorWin.focus();
-          selectorStatus.textContent = 'Selector window opened.';
-          return hookSelector(selectorWin);
+          selectorStatus.textContent = mode === '3d' ? '3D powder selector opened.' : '2D powder selector opened.';
+          return hookSelector(selectorWin, mode);
         }}
 
         let applySelection = openSelectorWindow(true);
@@ -764,7 +796,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         }}
 
         selectorBtn.addEventListener('click', () => {{
-          const applyFn = openSelectorWindow();
+          const applyFn = openSelectorWindow(false, selectorMode);
           if (applyFn) {{
             applySelection = applyFn;
           }}
@@ -774,10 +806,20 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           const label = evt.button && evt.button.label;
           if (label === 'Single crystal') {{
             Plotly.update(figure, {{visible: latticeVis}});
-          }} else if (label === '|G| spheres' && applySelection) {{
-            applySelection();
-          }} else if (label === '|Gᵣ| rings') {{
-            Plotly.update(figure, {{visible: gRingVis}});
+          }} else if (label === '3D Powder') {{
+            selectorMode = '3d';
+            const applyFn = openSelectorWindow(true, '3d');
+            if (applyFn) {{
+              applySelection = applyFn;
+              applySelection();
+            }}
+          }} else if (label === '2D Powder') {{
+            selectorMode = '2d';
+            const applyFn = openSelectorWindow(true, '2d');
+            if (applyFn) {{
+              applySelection = applyFn;
+              applySelection();
+            }}
           }}
         }});
       }});
