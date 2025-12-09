@@ -389,10 +389,40 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
-    def g_ring_intersection_points() -> list[go.Scatter3d]:
+    def g_ring_intersection_points(theta: float) -> list[go.Scatter3d]:
         intersections: list[go.Scatter3d] = []
+        center_y = K_MAG_PLOT * math.cos(theta)
+        center_z = K_MAG_PLOT * math.sin(theta)
+
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
+            color = palette[i % len(palette)]
+
             if g_r_val == 0:
+                dist_sq = center_y * center_y + (g_z_val - center_z) ** 2
+                on_sphere = math.isclose(dist_sq, K_MAG_PLOT * K_MAG_PLOT, rel_tol=1e-9, abs_tol=1e-9)
+                intersections.append(
+                    go.Scatter3d(
+                        x=[0.0] if on_sphere else [],
+                        y=[0.0] if on_sphere else [],
+                        z=[g_z_val] if on_sphere else [],
+                        mode="markers",
+                        marker=dict(color=color, size=5, symbol="circle"),
+                        name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
+                        visible=False,
+                        showlegend=False,
+                    )
+                )
+                continue
+
+            denominator = 2.0 * g_r_val * center_y
+            numerator = (
+                g_r_val * g_r_val
+                + center_y * center_y
+                + (g_z_val - center_z) * (g_z_val - center_z)
+                - K_MAG_PLOT * K_MAG_PLOT
+            )
+
+            if abs(denominator) < 1e-12:
                 intersections.append(
                     go.Scatter3d(
                         x=[],
@@ -405,7 +435,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                 )
                 continue
 
-            ratio = (g_r_val * g_r_val + g_z_val * g_z_val) / (2.0 * K_MAG_PLOT * g_r_val)
+            ratio = numerator / denominator
             if abs(ratio) > 1.0:
                 intersections.append(
                     go.Scatter3d(
@@ -437,7 +467,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     y=y_vals,
                     z=z_vals,
                     mode="markers",
-                    marker=dict(color=palette[i % len(palette)], size=10, symbol="x", line=dict(color="black", width=2)),
+                    marker=dict(color=color, size=5, symbol="circle"),
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=False,
                     showlegend=False,
@@ -446,7 +476,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
         return intersections
 
-    g_ring_intersection_traces = g_ring_intersection_points()
+    g_ring_intersection_traces = g_ring_intersection_points(theta_all[0])
     for trace in g_ring_intersection_traces:
         fig.add_trace(trace)
     g_ring_intersection_indices = list(
@@ -560,6 +590,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             g_intersection_circle(th, g_val, palette[j % len(palette)])
             for j, g_val in enumerate(unique_g)
         ]
+        ring_intersections = g_ring_intersection_points(th)
         frames.append(
             go.Frame(
                 name=f"f{i}",
@@ -598,6 +629,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     lattice_marker(th),
                     hit_projection(th),
                     hit_labels(th),
+                    *ring_intersections,
                     *circles,
                 ],
                 traces=[
@@ -610,6 +642,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     lattice_idx,
                     projection_idx,
                     hit_label_idx,
+                    *g_ring_intersection_indices,
                     *g_circle_indices,
                 ],
             )
@@ -678,7 +711,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                 g_circle_indices=g_circle_indices,
                                 g_point_indices=g_point_indices,
                                 g_ring_indices=g_ring_indices,
+                                g_ring_intersection_indices=g_ring_intersection_indices,
                                 g_group_indices=g_group_indices,
+                                g_ring_groups=g_ring_groups,
                                 g_ring_visibility=g_ring_visibility,
                                 g_values=unique_g.tolist()))
 
@@ -688,6 +723,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         g_circle_indices=g_circle_indices,
         g_point_indices=g_point_indices,
         g_ring_indices=g_ring_indices,
+        g_ring_groups=g_ring_groups,
         g_group_indices=g_group_indices,
         g_ring_specs=g_ring_specs,
         lattice_visibility=lattice_visibility,
@@ -714,12 +750,16 @@ def _selector_checkbox_html(g_values: list[float], group_indices: list[tuple[int
     return "\n".join(lines)
 
 
-def _ring_selector_checkbox_html(ring_specs: list[tuple[float, float]], ring_indices: list[int]) -> str:
+def _ring_selector_checkbox_html(
+    ring_specs: list[tuple[float, float]], ring_groups: list[tuple[int, int]]
+) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, ((g_r_val, g_z_val), trace_idx) in enumerate(zip(ring_specs, ring_indices, strict=True)):
+    for i, ((g_r_val, g_z_val), (ring_idx, intersection_idx)) in enumerate(
+        zip(ring_specs, ring_groups, strict=True)
+    ):
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{trace_idx}" checked>'
+            f'data-pos="{i}" data-traces="{ring_idx},{intersection_idx}" checked>'
             f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹, G_z ≈ {g_z_val:.3f} Å⁻¹</label>'
         )
     lines.append("</div>")
@@ -734,6 +774,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     g_two_thetas: list[str] = context["g_two_thetas"]
     g_ring_specs: list[tuple[float, float]] = context["g_ring_specs"]
     g_ring_indices: list[int] = context["g_ring_indices"]
+    g_ring_groups: list[tuple[int, int]] = context["g_ring_groups"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
     g_ring_visibility: list[bool] = context["g_ring_visibility"]
@@ -748,7 +789,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         config={"responsive": True},
     )
     selector_controls = _selector_checkbox_html(g_values, g_group_indices, g_two_thetas)
-    ring_selector_controls = _ring_selector_checkbox_html(g_ring_specs, g_ring_indices)
+    ring_selector_controls = _ring_selector_checkbox_html(g_ring_specs, g_ring_groups)
 
     return f"""
 <!doctype html>
