@@ -546,8 +546,14 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
 
     figure_id = "mono-figure"
-    figure_html = pio.to_html(fig, include_plotlyjs="cdn", full_html=False,
-                              auto_play=False, div_id=figure_id)
+    figure_html = pio.to_html(
+        fig,
+        include_plotlyjs="cdn",
+        full_html=False,
+        auto_play=False,
+        div_id=figure_id,
+        config={"responsive": True},
+    )
     selector_controls = _selector_checkbox_html(g_values, g_sphere_indices)
 
     return f"""
@@ -557,19 +563,23 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
   <meta charset=\"utf-8\">
   <title>Mono simulator</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; }}
-    #wrapper {{ display: flex; flex-direction: column; align-items: center; }}
+    html, body {{ height: 100%; width: 100%; margin: 0; padding: 0; }}
+    body {{ font-family: Arial, sans-serif; }}
+    #wrapper {{ display: flex; flex-direction: column; width: 100%; height: 100%; }}
     #note {{ padding: 8px 12px; background: #f2f2f2; width: 100%; box-sizing: border-box; }}
+    #controls {{ padding: 8px 12px; width: 100%; box-sizing: border-box; }}
+    #figure-container {{ flex: 1 1 auto; width: 100%; min-height: 0; }}
+    #figure-container .plotly-graph-div {{ height: 100% !important; width: 100% !important; }}
   </style>
 </head>
   <body>
     <div id=\"wrapper\">
       <div id=\"note\">Use the pop-out window to toggle |G| shells. Default shows the smallest shell only.</div>
-      <div style="margin:8px 0;">
-        <button id="open-selector">Open |G| selector window</button>
-        <span id="selector-status" style="margin-left:8px;color:#444;"></span>
+      <div id=\"controls\">
+        <button id=\"open-selector\">Open |G| selector window</button>
+        <span id=\"selector-status\" style=\"margin-left:8px;color:#444;\"></span>
       </div>
-      {figure_html}
+      <div id=\"figure-container\">{figure_html}</div>
     </div>
     <script>
       window.addEventListener('DOMContentLoaded', () => {{
