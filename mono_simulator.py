@@ -353,6 +353,41 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_point_indices = list(range(len(fig.data) - len(g_point_traces), len(fig.data)))
 
+    def g_radial_rings() -> list[go.Scatter3d]:
+        rings: list[go.Scatter3d] = []
+        g_r = np.linalg.norm(lattice_points[:, :2], axis=1)
+        g_z = lattice_points[:, 2]
+        rounded_pairs: dict[tuple[float, float], tuple[float, float]] = {}
+        for g_r_val, g_z_val, g_r_round, g_z_round in zip(
+            g_r, g_z, np.round(g_r, 6), np.round(g_z, 6), strict=True
+        ):
+            key = (float(g_r_round), float(g_z_round))
+            rounded_pairs.setdefault(key, (float(g_r_val), float(g_z_val)))
+
+        t_vals = np.linspace(0.0, 2 * math.pi, 200)
+        for i, (_, (g_r_val, g_z_val)) in enumerate(rounded_pairs.items()):
+            color = palette[i % len(palette)]
+            x = g_r_val * np.cos(t_vals)
+            y = g_r_val * np.sin(t_vals)
+            z = np.full_like(t_vals, g_z_val)
+            rings.append(
+                go.Scatter3d(
+                    x=x,
+                    y=y,
+                    z=z,
+                    mode="lines",
+                    line=dict(color=color, width=4),
+                    name=f"|Gᵣ| ring ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
+                    visible=False,
+                )
+            )
+        return rings
+
+    g_ring_traces = g_radial_rings()
+    for trace in g_ring_traces:
+        fig.add_trace(trace)
+    g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
+
     def g_intersection_circle(theta: float, g_val: float, color: str) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
@@ -400,9 +435,14 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx,
                     arc_idx, arc_label_idx, *axis_indices}
 
-    def _mode_visibility(mode: str, g_mask: list[bool] | None = None) -> list[bool]:
+    def _mode_visibility(
+        mode: str,
+        g_mask: list[bool] | None = None,
+        ring_mask: list[bool] | None = None,
+    ) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
         g_related = g_sphere_indices + g_circle_indices + g_point_indices
+        ring_related = g_ring_indices
         vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
@@ -415,6 +455,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                 else:
                     pos = g_related.index(idx)
                     vis.append(False if g_mask is None else g_mask[pos])
+            elif idx in ring_related:
+                if mode != "g_rings":
+                    vis.append(False)
+                else:
+                    pos = ring_related.index(idx)
+                    vis.append(True if ring_mask is None else ring_mask[pos])
             else:
                 vis.append(True)
         return vis
@@ -424,6 +470,8 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     g_mask_default.extend([i == 0 for i in range(len(g_point_indices))])
     lattice_visibility = _mode_visibility("lattice")
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
+    g_ring_mask_default = [True for _ in g_ring_indices]
+    g_ring_visibility = _mode_visibility("g_rings", ring_mask=g_ring_mask_default)
 
     def _two_theta_str(g_mag: float) -> str:
         ratio = g_mag / (2.0 * K_MAG_PLOT)
@@ -517,6 +565,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         dict(label="|G| spheres",
              method="update",
              args=[{"visible": g_sphere_visibility}, {}]),
+        dict(label="|Gᵣ| rings",
+             method="update",
+             args=[{"visible": g_ring_visibility}, {}]),
     ]
 
     fig.update_layout(scene=dict(xaxis=dict(title="G_x (Å⁻¹)",
@@ -557,7 +608,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                 g_sphere_indices=g_sphere_indices,
                                 g_circle_indices=g_circle_indices,
                                 g_point_indices=g_point_indices,
+                                g_ring_indices=g_ring_indices,
                                 g_group_indices=g_group_indices,
+                                g_ring_visibility=g_ring_visibility,
                                 g_values=unique_g.tolist()))
 
     context = dict(
@@ -565,9 +618,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         g_sphere_indices=g_sphere_indices,
         g_circle_indices=g_circle_indices,
         g_point_indices=g_point_indices,
+        g_ring_indices=g_ring_indices,
         g_group_indices=g_group_indices,
         lattice_visibility=lattice_visibility,
         g_sphere_visibility=g_sphere_visibility,
+        g_ring_visibility=g_ring_visibility,
         g_two_thetas=g_two_thetas,
     )
 
@@ -597,6 +652,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     g_two_thetas: list[str] = context["g_two_thetas"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
+    g_ring_visibility: list[bool] = context["g_ring_visibility"]
 
     figure_id = "mono-figure"
     figure_html = pio.to_html(
@@ -627,7 +683,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 </head>
   <body>
     <div id=\"wrapper\">
-      <div id=\"note\">Use the pop-out window to toggle |G| shells. Default shows the smallest shell only.</div>
+      <div id=\"note\">Use the pop-out window to toggle |G| shells, or the buttons to switch between lattice, |G| spheres, and |Gᵣ| rings.</div>
       <div id=\"controls\">
         <button id=\"open-selector\">Open |G| selector window</button>
         <span id=\"selector-status\" style=\"margin-left:8px;color:#444;\"></span>
@@ -639,6 +695,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const figure = document.getElementById('{figure_id}');
         const latticeVis = {json.dumps(lattice_visibility)};
         const gSphereBase = {json.dumps(g_sphere_visibility)};
+        const gRingVis = {json.dumps(g_ring_visibility)};
         const selectorBtn = document.getElementById('open-selector');
         const selectorStatus = document.getElementById('selector-status');
 
@@ -719,6 +776,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             Plotly.update(figure, {{visible: latticeVis}});
           }} else if (label === '|G| spheres' && applySelection) {{
             applySelection();
+          }} else if (label === '|Gᵣ| rings') {{
+            Plotly.update(figure, {{visible: gRingVis}});
           }}
         }});
       }});
