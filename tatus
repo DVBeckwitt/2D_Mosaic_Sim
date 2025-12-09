@@ -1,0 +1,42 @@
+* [33m0a2c520[m[33m ([m[1;31morigin/codex/use-constants-for-cu-k-alpha-and-pbi2-2h[m[33m)[m Add plotting capability to mono simulator
+* [33mcfbc043[m Add PbI2 constants and mono simulator
+[31m|[m * [33md69d1a0[m[33m ([m[1;31morigin/codex/optimize-mouse-zoom-and-movement-lag[m[33m)[m Improve animation interactivity performance
+[31m|[m[31m/[m  
+[31m|[m * [33mde3a570[m[33m ([m[1;31morigin/codex/rename-simulate_cylinder-to-fibrous_simulator[m[33m)[m Hide origin lattice point in mono simulator
+[31m|[m * [33mb7cfa28[m Fix camera zoom during theta sweep
+[31m|[m * [33mad83914[m Balance lattice label scaling
+[31m|[m * [33mff2ceef[m Add theta arc and stabilize hit label sizing
+[31m|[m * [33mbf61f2a[m Scale hit labels with camera depth
+[31m|[m * [33m4cf31b9[m Move ki cone to vector tip
+[31m|[m * [33m148b897[m Keep hit label text size fixed
+[31m|[m * [33mf41e900[m Label incident vector toward origin
+[31m|[m * [33me0c38d9[m Label hit lattice points
+[31m|[m * [33ma8c5ccb[m Clamp theta slider minimum to zero
+[31m|[m * [33md642ac9[m Add hit projections onto xy plane
+[31m|[m * [33m1cf3225[m Ensure mono slider reaches zero and intersection angles
+[31m|[m * [33m4b43e90[m Highlight 002 hit in mono simulator
+[31m|[m * [33m15d8acf[m Adjust mono simulator scale and lattice range
+[31m|[m * [33m7cc775b[m Scale mono simulator k-vector to magnitude 3
+[31m|[m * [33m432f4fe[m Improve visibility of lattice markers
+[31m|[m * [33m81d0965[m Flip theta direction and plot integer lattice
+[31m|[m * [33mc542014[m Rename fibrous simulator and add mono Ewald view
+[31m|[m[31m/[m  
+*   [33m5269587[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Merge pull request #21 from DVBeckwitt/codex/fix-mosaic-profile-in-simulate_cylinder
+[34m|[m[35m\[m  
+[34m|[m [35m|[m * [33m00d8005[m[33m ([m[1;35mrefs/stash[m[33m)[m WIP on 21: da4235b Make cylinder script parameters configurable
+[34m|[m [35m|[m[35m/[m[1;31m|[m 
+[34m|[m [35m|[m * [33mb5096ad[m index on 21: da4235b Make cylinder script parameters configurable
+[34m|[m [35m|[m[35m/[m  
+[34m|[m * [33mda4235b[m[33m ([m[1;31morigin/codex/fix-mosaic-profile-in-simulate_cylinder[m[33m)[m Make cylinder script parameters configurable
+[34m|[m * [33m54d3af2[m Fix mosaic intensity profile selection
+[34m|[m[34m/[m  
+*   [33m1cc0bd0[m Merge pull request #20 from DVBeckwitt/codex/write-readme-for-2d-powder-visualization-tool
+[1;32m|[m[1;33m\[m  
+[1;32m|[m * [33md87f33f[m docs: expand README with overview and usage
+[1;32m|[m[1;32m/[m  
+* [33ma2aa9d8[m fixed call for run_simulate
+*   [33m04f5b96[m Merge pull request #19 from DVBeckwitt/codex/remove-simulate_cylinder_live.py-and-refactor-cylinder_pdf.p
+[1;34m|[m[1;35m\[m  
+[1;34m|[m * [33mf387a08[m[33m ([m[1;31morigin/codex/remove-simulate_cylinder_live.py-and-refactor-cylinder_pdf.p[m[33m)[m Integrate cylinder PDF demo and remove live cylinder
+[1;34m|[m[1;34m/[m  
+* [33mc2b344f[m adjusted defaults
