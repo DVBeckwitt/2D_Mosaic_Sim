@@ -13,13 +13,26 @@ import plotly.graph_objects as go
 from mosaic_sim.geometry import rot_x, sphere
 
 
-K_MAG_PLOT = 1.5
-THETA_BRAGG_002 = math.degrees(math.asin(1.0 / K_MAG_PLOT))
+LAMBDA_CU_K_ALPHA = 1.5406  # Å
+PB_I2_A_HEX = 4.557  # Å
+PB_I2_C_HEX = 6.979  # Å
+
+K_MAG_PLOT = 2 * math.pi / LAMBDA_CU_K_ALPHA  # Å⁻¹
+RECIP_A = 2 * math.pi / PB_I2_A_HEX
+RECIP_C = 2 * math.pi / PB_I2_C_HEX
+
+
+def _d_hex(h: int, k: int, l: int, a: float = PB_I2_A_HEX, c: float = PB_I2_C_HEX) -> float:
+    return 1.0 / math.sqrt((4 / 3) * (h * h + h * k + k * k) / (a**2) + (l / c) ** 2)
+
+
+G_002 = 2 * math.pi / _d_hex(0, 0, 2)
+THETA_BRAGG_002 = math.degrees(math.asin(G_002 / (2.0 * K_MAG_PLOT)))
 THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
 N_FRAMES_DEFAULT = 60
 CAMERA_EYE = np.array([2.0, 2.0, 1.6])
-AXIS_RANGE = 3.0
+AXIS_RANGE = 5.0
 ARC_RADIUS = 0.6
 
 
@@ -99,24 +112,37 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                              np.linspace(0, 2 * math.pi, 200))
     Ew_x, Ew_y, Ew_z = sphere(K_MAG_PLOT, phi, theta, (0, K_MAG_PLOT, 0))
 
+    grid_coords = np.arange(-2, 3)
+    gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
+    lattice_indices = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
+
+    def _reciprocal_points(indices: np.ndarray) -> np.ndarray:
+        scaled = indices.astype(float)
+        scaled[:, 0] *= RECIP_A
+        scaled[:, 1] *= RECIP_A
+        scaled[:, 2] *= RECIP_C
+        return scaled
+
+    lattice_points = _reciprocal_points(lattice_indices)
+    nonzero_mask = ~np.all(lattice_indices == 0, axis=1)
+    lattice_indices = lattice_indices[nonzero_mask]
+    lattice_points = lattice_points[nonzero_mask]
+
     def _intersection_thetas() -> list[float]:
-        grid_coords = np.arange(-2, 3)
-        gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
-        lattice_points = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
         thetas: list[float] = []
-        for hx, hy, hz in lattice_points:
+        for (hx, hy, hz), (x, y, z) in zip(lattice_indices, lattice_points, strict=True):
             if hx == hy == hz == 0:
                 continue
-            rhs = (hx * hx + hy * hy + hz * hz) / (2.0 * K_MAG_PLOT)
-            amplitude = math.hypot(hy, hz)
+            rhs = (x * x + y * y + z * z) / (2.0 * K_MAG_PLOT)
+            amplitude = math.hypot(y, z)
             if amplitude == 0:
                 continue
             ratio = rhs / amplitude
             if abs(ratio) > 1.0:
                 continue
-            base = math.atan2(hz, hy)
-            delta = math.acos(ratio)
-            thetas.extend([base + delta, base - delta])
+            delta = math.atan2(y, z)
+            arcsin = math.asin(ratio)
+            thetas.extend([arcsin - delta, math.pi - arcsin - delta])
         return thetas
 
     intersection_thetas = [th for th in _intersection_thetas() if th >= 0.0]
@@ -180,7 +206,9 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     fig.add_trace(arc_label)
     arc_label_idx = len(fig.data) - 1
 
-    R_MAX = K_MAG_PLOT
+    lattice_max = float(np.max(np.abs(lattice_points)))
+    axis_range = max(AXIS_RANGE, 1.2 * max(K_MAG_PLOT, lattice_max))
+    R_MAX = axis_range
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
                 ([0, 0], [-R_MAX, 2 * R_MAX], [0, 0]),
                 ([0, 0], [0, 0], [-R_MAX, R_MAX])]:
@@ -189,11 +217,6 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                    line=dict(color="black",
                                              width=2,
                                              dash="dash")))
-
-    grid_coords = np.arange(-2, 3)
-    gx, gy, gz = np.meshgrid(grid_coords, grid_coords, grid_coords, indexing="ij")
-    lattice_points = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
-    lattice_points = lattice_points[~np.all(lattice_points == 0, axis=1)]
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
@@ -215,7 +238,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         )
 
     def hit_projection(theta: float) -> go.Scatter3d:
-        _, hits = lattice_hits(theta)
+        hit_mask, hits = lattice_hits(theta)
         x: list[float] = []
         y: list[float] = []
         z: list[float] = []
@@ -233,11 +256,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         )
 
     def hit_labels(theta: float) -> go.Scatter3d:
-        _, hits = lattice_hits(theta)
+        hit_mask, hits = lattice_hits(theta)
+        hit_indices = lattice_indices[hit_mask]
         if hits.size == 0:
             return go.Scatter3d(x=[], y=[], z=[], mode="text", showlegend=False)
         x, y, z = hits[:, 0], hits[:, 1], hits[:, 2]
-        labels = [f"({int(hx)}, {int(hy)}, {int(hz)})" for hx, hy, hz in hits]
+        labels = [f"({int(hx)}, {int(hy)}, {int(hz)})" for hx, hy, hz in hit_indices]
         distances = np.linalg.norm(hits - CAMERA_EYE, axis=1)
         reference = np.linalg.norm(CAMERA_EYE)
         scale = np.sqrt(np.maximum(distances, 1e-6) / reference)
@@ -335,13 +359,13 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     x=0.5, xanchor="center", y=-0.1, len=0.9)]
 
     fig.update_layout(scene=dict(xaxis=dict(visible=False,
-                                            range=[-AXIS_RANGE, AXIS_RANGE],
+                                            range=[-axis_range, axis_range],
                                             autorange=False),
                                  yaxis=dict(visible=False,
-                                            range=[-AXIS_RANGE, AXIS_RANGE],
+                                            range=[-axis_range, axis_range],
                                             autorange=False),
                                  zaxis=dict(visible=False,
-                                            range=[-AXIS_RANGE, AXIS_RANGE],
+                                            range=[-axis_range, axis_range],
                                             autorange=False),
                                  aspectmode="cube",
                                  bgcolor="rgba(0,0,0,0)",
