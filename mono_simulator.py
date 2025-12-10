@@ -218,13 +218,38 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     R_MAX = axis_range
     first_axis_idx = len(fig.data)
     for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
-                ([0, 0], [-R_MAX, 2 * R_MAX], [0, 0]),
+                ([0, 0], [-R_MAX, R_MAX], [0, 0]),
                 ([0, 0], [0, 0], [-R_MAX, R_MAX])]:
-        fig.add_trace(go.Scatter3d(x=xyz[0], y=xyz[1], z=xyz[2],
-                                   mode="lines", showlegend=False,
-                                   line=dict(color="black",
-                                             width=2,
-                                             dash="dash")))
+        fig.add_trace(
+            go.Scatter3d(
+                x=xyz[0],
+                y=xyz[1],
+                z=xyz[2],
+                mode="lines",
+                showlegend=False,
+                line=dict(color="black", width=2, dash="dash"),
+            )
+        )
+
+    axis_label_positions = [
+        (0.95 * axis_range, 0.0, 0.0, "$G_x\\,(\\mathrm{\\AA}^{-1})$", "middle left"),
+        (0.0, 0.95 * axis_range, 0.0, "$G_y\\,(\\mathrm{\\AA}^{-1})$", "bottom center"),
+        (0.0, 0.0, 0.95 * axis_range, "$G_z\\,(\\mathrm{\\AA}^{-1})$", "bottom center"),
+    ]
+    for x_pos, y_pos, z_pos, label, position in axis_label_positions:
+        fig.add_trace(
+            go.Scatter3d(
+                x=[x_pos],
+                y=[y_pos],
+                z=[z_pos],
+                mode="text",
+                text=[label],
+                textposition=position,
+                textfont=dict(color="black", size=16),
+                showlegend=False,
+            )
+        )
+
     axis_indices = list(range(first_axis_idx, len(fig.data)))
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
@@ -868,19 +893,19 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
              args=[{"visible": g_cylinder_visibility}, {}]),
     ]
 
-    fig.update_layout(scene=dict(xaxis=dict(title="G_x (Å⁻¹)",
+    fig.update_layout(scene=dict(xaxis=dict(title=dict(text="$G_x\\,(\\mathrm{\\AA}^{-1})$"),
                                             range=[-axis_range, axis_range],
                                             autorange=False,
                                             showbackground=False,
                                             showticklabels=False,
                                             zeroline=False),
-                                 yaxis=dict(title="G_y (Å⁻¹)",
+                                 yaxis=dict(title=dict(text="$G_y\\,(\\mathrm{\\AA}^{-1})$"),
                                             range=[-axis_range, axis_range],
                                             autorange=False,
                                             showbackground=False,
                                             showticklabels=False,
                                             zeroline=False),
-                                 zaxis=dict(title="G_z (Å⁻¹)",
+                                 zaxis=dict(title=dict(text="$G_z\\,(\\mathrm{\\AA}^{-1})$"),
                                             range=[-axis_range, axis_range],
                                             autorange=False,
                                             showbackground=False,
