@@ -599,13 +599,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
-            rhs = (
-                K_MAG_PLOT * K_MAG_PLOT
-                - g_r_val * g_r_val
-                - center_y * center_y
-                + 2.0 * g_r_val * center_y * sin_t
-            )
-            valid = rhs >= -1e-12
+            rhs = K_MAG_PLOT * K_MAG_PLOT - g_r_val * g_r_val - (
+                g_r_val * sin_t - center_y
+            ) ** 2
+            valid = rhs >= 0.0
             if not np.any(valid):
                 curves.append(
                     go.Scatter3d(
