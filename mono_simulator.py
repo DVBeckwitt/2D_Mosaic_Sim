@@ -33,8 +33,8 @@ def _d_hex(h: int, k: int, l: int, a: float = PB_I2_A_HEX, c: float = PB_I2_C_HE
 G_002 = 2 * math.pi / _d_hex(0, 0, 2)
 THETA_BRAGG_002 = math.degrees(math.asin(G_002 / (2.0 * K_MAG_PLOT)))
 THETA_DEFAULT_MIN = 0.0
-THETA_DEFAULT_MAX = THETA_BRAGG_002 + 10.0
-N_FRAMES_DEFAULT = 60
+THETA_DEFAULT_MAX = 90.0
+N_FRAMES_DEFAULT = 180
 CAMERA_EYE = np.array([2.0, 2.0, 1.6])
 AXIS_RANGE = 5.0
 ARC_RADIUS = 0.6
@@ -152,9 +152,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             thetas.extend([arcsin - delta, math.pi - arcsin - delta])
         return thetas
 
-    intersection_thetas = [th for th in _intersection_thetas() if th >= 0.0]
+    intersection_thetas = [th for th in _intersection_thetas() if 0.0 <= th <= math.pi / 2]
     theta_min = max(theta_min, 0.0)
-    theta_max = max(theta_max, 0.0, *intersection_thetas)
+    theta_max = min(math.pi / 2, max(theta_max, 0.0, *intersection_thetas))
+    theta_max = max(theta_min, theta_max)
 
     theta_all = np.linspace(theta_min, theta_max, n_frames)
     theta_all = np.unique(np.concatenate([theta_all, [0.0], intersection_thetas]))
@@ -593,7 +594,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
-        t_vals = np.linspace(0.0, 2 * math.pi, 400)
+        t_vals = np.linspace(0.0, 2 * math.pi, 720)
         sin_t = np.sin(t_vals)
         cos_t = np.cos(t_vals)
 
@@ -602,7 +603,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             rhs = K_MAG_PLOT * K_MAG_PLOT - (g_r_val * cos_t) ** 2 - (
                 g_r_val * sin_t - center_y
             ) ** 2
-            valid = rhs >= 0.0
+            valid = rhs >= -1e-9
             if not np.any(valid):
                 curves.append(
                     go.Scatter3d(
