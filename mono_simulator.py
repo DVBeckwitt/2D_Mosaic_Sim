@@ -594,16 +594,30 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
-        t_vals = np.linspace(0.0, 2 * math.pi, 720)
-        sin_t = np.sin(t_vals)
-        cos_t = np.cos(t_vals)
+        base_t = np.linspace(0.0, 2 * math.pi, 720, endpoint=False)
 
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
+            t_candidates = [*base_t]
+            if abs(center_y) > 1e-12 and g_r_val > 0:
+                boundary_ratio = (
+                    g_r_val * g_r_val
+                    + center_y * center_y
+                    - K_MAG_PLOT * K_MAG_PLOT
+                ) / (2.0 * g_r_val * center_y)
+                if abs(boundary_ratio) <= 1.0 + 1e-9:
+                    clamped = max(-1.0, min(1.0, boundary_ratio))
+                    t0 = math.asin(clamped)
+                    t_candidates.extend([t0 % (2 * math.pi), (math.pi - t0) % (2 * math.pi)])
+
+            t_vals = np.array(sorted(set(float(t) for t in t_candidates)))
+            sin_t = np.sin(t_vals)
+            cos_t = np.cos(t_vals)
+
             rhs = K_MAG_PLOT * K_MAG_PLOT - (g_r_val * cos_t) ** 2 - (
                 g_r_val * sin_t - center_y
             ) ** 2
-            valid = rhs >= -1e-9
+            valid = rhs >= -1e-7
             if not np.any(valid):
                 curves.append(
                     go.Scatter3d(
