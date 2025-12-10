@@ -396,6 +396,37 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
+    def g_ring_points() -> list[go.Scatter3d]:
+        traces: list[go.Scatter3d] = []
+        rounded_r = np.round(g_r, 6)
+        rounded_z = np.round(g_z, 6)
+        for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
+            color = palette[i % len(palette)]
+            mask = np.isclose(rounded_r, g_r_val, atol=1e-6) & np.isclose(
+                rounded_z, g_z_val, atol=1e-6
+            )
+            pts = lattice_points[mask]
+            traces.append(
+                go.Scatter3d(
+                    x=pts[:, 0] if len(pts) else [],
+                    y=pts[:, 1] if len(pts) else [],
+                    z=pts[:, 2] if len(pts) else [],
+                    mode="markers",
+                    marker=dict(color=color, size=7, opacity=0.95),
+                    name=f"|Gᵣ| ring points ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
+                    visible=False,
+                    showlegend=False,
+                )
+            )
+        return traces
+
+    g_ring_point_traces = g_ring_points()
+    for trace in g_ring_point_traces:
+        fig.add_trace(trace)
+    g_ring_point_indices = list(
+        range(len(fig.data) - len(g_ring_point_traces), len(fig.data))
+    )
+
     def g_ring_intersection_points(
         theta: float, *, visibility: bool | None = False
     ) -> list[go.Scatter3d]:
@@ -493,7 +524,12 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     )
 
     g_ring_groups = list(
-        zip(g_ring_indices, g_ring_intersection_indices, strict=True)
+        zip(
+            g_ring_indices,
+            g_ring_intersection_indices,
+            g_ring_point_indices,
+            strict=True,
+        )
     )
 
     cylinder_values = sorted({float(val) for val in np.round(g_r[g_r > 0], 6)})
@@ -588,6 +624,34 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         range(len(fig.data) - len(g_cylinder_ring_traces), len(fig.data))
     )
 
+    def g_cylinder_points() -> list[go.Scatter3d]:
+        traces: list[go.Scatter3d] = []
+        rounded_r = np.round(g_r, 6)
+        for i, g_r_val in enumerate(cylinder_values):
+            color = palette[i % len(palette)]
+            mask = np.isclose(rounded_r, g_r_val, atol=1e-6)
+            pts = lattice_points[mask]
+            traces.append(
+                go.Scatter3d(
+                    x=pts[:, 0] if len(pts) else [],
+                    y=pts[:, 1] if len(pts) else [],
+                    z=pts[:, 2] if len(pts) else [],
+                    mode="markers",
+                    marker=dict(color=color, size=7, opacity=0.95),
+                    name=f"|Gᵣ| cylinder points ({g_r_val:.3f} Å⁻¹)",
+                    visible=False,
+                    showlegend=False,
+                )
+            )
+        return traces
+
+    g_cylinder_point_traces = g_cylinder_points()
+    for trace in g_cylinder_point_traces:
+        fig.add_trace(trace)
+    g_cylinder_point_indices = list(
+        range(len(fig.data) - len(g_cylinder_point_traces), len(fig.data))
+    )
+
     def g_cylinder_intersection_curves(
         theta: float, *, visibility: bool | None = False
     ) -> list[go.Scatter3d]:
@@ -672,6 +736,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             g_cylinder_indices,
             g_cylinder_intersection_indices,
             g_cylinder_ring_indices,
+            g_cylinder_point_indices,
             strict=True,
         )
     )
@@ -733,7 +798,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     ) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
         g_related = g_sphere_indices + g_circle_indices + g_point_indices
-        ring_related = [idx for pair in g_ring_groups for idx in pair]
+        ring_related = [idx for group in g_ring_groups for idx in group]
         cylinder_related = [idx for group in g_cylinder_groups for idx in group]
         vis: list[bool] = []
         for idx in range(len(fig.data)):
@@ -768,7 +833,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     g_mask_default.extend([i == 0 for i in range(len(g_point_indices))])
     lattice_visibility = _mode_visibility("lattice")
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
-    g_ring_mask_default = [True for _ in g_ring_indices]
+    g_ring_mask_default = [True for _ in g_ring_groups]
     g_ring_visibility = _mode_visibility("g_rings", ring_mask=g_ring_mask_default)
     g_cylinder_mask_default = [i == 0 for i in range(len(g_cylinder_groups))]
     g_cylinder_visibility = _mode_visibility(
@@ -946,12 +1011,14 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             ewald_idx=ewald_idx,
             g_ring_indices=g_ring_indices,
             g_ring_intersection_indices=g_ring_intersection_indices,
+            g_ring_point_indices=g_ring_point_indices,
             g_group_indices=g_group_indices,
             g_ring_groups=g_ring_groups,
             g_ring_visibility=g_ring_visibility,
             g_cylinder_indices=g_cylinder_indices,
             g_cylinder_intersection_indices=g_cylinder_intersection_indices,
             g_cylinder_ring_indices=g_cylinder_ring_indices,
+            g_cylinder_point_indices=g_cylinder_point_indices,
             g_cylinder_group_indices=g_cylinder_group_indices,
             g_cylinder_visibility=g_cylinder_visibility,
             g_values=unique_g.tolist(),
@@ -964,6 +1031,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         g_circle_indices=g_circle_indices,
         g_point_indices=g_point_indices,
         g_ring_indices=g_ring_indices,
+        g_ring_point_indices=g_ring_point_indices,
         g_ring_groups=g_ring_groups,
         g_group_indices=g_group_indices,
         g_ring_specs=g_ring_specs,
@@ -973,6 +1041,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         g_cylinder_visibility=g_cylinder_visibility,
         g_cylinder_specs=cylinder_values,
         g_cylinder_groups=g_cylinder_group_indices,
+        g_cylinder_point_indices=g_cylinder_point_indices,
         g_two_thetas=g_two_thetas,
     )
 
@@ -995,15 +1064,16 @@ def _selector_checkbox_html(g_values: list[float], group_indices: list[tuple[int
 
 
 def _ring_selector_checkbox_html(
-    ring_specs: list[tuple[float, float]], ring_groups: list[tuple[int, int]]
+    ring_specs: list[tuple[float, float]],
+    ring_groups: list[tuple[int, int, int]],
 ) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, ((g_r_val, g_z_val), (ring_idx, intersection_idx)) in enumerate(
+    for i, ((g_r_val, g_z_val), (ring_idx, intersection_idx, points_idx)) in enumerate(
         zip(ring_specs, ring_groups, strict=True)
     ):
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{ring_idx},{intersection_idx}" checked>'
+            f'data-pos="{i}" data-traces="{ring_idx},{intersection_idx},{points_idx}" checked>'
             f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹, G_z ≈ {g_z_val:.3f} Å⁻¹</label>'
         )
     lines.append("</div>")
@@ -1011,16 +1081,16 @@ def _ring_selector_checkbox_html(
 
 
 def _cylinder_selector_checkbox_html(
-    cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int]]
+    cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int, int]]
 ) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, (g_r_val, (cyl_idx, intersection_idx, ring_idx)) in enumerate(
+    for i, (g_r_val, (cyl_idx, intersection_idx, ring_idx, points_idx)) in enumerate(
         zip(cylinder_specs, cylinder_groups, strict=True)
     ):
         checked = "checked" if i == 0 else ""
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{ring_idx}" {checked}>'
+            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{ring_idx},{points_idx}" {checked}>'
             f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹</label>'
         )
     lines.append("</div>")
@@ -1035,13 +1105,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     g_two_thetas: list[str] = context["g_two_thetas"]
     g_ring_specs: list[tuple[float, float]] = context["g_ring_specs"]
     g_ring_indices: list[int] = context["g_ring_indices"]
-    g_ring_groups: list[tuple[int, int]] = context["g_ring_groups"]
+    g_ring_groups: list[tuple[int, int, int]] = context["g_ring_groups"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
     g_ring_visibility: list[bool] = context["g_ring_visibility"]
     g_cylinder_visibility: list[bool] = context["g_cylinder_visibility"]
     g_cylinder_specs: list[float] = context["g_cylinder_specs"]
-    g_cylinder_groups: list[tuple[int, int, int]] = context["g_cylinder_groups"]
+    g_cylinder_groups: list[tuple[int, int, int, int]] = context["g_cylinder_groups"]
 
     figure_id = "mono-figure"
     figure_html = pio.to_html(
