@@ -1232,7 +1232,6 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
 
           syncCheckboxesFromState();
-        }}
 
           const checkAll = targetWin.document.getElementById('check-all');
           if (checkAll) {{
