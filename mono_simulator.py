@@ -522,31 +522,63 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         range(len(fig.data) - len(g_cylinder_traces), len(fig.data))
     )
 
-    def g_cylinder_points() -> list[go.Scatter3d]:
+    def g_cylinder_rings() -> list[go.Scatter3d]:
         traces: list[go.Scatter3d] = []
         rounded = np.round(g_r, 6)
         for i, g_r_val in enumerate(cylinder_values):
             mask = np.isclose(rounded, g_r_val, atol=1e-6)
-            pts = lattice_points[mask]
+            z_vals = g_z[mask]
             color = palette[i % len(palette)]
+
+            if len(z_vals) == 0:
+                traces.append(
+                    go.Scatter3d(
+                        x=[], y=[], z=[], mode="lines", showlegend=False, visible=False
+                    )
+                )
+                continue
+
+            z_lookup: dict[float, float] = {}
+            for z_actual, z_round in zip(z_vals, np.round(z_vals, 6), strict=True):
+                z_lookup.setdefault(float(z_round), float(z_actual))
+            unique_z = [z_lookup[key] for key in sorted(z_lookup.keys())]
+
+            t_vals = np.linspace(0.0, 2 * math.pi, 200)
+            x_segments: list[np.ndarray] = []
+            y_segments: list[np.ndarray] = []
+            z_segments: list[np.ndarray] = []
+
+            for pos, z_val in enumerate(unique_z):
+                x_ring = g_r_val * np.cos(t_vals)
+                y_ring = g_r_val * np.sin(t_vals)
+                z_ring = np.full_like(t_vals, z_val)
+                x_segments.append(x_ring)
+                y_segments.append(y_ring)
+                z_segments.append(z_ring)
+                if pos < len(unique_z) - 1:
+                    nan_pad = np.array([np.nan])
+                    x_segments.append(nan_pad)
+                    y_segments.append(nan_pad)
+                    z_segments.append(nan_pad)
+
             traces.append(
                 go.Scatter3d(
-                    x=pts[:, 0] if len(pts) else [],
-                    y=pts[:, 1] if len(pts) else [],
-                    z=pts[:, 2] if len(pts) else [],
-                    mode="markers",
-                    marker=dict(color=color, size=6, opacity=0.95),
-                    name=f"|Gᵣ| points ({g_r_val:.3f} Å⁻¹)",
+                    x=np.concatenate(x_segments),
+                    y=np.concatenate(y_segments),
+                    z=np.concatenate(z_segments),
+                    mode="lines",
+                    line=dict(color=color, width=4),
+                    name=f"|Gᵣ| rings ({g_r_val:.3f} Å⁻¹)",
                     visible=False,
                 )
             )
         return traces
 
-    g_cylinder_point_traces = g_cylinder_points()
-    for trace in g_cylinder_point_traces:
+    g_cylinder_ring_traces = g_cylinder_rings()
+    for trace in g_cylinder_ring_traces:
         fig.add_trace(trace)
-    g_cylinder_point_indices = list(
-        range(len(fig.data) - len(g_cylinder_point_traces), len(fig.data))
+    g_cylinder_ring_indices = list(
+        range(len(fig.data) - len(g_cylinder_ring_traces), len(fig.data))
     )
 
     def g_cylinder_intersection_curves(
@@ -616,7 +648,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         zip(
             g_cylinder_indices,
             g_cylinder_intersection_indices,
-            g_cylinder_point_indices,
+            g_cylinder_ring_indices,
             strict=True,
         )
     )
@@ -733,7 +765,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         zip(
             g_cylinder_indices,
             g_cylinder_intersection_indices,
-            g_cylinder_point_indices,
+            g_cylinder_ring_indices,
             strict=True,
         )
     )
@@ -882,7 +914,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                                 g_ring_visibility=g_ring_visibility,
                                 g_cylinder_indices=g_cylinder_indices,
                                 g_cylinder_intersection_indices=g_cylinder_intersection_indices,
-                                g_cylinder_point_indices=g_cylinder_point_indices,
+                                g_cylinder_ring_indices=g_cylinder_ring_indices,
                                 g_cylinder_group_indices=g_cylinder_group_indices,
                                 g_cylinder_visibility=g_cylinder_visibility,
                                 g_values=unique_g.tolist()))
@@ -943,13 +975,13 @@ def _cylinder_selector_checkbox_html(
     cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int]]
 ) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, (g_r_val, (cyl_idx, intersection_idx, point_idx)) in enumerate(
+    for i, (g_r_val, (cyl_idx, intersection_idx, ring_idx)) in enumerate(
         zip(cylinder_specs, cylinder_groups, strict=True)
     ):
         checked = "checked" if i == 0 else ""
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{point_idx}" {checked}>'
+            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{ring_idx}" {checked}>'
             f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹</label>'
         )
     lines.append("</div>")
@@ -1124,7 +1156,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             ? 'Select which |G| shells to display. Default view shows only the smallest |G|.'
             : isRing
               ? 'Select which |Gᵣ| rings to display for the chosen G_z plane.'
-              : 'Select which |Gᵣ| cylinders to display along G_z. Reciprocal points on each cylinder are highlighted and the Ewald intersection is traced.';
+              : 'Select which |Gᵣ| cylinders to display along G_z. Rings at lattice G_z slices on each cylinder and the Ewald intersection are shown.';
           const bodyHtml = is3D ? sphereSelectorHtml : isRing ? ringSelectorHtml : cylinderSelectorHtml;
           targetWin.document.open();
           targetWin.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${{heading}}</title>
