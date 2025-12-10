@@ -906,6 +906,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             g_cylinder_indices,
             g_cylinder_intersection_indices,
             g_cylinder_ring_indices,
+            g_cylinder_point_indices,
             strict=True,
         )
     )
