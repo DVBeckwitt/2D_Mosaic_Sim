@@ -231,25 +231,6 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             )
         )
 
-    axis_label_positions = [
-        (0.95 * axis_range, 0.0, 0.0, "$G_x\\,(\\mathrm{\\AA}^{-1})$", "middle left"),
-        (0.0, 0.95 * axis_range, 0.0, "$G_y\\,(\\mathrm{\\AA}^{-1})$", "bottom center"),
-        (0.0, 0.0, 0.95 * axis_range, "$G_z\\,(\\mathrm{\\AA}^{-1})$", "bottom center"),
-    ]
-    for x_pos, y_pos, z_pos, label, position in axis_label_positions:
-        fig.add_trace(
-            go.Scatter3d(
-                x=[x_pos],
-                y=[y_pos],
-                z=[z_pos],
-                mode="text",
-                text=[label],
-                textposition=position,
-                textfont=dict(color="black", size=16),
-                showlegend=False,
-            )
-        )
-
     axis_indices = list(range(first_axis_idx, len(fig.data)))
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
@@ -1053,11 +1034,12 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
   <style>
     html, body {{ height: 100%; width: 100%; margin: 0; padding: 0; }}
     body {{ font-family: Arial, sans-serif; }}
-    #wrapper {{ display: flex; flex-direction: column; width: 100%; height: 100%; }}
+    #wrapper {{ display: flex; flex-direction: column; width: 100%; height: 100vh; }}
     #note {{ padding: 8px 12px; background: #f2f2f2; width: 100%; box-sizing: border-box; }}
     #controls {{ padding: 8px 12px; width: 100%; box-sizing: border-box; }}
     #figure-container {{ flex: 1 1 auto; width: 100%; min-height: 0; }}
-    #figure-container .plotly-graph-div {{ height: 100% !important; width: 100% !important; }}
+    #figure-container .plotly-graph-div,
+    #figure-container .js-plotly-plot {{ height: 100% !important; width: 100% !important; }}
   </style>
 </head>
   <body>
