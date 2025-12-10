@@ -38,6 +38,9 @@ N_FRAMES_DEFAULT = 180
 CAMERA_EYE = np.array([2.0, 2.0, 1.6])
 AXIS_RANGE = 5.0
 ARC_RADIUS = 0.6
+RING_POINT_MARKER_SIZE = 12.0
+RING_INTERSECTION_MARKER_SIZE = 12.0
+CYLINDER_POINT_MARKER_SIZE = 12.0
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -412,7 +415,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     y=pts[:, 1] if len(pts) else [],
                     z=pts[:, 2] if len(pts) else [],
                     mode="markers",
-                    marker=dict(color=color, size=7, opacity=0.95),
+                    marker=dict(
+                        color=color,
+                        size=RING_POINT_MARKER_SIZE,
+                        opacity=0.95,
+                    ),
                     name=f"|Gᵣ| ring points ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=False,
                     showlegend=False,
@@ -446,7 +453,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         y=[0.0] if on_sphere else [],
                         z=[g_z_val] if on_sphere else [],
                         mode="markers",
-                        marker=dict(color=color, size=5, symbol="circle"),
+                        marker=dict(
+                            color=color,
+                            size=RING_INTERSECTION_MARKER_SIZE,
+                            symbol="circle",
+                        ),
                         name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                         visible=visibility,
                         showlegend=False,
@@ -507,7 +518,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     y=y_vals,
                     z=z_vals,
                     mode="markers",
-                    marker=dict(color=color, size=5, symbol="circle"),
+                    marker=dict(
+                        color=color,
+                        size=RING_INTERSECTION_MARKER_SIZE,
+                        symbol="circle",
+                    ),
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=visibility,
                     showlegend=False,
@@ -637,7 +652,11 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                     y=pts[:, 1] if len(pts) else [],
                     z=pts[:, 2] if len(pts) else [],
                     mode="markers",
-                    marker=dict(color=color, size=7, opacity=0.95),
+                    marker=dict(
+                        color=color,
+                        size=CYLINDER_POINT_MARKER_SIZE,
+                        opacity=0.95,
+                    ),
                     name=f"|Gᵣ| cylinder points ({g_r_val:.3f} Å⁻¹)",
                     visible=False,
                     showlegend=False,
