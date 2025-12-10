@@ -555,34 +555,19 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
-        center_vec = np.array([0.0, center_y, center_z])
-        offset = 0.03
         t_vals = np.linspace(0.0, 2 * math.pi, 400)
         sin_t = np.sin(t_vals)
         cos_t = np.cos(t_vals)
 
-        def _offset_on_surface(x_arr: np.ndarray, y_arr: np.ndarray, z_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            x_out = x_arr.astype(float, copy=True)
-            y_out = y_arr.astype(float, copy=True)
-            z_out = z_arr.astype(float, copy=True)
-            valid = ~np.isnan(z_out)
-            if not np.any(valid):
-                return x_out, y_out, z_out
-
-            pts = np.vstack([x_out[valid], y_out[valid], z_out[valid]])
-            normals = pts - center_vec.reshape(3, 1)
-            norms = np.linalg.norm(normals, axis=0)
-            norms[norms == 0.0] = 1.0
-            pts_offset = pts + offset * normals / norms
-            x_out[valid], y_out[valid], z_out[valid] = pts_offset
-            return x_out, y_out, z_out
-
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
-            rhs = K_MAG_PLOT * K_MAG_PLOT - g_r_val * g_r_val - (
-                g_r_val * sin_t - center_y
-            ) ** 2
-            valid = rhs >= 0.0
+            rhs = (
+                K_MAG_PLOT * K_MAG_PLOT
+                - g_r_val * g_r_val
+                - center_y * center_y
+                + 2.0 * g_r_val * center_y * sin_t
+            )
+            valid = rhs >= -1e-12
             if not np.any(valid):
                 curves.append(
                     go.Scatter3d(
@@ -596,9 +581,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             y_vals = g_r_val * sin_t
             z_top = np.where(valid, center_z + sqrt_rhs, np.nan)
             z_bottom = np.where(valid, center_z - sqrt_rhs, np.nan)
-
-            x_top, y_top, z_top = _offset_on_surface(x_vals, y_vals, z_top)
-            x_bottom, y_bottom, z_bottom = _offset_on_surface(x_vals, y_vals, z_bottom)
+            x_top = x_vals
+            y_top = y_vals
+            x_bottom = x_vals
+            y_bottom = y_vals
 
             x_combined = np.concatenate([x_top, [np.nan], x_bottom])
             y_combined = np.concatenate([y_top, [np.nan], y_bottom])
