@@ -1083,6 +1083,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const gSphereBase = {json.dumps(g_sphere_visibility)};
         const gRingBase = {json.dumps(g_ring_visibility)};
         const gCylinderBase = {json.dumps(g_cylinder_visibility)};
+        let gSphereState = Array.from(gSphereBase);
+        let gRingState = Array.from(gRingBase);
+        let gCylinderState = Array.from(gCylinderBase);
         const sphereSelectorHtml = `{selector_controls}`;
         const ringSelectorHtml = `{ring_selector_controls}`;
         const cylinderSelectorHtml = `{cylinder_selector_controls}`;
@@ -1146,9 +1149,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           const originalVis = traceVisibilitySnapshot();
           const modes = [
             {{ label: 'single_crystal', vis: latticeVis }},
-            {{ label: '3d_powder', vis: gSphereBase }},
-            {{ label: '2d_powder', vis: gRingBase }},
-            {{ label: 'cylinder', vis: gCylinderBase }},
+            {{ label: '3d_powder', vis: gSphereState }},
+            {{ label: '2d_powder', vis: gRingState }},
+            {{ label: 'cylinder', vis: gCylinderState }},
           ];
 
           try {{
@@ -1199,19 +1202,37 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         }}
 
         function hookSelector(targetWin, mode = '3d') {{
-          const base = mode === '3d' ? gSphereBase : mode === '2d' ? gRingBase : gCylinderBase;
+          const state = mode === '3d' ? gSphereState : mode === '2d' ? gRingState : gCylinderState;
           const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
 
-          function applySelection() {{
-            const vis = Array.from(base);
+          function parseTraces(cb) {{
+            return (cb.getAttribute('data-traces') || '')
+              .split(',')
+              .map(Number)
+              .filter((v) => !Number.isNaN(v));
+          }}
+
+          function syncCheckboxesFromState() {{
             checkboxes.forEach((cb) => {{
-              const traces = (cb.getAttribute('data-traces') || '').split(',').map(Number).filter((v) => !Number.isNaN(v));
+              const traces = parseTraces(cb);
+              cb.checked = traces.every((idx) => state[idx]);
+            }});
+          }}
+
+          function applySelection() {{
+            const vis = Array.from(state);
+            checkboxes.forEach((cb) => {{
+              const traces = parseTraces(cb);
               traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
             }});
+            vis.forEach((val, i) => {{ state[i] = val; }});
             Plotly.update(figure, {{visible: vis}});
           }}
 
           checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
+
+          syncCheckboxesFromState();
+        }}
 
           const checkAll = targetWin.document.getElementById('check-all');
           if (checkAll) {{
