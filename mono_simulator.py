@@ -467,6 +467,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
             color = palette[i % len(palette)]
+            ring_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
 
             if g_r_val == 0:
                 dist_sq = center_y * center_y + (g_z_val - center_z) ** 2
