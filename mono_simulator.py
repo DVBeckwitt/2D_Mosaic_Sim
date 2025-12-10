@@ -874,19 +874,19 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
              args=[{"visible": g_cylinder_visibility}, {}]),
     ]
 
-    fig.update_layout(scene=dict(xaxis=dict(title=dict(text="$G_x\\,(\\mathrm{\\AA}^{-1})$"),
+    fig.update_layout(scene=dict(xaxis=dict(title=dict(text=r"$G_x\\,(\\mathrm{\\AA}^{-1})$", standoff=20),
                                             range=[-axis_range, axis_range],
                                             autorange=False,
                                             showbackground=False,
                                             showticklabels=False,
                                             zeroline=False),
-                                 yaxis=dict(title=dict(text="$G_y\\,(\\mathrm{\\AA}^{-1})$"),
+                                 yaxis=dict(title=dict(text=r"$G_y\\,(\\mathrm{\\AA}^{-1})$", standoff=20),
                                             range=[-axis_range, axis_range],
                                             autorange=False,
                                             showbackground=False,
                                             showticklabels=False,
                                             zeroline=False),
-                                 zaxis=dict(title=dict(text="$G_z\\,(\\mathrm{\\AA}^{-1})$"),
+                                 zaxis=dict(title=dict(text=r"$G_z\\,(\\mathrm{\\AA}^{-1})$", standoff=20),
                                             range=[-axis_range, axis_range],
                                             autorange=False,
                                             showbackground=False,
@@ -1014,6 +1014,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     figure_html = pio.to_html(
         fig,
         include_plotlyjs="cdn",
+        include_mathjax="cdn",
         full_html=False,
         auto_play=False,
         div_id=figure_id,
@@ -1037,7 +1038,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     #wrapper {{ display: flex; flex-direction: column; width: 100%; height: 100vh; }}
     #note {{ padding: 8px 12px; background: #f2f2f2; width: 100%; box-sizing: border-box; }}
     #controls {{ padding: 8px 12px; width: 100%; box-sizing: border-box; }}
-    #figure-container {{ flex: 1 1 auto; width: 100%; min-height: 0; }}
+    #figure-container {{ flex: 1 1 auto; width: 100%; min-height: 0; display: flex; }}
+    #figure-container > div {{ flex: 1 1 auto; min-height: 0; }}
     #figure-container .plotly-graph-div,
     #figure-container .js-plotly-plot {{ height: 100% !important; width: 100% !important; }}
   </style>
