@@ -835,10 +835,16 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
     g_ring_mask_default = [True for _ in g_ring_groups]
     g_ring_visibility = _mode_visibility("g_rings", ring_mask=g_ring_mask_default)
+    for idx in g_ring_point_indices:
+        g_ring_visibility[idx] = True
     g_cylinder_mask_default = [i == 0 for i in range(len(g_cylinder_groups))]
     g_cylinder_visibility = _mode_visibility(
         "g_cylinders", cylinder_mask=g_cylinder_mask_default
     )
+    for idx in g_cylinder_point_indices:
+        g_cylinder_visibility[idx] = g_cylinder_visibility[idx] or g_cylinder_mask_default[
+            next(pos for pos, group in enumerate(g_cylinder_groups) if idx in group)
+        ]
 
     def _two_theta_str(g_mag: float) -> str:
         ratio = g_mag / (2.0 * K_MAG_PLOT)
