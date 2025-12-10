@@ -614,15 +614,20 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
             sqrt_rhs = np.sqrt(np.maximum(rhs, 0.0))
             x_vals = g_r_val * cos_t
             y_vals = g_r_val * sin_t
+
+            x_surface = np.where(valid, x_vals, np.nan)
+            y_surface = np.where(valid, y_vals, np.nan)
+
+            radial_mag = np.hypot(x_surface, y_surface)
+            scale = np.where(radial_mag > 0.0, g_r_val / radial_mag, 1.0)
+            x_surface *= scale
+            y_surface *= scale
+
             z_top = np.where(valid, center_z + sqrt_rhs, np.nan)
             z_bottom = np.where(valid, center_z - sqrt_rhs, np.nan)
-            x_top = x_vals
-            y_top = y_vals
-            x_bottom = x_vals
-            y_bottom = y_vals
 
-            x_combined = np.concatenate([x_top, [np.nan], x_bottom])
-            y_combined = np.concatenate([y_top, [np.nan], y_bottom])
+            x_combined = np.concatenate([x_surface, [np.nan], x_surface])
+            y_combined = np.concatenate([y_surface, [np.nan], y_surface])
             z_combined = np.concatenate([z_top, [np.nan], z_bottom])
 
             curves.append(
