@@ -41,6 +41,7 @@ ARC_RADIUS = 0.6
 RING_POINT_MARKER_SIZE = 14.0
 RING_INTERSECTION_MARKER_SIZE = 18.0
 CYLINDER_POINT_MARKER_SIZE = 12.0
+HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#e60073"
 
 
@@ -275,7 +276,7 @@ def build_mono_figure(
 
     def lattice_marker(theta: float) -> go.Scatter3d:
         hit_mask, _ = lattice_hits(theta)
-        sizes = np.where(hit_mask, 9.0, 3.0)
+        sizes = np.where(hit_mask, HIT_MARKER_SIZE, 3.0)
         colors = np.where(hit_mask, HIT_COLOR, "#a0a0a0")
         return go.Scatter3d(
             x=lattice_points[:, 0],
