@@ -1269,7 +1269,11 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
         }}
 
-        figure.on?.('plotly_sliderchange', () => applyEwaldOpacity(ewaldAlpha));
+        const reapplyEwaldOpacity = () => applyEwaldOpacity(ewaldAlpha);
+
+        figure.on?.('plotly_sliderchange', reapplyEwaldOpacity);
+        figure.on?.('plotly_animated', reapplyEwaldOpacity);
+        figure.on?.('plotly_animatingframe', reapplyEwaldOpacity);
 
         function traceVisibilitySnapshot() {{
           return (figure.data || []).map((trace) => {{
