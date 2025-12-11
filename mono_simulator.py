@@ -1232,6 +1232,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
         const ewaldValue = document.getElementById('ewald-opacity-value');
+        let ewaldAlpha = 1;
         const meta = figure.layout && figure.layout.meta ? figure.layout.meta : {{}};
         const ewaldIdx = typeof meta.ewald_idx === 'number'
           ? meta.ewald_idx
@@ -1241,6 +1242,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 
         function applyEwaldOpacity(alpha) {{
           const clamped = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 1));
+          ewaldAlpha = clamped;
           if (ewaldValue) {{
             ewaldValue.textContent = clamped.toFixed(2);
           }}
@@ -1266,6 +1268,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           }});
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
         }}
+
+        figure.on?.('plotly_sliderchange', () => applyEwaldOpacity(ewaldAlpha));
 
         function traceVisibilitySnapshot() {{
           return (figure.data || []).map((trace) => {{
