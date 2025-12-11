@@ -368,11 +368,12 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_sphere_indices = list(range(len(fig.data) - len(g_sphere_traces), len(fig.data)))
 
+    g_magnitude_rounded = np.round(g_magnitudes, 6)
+
     def g_magnitude_points() -> list[go.Scatter3d]:
         traces: list[go.Scatter3d] = []
-        rounded = np.round(g_magnitudes, 6)
         for i, g_val in enumerate(unique_g):
-            mask = np.isclose(rounded, g_val, atol=1e-6)
+            mask = np.isclose(g_magnitude_rounded, g_val, atol=1e-6)
             pts = lattice_points[mask]
             color = palette[i % len(palette)]
             traces.append(
@@ -413,6 +414,14 @@ def build_mono_figure(
         ring_counts.append(int(np.count_nonzero(mask)))
     ring_max_count = max(ring_counts, default=0)
 
+    def _point_keys(points: np.ndarray) -> list[str]:
+        return [f"{x:.6f},{y:.6f},{z:.6f}" for x, y, z in points]
+
+    g_group_keys: list[list[str]] = []
+    for g_val in unique_g:
+        mask = np.isclose(g_magnitude_rounded, g_val, atol=1e-6)
+        g_group_keys.append(_point_keys(lattice_points[mask]))
+
     def g_radial_rings() -> list[go.Scatter3d]:
         rings: list[go.Scatter3d] = []
         t_vals = np.linspace(0.0, 2 * math.pi, ring_samples)
@@ -441,6 +450,7 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
+    g_ring_group_keys: list[list[str]] = []
     def g_ring_points() -> list[go.Scatter3d]:
         traces: list[go.Scatter3d] = []
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
@@ -450,6 +460,7 @@ def build_mono_figure(
             )
             pts = lattice_points[mask]
             point_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
+            g_ring_group_keys.append(_point_keys(pts))
             traces.append(
                 go.Scatter3d(
                     x=pts[:, 0] if len(pts) else [],
@@ -592,6 +603,7 @@ def build_mono_figure(
     )
 
     cylinder_values = sorted({float(val) for val in np.round(g_r[g_r > 0], 6)})
+    g_cylinder_group_keys: list[list[str]] = []
 
     def g_radial_cylinders() -> list[go.Surface]:
         cylinders: list[go.Surface] = []
@@ -690,6 +702,7 @@ def build_mono_figure(
             color = palette[i % len(palette)]
             mask = np.isclose(rounded_r, g_r_val, atol=1e-6)
             pts = lattice_points[mask]
+            g_cylinder_group_keys.append(_point_keys(pts))
             traces.append(
                 go.Scatter3d(
                     x=pts[:, 0] if len(pts) else [],
@@ -1078,18 +1091,21 @@ def build_mono_figure(
             g_sphere_indices=g_sphere_indices,
             g_circle_indices=g_circle_indices,
             g_point_indices=g_point_indices,
+            g_group_keys=g_group_keys,
             ewald_idx=ewald_idx,
             g_ring_indices=g_ring_indices,
             g_ring_intersection_indices=g_ring_intersection_indices,
             g_ring_point_indices=g_ring_point_indices,
             g_group_indices=g_group_indices,
             g_ring_groups=g_ring_groups,
+            g_ring_group_keys=g_ring_group_keys,
             g_ring_visibility=g_ring_visibility,
             g_cylinder_indices=g_cylinder_indices,
             g_cylinder_intersection_indices=g_cylinder_intersection_indices,
             g_cylinder_ring_indices=g_cylinder_ring_indices,
             g_cylinder_point_indices=g_cylinder_point_indices,
             g_cylinder_group_indices=g_cylinder_group_indices,
+            g_cylinder_group_keys=g_cylinder_group_keys,
             g_cylinder_visibility=g_cylinder_visibility,
             g_values=unique_g.tolist(),
         ),
@@ -1105,12 +1121,15 @@ def build_mono_figure(
         g_ring_groups=g_ring_groups,
         g_group_indices=g_group_indices,
         g_ring_specs=g_ring_specs,
+        g_group_keys=g_group_keys,
+        g_ring_group_keys=g_ring_group_keys,
         lattice_visibility=lattice_visibility,
         g_sphere_visibility=g_sphere_visibility,
         g_ring_visibility=g_ring_visibility,
         g_cylinder_visibility=g_cylinder_visibility,
         g_cylinder_specs=cylinder_values,
         g_cylinder_groups=g_cylinder_group_indices,
+        g_cylinder_group_keys=g_cylinder_group_keys,
         g_cylinder_point_indices=g_cylinder_point_indices,
         g_two_thetas=g_two_thetas,
     )
@@ -1254,8 +1273,41 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const ewaldIdx = typeof meta.ewald_idx === 'number'
           ? meta.ewald_idx
           : (figure.data || []).findIndex((trace) => trace && trace.name === 'Ewald sphere');
+        const gSphereGroups = meta.g_group_indices || [];
+        const gRingGroups = meta.g_ring_groups || [];
+        const gCylinderGroups = meta.g_cylinder_group_indices || [];
+        const gSphereKeys = (meta.g_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
+        const gRingKeys = (meta.g_ring_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
+        const gCylinderKeys = (meta.g_cylinder_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
         let selectorMode = '3d';
         let selectorWin = null;
+
+        function buildFlagsFromKeys(selectedKeys, keyList) {{
+          return keyList.map((keys) => (keys || []).some((key) => selectedKeys.has(key)));
+        }}
+
+        function applyFlagsToState(state, groups, flags) {{
+          const vis = Array.from(state);
+          groups.forEach((group, idx) => {{
+            const shouldShow = Boolean(flags[idx]);
+            (group || []).forEach((traceIdx) => {{
+              if (traceIdx != null) {{
+                vis[traceIdx] = shouldShow;
+              }}
+            }});
+          }});
+          vis.forEach((val, i) => {{ state[i] = val; }});
+          return vis;
+        }}
+
+        function syncStatesFromKeys(selectedKeys) {{
+          const sphereFlags = buildFlagsFromKeys(selectedKeys, gSphereKeys);
+          const ringFlags = buildFlagsFromKeys(selectedKeys, gRingKeys);
+          const cylinderFlags = buildFlagsFromKeys(selectedKeys, gCylinderKeys);
+          applyFlagsToState(gSphereState, gSphereGroups, sphereFlags);
+          applyFlagsToState(gRingState, gRingGroups, ringFlags);
+          applyFlagsToState(gCylinderState, gCylinderGroups, cylinderFlags);
+        }}
 
         function applyEwaldOpacity(alpha) {{
           const clamped = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 1));
@@ -1383,55 +1435,72 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           targetWin.__selectorMode = mode;
         }}
 
-        function hookSelector(targetWin, mode = '3d') {{
-          const state = mode === '3d' ? gSphereState : mode === '2d' ? gRingState : gCylinderState;
-          const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
+          function hookSelector(targetWin, mode = '3d') {{
+            const state = mode === '3d' ? gSphereState : mode === '2d' ? gRingState : gCylinderState;
+            const keyList = mode === '3d' ? gSphereKeys : mode === '2d' ? gRingKeys : gCylinderKeys;
+            const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
 
-          function parseTraces(cb) {{
-            return (cb.getAttribute('data-traces') || '')
-              .split(',')
-              .map(Number)
-              .filter((v) => !Number.isNaN(v));
-          }}
+            function parseTraces(cb) {{
+              return (cb.getAttribute('data-traces') || '')
+                .split(',')
+                .map(Number)
+                .filter((v) => !Number.isNaN(v));
+            }}
 
-          function syncCheckboxesFromState() {{
-            checkboxes.forEach((cb) => {{
-              const traces = parseTraces(cb);
-              cb.checked = traces.every((idx) => state[idx]);
-            }});
-          }}
+            function syncCheckboxesFromState() {{
+              checkboxes.forEach((cb) => {{
+                const traces = parseTraces(cb);
+                cb.checked = traces.every((idx) => state[idx]);
+              }});
+            }}
 
-          function applySelection() {{
-            const vis = Array.from(state);
-            checkboxes.forEach((cb) => {{
-              const traces = parseTraces(cb);
-              traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
-            }});
-            vis.forEach((val, i) => {{ state[i] = val; }});
-            Plotly.update(figure, {{visible: vis}});
-          }}
+            function collectSelectedKeys() {{
+              const selected = new Set();
+              checkboxes.forEach((cb) => {{
+                if (!cb.checked) {{
+                  return;
+                }}
+                const pos = Number(cb.getAttribute('data-pos'));
+                const keys = keyList[pos] || [];
+                keys.forEach((key) => selected.add(key));
+              }});
+              return selected;
+            }}
 
-          checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
+            function applySelection() {{
+              const vis = Array.from(state);
+              checkboxes.forEach((cb) => {{
+                const traces = parseTraces(cb);
+                traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
+              }});
+              vis.forEach((val, i) => {{ state[i] = val; }});
+              Plotly.update(figure, {{visible: vis}});
+              const selectedKeys = collectSelectedKeys();
+              syncStatesFromKeys(selectedKeys);
+              syncCheckboxesFromState();
+            }}
 
-          syncCheckboxesFromState();
+              checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
 
-          const checkAll = targetWin.document.getElementById('check-all');
-          if (checkAll) {{
-            checkAll.addEventListener('click', () => {{
-              checkboxes.forEach((cb) => {{ cb.checked = true; }});
-              applySelection();
-            }});
-          }}
-          const checkNone = targetWin.document.getElementById('check-none');
-          if (checkNone) {{
-            checkNone.addEventListener('click', () => {{
-              checkboxes.forEach((cb) => {{ cb.checked = false; }});
-              applySelection();
-            }});
-          }}
+              syncCheckboxesFromState();
 
-          return applySelection;
-        }}
+              const checkAll = targetWin.document.getElementById('check-all');
+              if (checkAll) {{
+                checkAll.addEventListener('click', () => {{
+                  checkboxes.forEach((cb) => {{ cb.checked = true; }});
+                  applySelection();
+                }});
+              }}
+              const checkNone = targetWin.document.getElementById('check-none');
+              if (checkNone) {{
+                checkNone.addEventListener('click', () => {{
+                  checkboxes.forEach((cb) => {{ cb.checked = false; }});
+                  applySelection();
+                }});
+              }}
+
+              return applySelection;
+            }}
 
         function openSelectorWindow(focusOnly = false, mode = selectorMode) {{
           selectorMode = mode;
