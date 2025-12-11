@@ -1310,6 +1310,19 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           selectorStatus.textContent = 'Preparing downloads...';
 
           const originalVis = traceVisibilitySnapshot();
+          const sliderBackup = figure.layout?.sliders
+            ? JSON.parse(JSON.stringify(figure.layout.sliders))
+            : null;
+          const menuBackup = figure.layout?.updatemenus
+            ? JSON.parse(JSON.stringify(figure.layout.updatemenus))
+            : null;
+          const hideControlsForExport = () =>
+            Plotly.relayout(figure, { sliders: [], updatemenus: [] });
+          const restoreControls = () =>
+            Plotly.relayout(figure, {
+              sliders: sliderBackup || [],
+              updatemenus: menuBackup || [],
+            });
           const modes = [
             {{ label: 'single_crystal', vis: latticeVis }},
             {{ label: '3d_powder', vis: gSphereState }},
@@ -1318,10 +1331,15 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           ];
 
           try {{
+            await hideControlsForExport();
             for (const mode of modes) {{
               const vis = Array.from(mode.vis, (v) => !!v);
               await Plotly.update(figure, {{ visible: vis }});
-              const uri = await Plotly.toImage(figure, {{ format: 'png', height: 900, width: 900 }});
+              const uri = await Plotly.toImage(figure, {{
+                format: 'png',
+                height: 1800,
+                width: 1800,
+              }});
 
               const link = document.createElement('a');
               link.href = uri;
@@ -1337,6 +1355,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             console.error(err);
           }} finally {{
             await Plotly.update(figure, {{ visible: originalVis }});
+            await restoreControls();
             downloadBtn.disabled = false;
           }}
         }}
