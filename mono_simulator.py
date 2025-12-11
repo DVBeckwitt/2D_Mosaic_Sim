@@ -486,6 +486,8 @@ def build_mono_figure(
         range(len(fig.data) - len(g_ring_point_traces), len(fig.data))
     )
 
+    RING_HIT_MARKER_SIZE = HIT_MARKER_SIZE * 0.5
+
     def g_ring_intersection_points(
         theta: float, *, visibility: bool | None = False
     ) -> list[go.Scatter3d]:
@@ -508,7 +510,7 @@ def build_mono_figure(
                         mode="markers",
                         marker=dict(
                             color=HIT_COLOR,
-                            size=HIT_MARKER_SIZE,
+                            size=RING_HIT_MARKER_SIZE,
                             symbol="circle",
                             opacity=0.95,
                         ),
@@ -574,7 +576,7 @@ def build_mono_figure(
                     mode="markers",
                     marker=dict(
                         color=HIT_COLOR,
-                        size=HIT_MARKER_SIZE,
+                        size=RING_HIT_MARKER_SIZE,
                         symbol="circle",
                         opacity=0.95,
                     ),
