@@ -18,19 +18,17 @@ from mosaic_sim.geometry import rot_x, sphere
 
 
 LAMBDA_CU_K_ALPHA = 1.5406  # Å
-PB_I2_A_HEX = 4.557  # Å
-PB_I2_C_HEX = 6.979  # Å
+SC_A = 4.0  # Å (simple cubic lattice parameter)
 
 K_MAG_PLOT = 2 * math.pi / LAMBDA_CU_K_ALPHA  # Å⁻¹
-RECIP_A = 2 * math.pi / PB_I2_A_HEX
-RECIP_C = 2 * math.pi / PB_I2_C_HEX
+RECIP_A = 2 * math.pi / SC_A
 
 
-def _d_hex(h: int, k: int, l: int, a: float = PB_I2_A_HEX, c: float = PB_I2_C_HEX) -> float:
-    return 1.0 / math.sqrt((4 / 3) * (h * h + h * k + k * k) / (a**2) + (l / c) ** 2)
+def _d_cubic(h: int, k: int, l: int, a: float = SC_A) -> float:
+    return a / math.sqrt(h * h + k * k + l * l)
 
 
-G_002 = 2 * math.pi / _d_hex(0, 0, 2)
+G_002 = 2 * math.pi / _d_cubic(0, 0, 2)
 THETA_BRAGG_002 = math.degrees(math.asin(G_002 / (2.0 * K_MAG_PLOT)))
 THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = 90.0
@@ -153,9 +151,7 @@ def build_mono_figure(
 
     def _reciprocal_points(indices: np.ndarray) -> np.ndarray:
         scaled = indices.astype(float)
-        scaled[:, 0] *= RECIP_A
-        scaled[:, 1] *= RECIP_A
-        scaled[:, 2] *= RECIP_C
+        scaled *= RECIP_A
         return scaled
 
     lattice_points = _reciprocal_points(lattice_indices)
