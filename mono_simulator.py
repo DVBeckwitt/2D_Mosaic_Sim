@@ -84,8 +84,8 @@ def _k_label(x: list[float], y: list[float], z: list[float]) -> go.Scatter3d:
     )
 
 
-def _theta_arc(theta: float) -> go.Scatter3d:
-    arc_thetas = np.linspace(0.0, theta, 50)
+def _theta_arc(theta: float, *, samples: int = 50) -> go.Scatter3d:
+    arc_thetas = np.linspace(0.0, theta, samples)
     arc_x = np.zeros_like(arc_thetas)
     arc_y = ARC_RADIUS * np.cos(arc_thetas)
     arc_z = ARC_RADIUS * np.sin(arc_thetas)
@@ -115,17 +115,34 @@ def _theta_arc_label(theta: float) -> go.Scatter3d:
     )
 
 
-def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
-                      theta_max: float = math.radians(THETA_DEFAULT_MAX),
-                      n_frames: int = N_FRAMES_DEFAULT) -> tuple[go.Figure, dict]:
+def build_mono_figure(
+    theta_min: float = math.radians(THETA_DEFAULT_MIN),
+    theta_max: float = math.radians(THETA_DEFAULT_MAX),
+    n_frames: int = N_FRAMES_DEFAULT,
+    *,
+    low_quality: bool = False,
+) -> tuple[go.Figure, dict]:
     """Return a Plotly figure showing only the Ewald sphere.
 
     A slider controls the incident angle ``theta_i`` by rotating the sphere
     about the *qx* axis.
     """
 
-    phi, theta = np.meshgrid(np.linspace(0, math.pi, 100),
-                             np.linspace(0, 2 * math.pi, 200))
+    arc_samples = 30 if low_quality else 50
+    ewald_phi_samples = 60 if low_quality else 100
+    ewald_theta_samples = 120 if low_quality else 200
+    ring_samples = 120 if low_quality else 200
+    cylinder_theta_samples = 48 if low_quality else 80
+    cylinder_z_samples = 40 if low_quality else 60
+    g_sphere_phi_samples = 24 if low_quality else 40
+    g_sphere_theta_samples = 48 if low_quality else 80
+    cylinder_intersection_samples = 240 if low_quality else 720
+    circle_samples = 120 if low_quality else 200
+
+    phi, theta = np.meshgrid(
+        np.linspace(0, math.pi, ewald_phi_samples),
+        np.linspace(0, 2 * math.pi, ewald_theta_samples),
+    )
     Ew_x, Ew_y, Ew_z = sphere(K_MAG_PLOT, phi, theta, (0, K_MAG_PLOT, 0))
 
     grid_coords = np.arange(-2, 3)
@@ -221,7 +238,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     k_label_idx = len(fig.data) - 1
     cone_idx = k_label_idx - 1
 
-    arc_trace = _theta_arc(theta_all[0])
+    arc_trace = _theta_arc(theta_all[0], samples=arc_samples)
     fig.add_trace(arc_trace)
     arc_idx = len(fig.data) - 1
 
@@ -320,8 +337,10 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
     fig.add_trace(label_trace)
     hit_label_idx = len(fig.data) - 1
 
-    phi_g, theta_g = np.meshgrid(np.linspace(0, math.pi, 40),
-                                 np.linspace(0, 2 * math.pi, 80))
+    phi_g, theta_g = np.meshgrid(
+        np.linspace(0, math.pi, g_sphere_phi_samples),
+        np.linspace(0, 2 * math.pi, g_sphere_theta_samples),
+    )
 
     palette = qualitative.Plotly
 
@@ -398,7 +417,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     def g_radial_rings() -> list[go.Scatter3d]:
         rings: list[go.Scatter3d] = []
-        t_vals = np.linspace(0.0, 2 * math.pi, 200)
+        t_vals = np.linspace(0.0, 2 * math.pi, ring_samples)
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
             color = palette[i % len(palette)]
             ring_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
@@ -578,8 +597,8 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
 
     def g_radial_cylinders() -> list[go.Surface]:
         cylinders: list[go.Surface] = []
-        theta_vals = np.linspace(0.0, 2 * math.pi, 80)
-        z_vals = np.linspace(-axis_range, axis_range, 60)
+        theta_vals = np.linspace(0.0, 2 * math.pi, cylinder_theta_samples)
+        z_vals = np.linspace(-axis_range, axis_range, cylinder_z_samples)
         theta_grid, z_grid = np.meshgrid(theta_vals, z_vals)
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
@@ -628,7 +647,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                 z_lookup.setdefault(float(z_round), float(z_actual))
             unique_z = [z_lookup[key] for key in sorted(z_lookup.keys())]
 
-            t_vals = np.linspace(0.0, 2 * math.pi, 200)
+            t_vals = np.linspace(0.0, 2 * math.pi, ring_samples)
             x_segments: list[np.ndarray] = []
             y_segments: list[np.ndarray] = []
             z_segments: list[np.ndarray] = []
@@ -704,7 +723,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
-        base_t = np.linspace(0.0, 2 * math.pi, 720, endpoint=False)
+        base_t = np.linspace(0.0, 2 * math.pi, cylinder_intersection_samples, endpoint=False)
 
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
@@ -807,7 +826,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
         u = np.array([0.0, math.sin(theta), -math.cos(theta)])
         v = np.cross(normal, u)
 
-        t_vals = np.linspace(0.0, 2 * math.pi, 200)
+        t_vals = np.linspace(0.0, 2 * math.pi, circle_samples)
         circle = (
             center.reshape(3, 1)
             + r
@@ -956,7 +975,7 @@ def build_mono_figure(theta_min: float = math.radians(THETA_DEFAULT_MIN),
                         showscale=False,
                     ),
                     _k_label(kx, ky, kz),
-                    _theta_arc(th),
+                    _theta_arc(th, samples=arc_samples),
                     _theta_arc_label(th),
                     lattice_marker(th),
                     hit_projection(th),
@@ -1478,12 +1497,19 @@ def parse_args() -> argparse.Namespace:
                         help=f"Maximum θᵢ in degrees (default: {THETA_DEFAULT_MAX})")
     parser.add_argument("--frames", type=int, default=N_FRAMES_DEFAULT,
                         help=f"Number of slider steps (default: {N_FRAMES_DEFAULT})")
+    parser.add_argument(
+        "-low", "--low", dest="low_quality", action="store_true",
+        help="Use reduced-resolution rendering for faster testing",
+    )
     return parser.parse_args()
 
 
-def main(theta_min: float | None = None,
-         theta_max: float | None = None,
-         frames: int = N_FRAMES_DEFAULT) -> None:
+def main(
+    theta_min: float | None = None,
+    theta_max: float | None = None,
+    frames: int = N_FRAMES_DEFAULT,
+    low_quality: bool = False,
+) -> None:
     """Launch the mono simulator."""
 
     import plotly.io as pio
@@ -1493,7 +1519,7 @@ def main(theta_min: float | None = None,
     th_min = math.radians(theta_min if theta_min is not None else THETA_DEFAULT_MIN)
     th_max = math.radians(theta_max if theta_max is not None else THETA_DEFAULT_MAX)
 
-    fig, context = build_mono_figure(th_min, th_max, frames)
+    fig, context = build_mono_figure(th_min, th_max, frames, low_quality=low_quality)
     html = build_interactive_page(fig, context)
 
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as handle:
@@ -1505,4 +1531,4 @@ def main(theta_min: float | None = None,
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.theta_min, args.theta_max, args.frames)
+    main(args.theta_min, args.theta_max, args.frames, args.low_quality)
