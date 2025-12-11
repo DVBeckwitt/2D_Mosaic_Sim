@@ -1316,13 +1316,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           const menuBackup = figure.layout?.updatemenus
             ? JSON.parse(JSON.stringify(figure.layout.updatemenus))
             : null;
-          const hideControlsForExport = () =>
-            Plotly.relayout(figure, { sliders: [], updatemenus: [] });
-          const restoreControls = () =>
-            Plotly.relayout(figure, {
-              sliders: sliderBackup || [],
-              updatemenus: menuBackup || [],
-            });
+            const hideControlsForExport = () =>
+              Plotly.relayout(figure, {{ sliders: [], updatemenus: [] }});
+            const restoreControls = () =>
+              Plotly.relayout(figure, {{
+                sliders: sliderBackup || [],
+                updatemenus: menuBackup || [],
+              }});
           const modes = [
             {{ label: 'single_crystal', vis: latticeVis }},
             {{ label: '3d_powder', vis: gSphereState }},
