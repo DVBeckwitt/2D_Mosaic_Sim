@@ -443,7 +443,6 @@ def build_mono_figure(
                 rounded_z, g_z_val, atol=1e-6
             )
             pts = lattice_points[mask]
-            point_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
             g_ring_group_keys.append(_point_keys(pts))
             traces.append(
                 go.Scatter3d(
@@ -454,7 +453,7 @@ def build_mono_figure(
                     marker=dict(
                         color=color,
                         size=RING_POINT_MARKER_SIZE,
-                        opacity=point_opacity,
+                        opacity=1.0,
                     ),
                     name=f"|Gᵣ| ring points ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=False,
