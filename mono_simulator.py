@@ -246,7 +246,8 @@ def build_mono_figure(
     arc_label_idx = len(fig.data) - 1
 
     lattice_max = float(np.max(np.abs(lattice_points)))
-    axis_range = max(AXIS_RANGE, 1.2 * max(K_MAG_PLOT, lattice_max))
+    ewald_extent = 2.0 * K_MAG_PLOT
+    axis_range = max(AXIS_RANGE, 1.1 * ewald_extent, 1.2 * lattice_max)
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
