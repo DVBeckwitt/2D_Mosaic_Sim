@@ -39,6 +39,7 @@ ARC_RADIUS = 0.6
 RING_POINT_MARKER_SIZE = 14.0
 RING_INTERSECTION_MARKER_SIZE = 18.0
 CYLINDER_POINT_MARKER_SIZE = 12.0
+LATTICE_POINT_MARKER_SIZE = 6.0
 HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#e60073"
 
@@ -272,7 +273,7 @@ def build_mono_figure(
 
     def lattice_marker(theta: float) -> go.Scatter3d:
         hit_mask, _ = lattice_hits(theta)
-        sizes = np.where(hit_mask, HIT_MARKER_SIZE, 3.0)
+        sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
         colors = np.where(hit_mask, HIT_COLOR, "#a0a0a0")
         return go.Scatter3d(
             x=lattice_points[:, 0],
@@ -427,7 +428,7 @@ def build_mono_figure(
         t_vals = np.linspace(0.0, 2 * math.pi, ring_samples)
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
             color = palette[i % len(palette)]
-            ring_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
+            ring_opacity = 1.0
             x = g_r_val * np.cos(t_vals)
             y = g_r_val * np.sin(t_vals)
             z = np.full_like(t_vals, g_z_val)
