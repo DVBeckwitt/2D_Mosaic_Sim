@@ -247,23 +247,6 @@ def build_mono_figure(
 
     lattice_max = float(np.max(np.abs(lattice_points)))
     axis_range = max(AXIS_RANGE, 1.2 * max(K_MAG_PLOT, lattice_max))
-    R_MAX = axis_range
-    first_axis_idx = len(fig.data)
-    for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
-                ([0, 0], [-R_MAX, R_MAX], [0, 0]),
-                ([0, 0], [0, 0], [-R_MAX, R_MAX])]:
-        fig.add_trace(
-            go.Scatter3d(
-                x=xyz[0],
-                y=xyz[1],
-                z=xyz[2],
-                mode="lines",
-                showlegend=False,
-                line=dict(color="black", width=2, dash="dash"),
-            )
-        )
-
-    axis_indices = list(range(first_axis_idx, len(fig.data)))
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
@@ -866,8 +849,7 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_circle_indices = list(range(len(fig.data) - len(g_circle_traces), len(fig.data)))
 
-    base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx,
-                    arc_idx, arc_label_idx, *axis_indices}
+    base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx, arc_idx, arc_label_idx}
 
     def _mode_visibility(
         mode: str,
@@ -1045,28 +1027,28 @@ def build_mono_figure(
     fig.update_layout(
         scene=dict(
             xaxis=dict(
-                title=dict(text="G<sub>x</sub>", font=dict(size=20)),
                 range=[-axis_range, axis_range],
                 autorange=False,
                 showbackground=False,
                 showticklabels=False,
                 zeroline=False,
+                visible=False,
             ),
             yaxis=dict(
-                title=dict(text="G<sub>y</sub>", font=dict(size=20)),
                 range=[-axis_range, axis_range],
                 autorange=False,
                 showbackground=False,
                 showticklabels=False,
                 zeroline=False,
+                visible=False,
             ),
             zaxis=dict(
-                title=dict(text="G<sub>z</sub>", font=dict(size=20)),
                 range=[-axis_range, axis_range],
                 autorange=False,
                 showbackground=False,
                 showticklabels=False,
                 zeroline=False,
+                visible=False,
             ),
             aspectmode="cube",
             bgcolor="rgba(0,0,0,0)",
