@@ -39,6 +39,7 @@ ARC_RADIUS = 0.6
 RING_POINT_MARKER_SIZE = 14.0
 RING_INTERSECTION_MARKER_SIZE = 18.0
 CYLINDER_POINT_MARKER_SIZE = 12.0
+LATTICE_POINT_MARKER_SIZE = 6.0
 HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#e60073"
 
@@ -245,24 +246,8 @@ def build_mono_figure(
     arc_label_idx = len(fig.data) - 1
 
     lattice_max = float(np.max(np.abs(lattice_points)))
-    axis_range = max(AXIS_RANGE, 1.2 * max(K_MAG_PLOT, lattice_max))
-    R_MAX = axis_range
-    first_axis_idx = len(fig.data)
-    for xyz in [([-R_MAX, R_MAX], [0, 0], [0, 0]),
-                ([0, 0], [-R_MAX, R_MAX], [0, 0]),
-                ([0, 0], [0, 0], [-R_MAX, R_MAX])]:
-        fig.add_trace(
-            go.Scatter3d(
-                x=xyz[0],
-                y=xyz[1],
-                z=xyz[2],
-                mode="lines",
-                showlegend=False,
-                line=dict(color="black", width=2, dash="dash"),
-            )
-        )
-
-    axis_indices = list(range(first_axis_idx, len(fig.data)))
+    ewald_extent = 2.0 * K_MAG_PLOT
+    axis_range = max(AXIS_RANGE, 1.1 * ewald_extent, 1.2 * lattice_max)
 
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
@@ -272,7 +257,7 @@ def build_mono_figure(
 
     def lattice_marker(theta: float) -> go.Scatter3d:
         hit_mask, _ = lattice_hits(theta)
-        sizes = np.where(hit_mask, HIT_MARKER_SIZE, 3.0)
+        sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
         colors = np.where(hit_mask, HIT_COLOR, "#a0a0a0")
         return go.Scatter3d(
             x=lattice_points[:, 0],
@@ -427,7 +412,7 @@ def build_mono_figure(
         t_vals = np.linspace(0.0, 2 * math.pi, ring_samples)
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
             color = palette[i % len(palette)]
-            ring_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
+            ring_opacity = 1.0
             x = g_r_val * np.cos(t_vals)
             y = g_r_val * np.sin(t_vals)
             z = np.full_like(t_vals, g_z_val)
@@ -459,7 +444,6 @@ def build_mono_figure(
                 rounded_z, g_z_val, atol=1e-6
             )
             pts = lattice_points[mask]
-            point_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
             g_ring_group_keys.append(_point_keys(pts))
             traces.append(
                 go.Scatter3d(
@@ -470,7 +454,7 @@ def build_mono_figure(
                     marker=dict(
                         color=color,
                         size=RING_POINT_MARKER_SIZE,
-                        opacity=point_opacity,
+                        opacity=1.0,
                     ),
                     name=f"|Gᵣ| ring points ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=False,
@@ -865,8 +849,7 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_circle_indices = list(range(len(fig.data) - len(g_circle_traces), len(fig.data)))
 
-    base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx,
-                    arc_idx, arc_label_idx, *axis_indices}
+    base_indices = {ewald_idx, cone_idx - 1, cone_idx, k_label_idx, arc_idx, arc_label_idx}
 
     def _mode_visibility(
         mode: str,
@@ -1044,28 +1027,28 @@ def build_mono_figure(
     fig.update_layout(
         scene=dict(
             xaxis=dict(
-                title=dict(text="G<sub>x</sub>", font=dict(size=20)),
                 range=[-axis_range, axis_range],
                 autorange=False,
                 showbackground=False,
                 showticklabels=False,
                 zeroline=False,
+                visible=False,
             ),
             yaxis=dict(
-                title=dict(text="G<sub>y</sub>", font=dict(size=20)),
                 range=[-axis_range, axis_range],
                 autorange=False,
                 showbackground=False,
                 showticklabels=False,
                 zeroline=False,
+                visible=False,
             ),
             zaxis=dict(
-                title=dict(text="G<sub>z</sub>", font=dict(size=20)),
                 range=[-axis_range, axis_range],
                 autorange=False,
                 showbackground=False,
                 showticklabels=False,
                 zeroline=False,
+                visible=False,
             ),
             aspectmode="cube",
             bgcolor="rgba(0,0,0,0)",
