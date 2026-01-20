@@ -58,6 +58,8 @@ CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#e60073"
+LATTICE_MARKER_MIN_SCALE = 0.6
+LATTICE_MARKER_MAX_SCALE = 1.6
 
 
 def _scaled_opacity(
@@ -76,6 +78,13 @@ def _rgba(hex_color: str, alpha: float) -> str:
     b = int(value[4:6], 16)
     clamped = max(0.0, min(1.0, alpha))
     return f"rgba({r},{g},{b},{clamped:.3f})"
+
+
+def _distance_scale(points: np.ndarray) -> np.ndarray:
+    distances = np.linalg.norm(points - CAMERA_EYE, axis=1)
+    reference = np.linalg.norm(CAMERA_EYE)
+    scale = reference / np.maximum(distances, 1e-6)
+    return np.clip(scale, LATTICE_MARKER_MIN_SCALE, LATTICE_MARKER_MAX_SCALE)
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -291,7 +300,8 @@ def build_mono_figure(
         distances = np.linalg.norm(lattice_points - center, axis=1)
         inside_mask = distances < (K_MAG_PLOT - 1e-3)
         inside_mask &= ~hit_mask
-        sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
+        base_sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
+        sizes = base_sizes * _distance_scale(lattice_points)
         outside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_OPACITY)
         inside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_IN_SPHERE_OPACITY)
         hit_color = _rgba(HIT_COLOR, LATTICE_POINT_OPACITY)
