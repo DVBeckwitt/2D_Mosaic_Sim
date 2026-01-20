@@ -55,11 +55,8 @@ ARC_RADIUS = 0.6
 RING_POINT_MARKER_SIZE = 14.0
 RING_INTERSECTION_MARKER_SIZE = 18.0
 CYLINDER_POINT_MARKER_SIZE = 12.0
-LATTICE_POINT_MARKER_SIZE_MIN = 9.0
-LATTICE_POINT_MARKER_SIZE_MAX = 18.0
+LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
-HIT_MARKER_SIZE_MIN = 20.0
-HIT_MARKER_SIZE_MAX = 32.0
 HIT_COLOR = "#e60073"
 
 
@@ -193,12 +190,6 @@ def build_mono_figure(
     lattice_indices = lattice_indices[lattice_mask]
     lattice_points = lattice_points[lattice_mask]
 
-    lattice_distances = np.linalg.norm(lattice_points - CAMERA_EYE, axis=1)
-    lattice_min_dist = float(np.min(lattice_distances)) if lattice_distances.size else 0.0
-    lattice_max_dist = float(np.max(lattice_distances)) if lattice_distances.size else 1.0
-    lattice_range = max(lattice_max_dist - lattice_min_dist, 1e-6)
-    lattice_depth_scale = 1.0 - (lattice_distances - lattice_min_dist) / lattice_range
-
     g_magnitudes = np.linalg.norm(lattice_points, axis=1)
     rounded_g = np.round(g_magnitudes, 6)
     unique_g = np.unique(rounded_g)
@@ -300,15 +291,7 @@ def build_mono_figure(
         distances = np.linalg.norm(lattice_points - center, axis=1)
         inside_mask = distances < (K_MAG_PLOT - 1e-3)
         inside_mask &= ~hit_mask
-        base_sizes = (
-            LATTICE_POINT_MARKER_SIZE_MIN
-            + lattice_depth_scale * (LATTICE_POINT_MARKER_SIZE_MAX - LATTICE_POINT_MARKER_SIZE_MIN)
-        )
-        hit_sizes = (
-            HIT_MARKER_SIZE_MIN
-            + lattice_depth_scale * (HIT_MARKER_SIZE_MAX - HIT_MARKER_SIZE_MIN)
-        )
-        sizes = np.where(hit_mask, hit_sizes, base_sizes)
+        sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
         outside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_OPACITY)
         inside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_IN_SPHERE_OPACITY)
         hit_color = _rgba(HIT_COLOR, LATTICE_POINT_OPACITY)
