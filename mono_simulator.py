@@ -23,6 +23,20 @@ SC_A = 4.0  # Å (simple cubic lattice parameter)
 K_MAG_PLOT = 2 * math.pi / LAMBDA_CU_K_ALPHA  # Å⁻¹
 RECIP_A = 2 * math.pi / SC_A
 
+# Lattice filtering for the single-crystal view.
+LATTICE_INDEX_FILTER_ENABLED = True
+LATTICE_INDEX_FILTER_MOD = 2
+LATTICE_INDEX_FILTER_RESIDUE = 0
+
+# K-vector styling.
+K_VECTOR_LINE_WIDTH = 5
+K_VECTOR_COLOR = "black"
+K_VECTOR_CONE_SIZE = 0.2
+K_VECTOR_LABEL_SIZE = 14
+K_VECTOR_LABEL_COLOR = "black"
+
+# Reciprocal lattice point styling.
+LATTICE_POINT_COLOR = "#a0a0a0"
 
 def _d_cubic(h: int, k: int, l: int, a: float = SC_A) -> float:
     return a / math.sqrt(h * h + k * k + l * l)
@@ -80,7 +94,7 @@ def _k_label(x: list[float], y: list[float], z: list[float]) -> go.Scatter3d:
         mode="text",
         text=["kᵢ"],
         textposition="middle left",
-        textfont=dict(color="black", size=14),
+        textfont=dict(color=K_VECTOR_LABEL_COLOR, size=K_VECTOR_LABEL_SIZE),
         showlegend=False,
     )
 
@@ -157,8 +171,11 @@ def build_mono_figure(
 
     lattice_points = _reciprocal_points(lattice_indices)
     nonzero_mask = ~np.all(lattice_indices == 0, axis=1)
-    even_mask = np.all(lattice_indices % 2 == 0, axis=1)
-    lattice_mask = nonzero_mask & even_mask
+    lattice_mask = nonzero_mask
+    if LATTICE_INDEX_FILTER_ENABLED:
+        lattice_mask &= (
+            np.all(lattice_indices % LATTICE_INDEX_FILTER_MOD == LATTICE_INDEX_FILTER_RESIDUE, axis=1)
+        )
     lattice_indices = lattice_indices[lattice_mask]
     lattice_points = lattice_points[lattice_mask]
 
@@ -216,7 +233,7 @@ def build_mono_figure(
             y=ky,
             z=kz,
             mode="lines",
-            line=dict(color="black", width=5),
+        line=dict(color=K_VECTOR_COLOR, width=K_VECTOR_LINE_WIDTH),
             name="kᵢ",
         )
     )
@@ -230,8 +247,8 @@ def build_mono_figure(
             w=[kz[1] - kz[0]],
             anchor="tip",
             sizemode="absolute",
-            sizeref=0.2,
-            colorscale=[[0, "black"], [1, "black"]],
+        sizeref=K_VECTOR_CONE_SIZE,
+        colorscale=[[0, K_VECTOR_COLOR], [1, K_VECTOR_COLOR]],
             showscale=False,
         )
     )
@@ -260,7 +277,7 @@ def build_mono_figure(
     def lattice_marker(theta: float) -> go.Scatter3d:
         hit_mask, _ = lattice_hits(theta)
         sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
-        colors = np.where(hit_mask, HIT_COLOR, "#a0a0a0")
+        colors = np.where(hit_mask, HIT_COLOR, LATTICE_POINT_COLOR)
         return go.Scatter3d(
             x=lattice_points[:, 0],
             y=lattice_points[:, 1],
@@ -957,7 +974,7 @@ def build_mono_figure(
                         y=ky,
                         z=kz,
                         mode="lines",
-                        line=dict(color="black", width=5),
+                        line=dict(color=K_VECTOR_COLOR, width=K_VECTOR_LINE_WIDTH),
                     ),
                     go.Cone(
                         x=[kx[1]],
@@ -968,8 +985,8 @@ def build_mono_figure(
                         w=[kz[1] - kz[0]],
                         anchor="tip",
                         sizemode="absolute",
-                        sizeref=0.2,
-                        colorscale=[[0, "black"], [1, "black"]],
+                        sizeref=K_VECTOR_CONE_SIZE,
+                        colorscale=[[0, K_VECTOR_COLOR], [1, K_VECTOR_COLOR]],
                         showscale=False,
                     ),
                     _k_label(kx, ky, kz),
