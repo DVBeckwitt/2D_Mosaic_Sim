@@ -1371,6 +1371,41 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           }}
         }}
 
+        function resolveCameraEye() {{
+          const layoutEye = figure.layout?.scene?.camera?.eye;
+          if (layoutEye) {{
+            return layoutEye;
+          }}
+          const fullLayoutEye = figure._fullLayout?.scene?.camera?.eye;
+          if (fullLayoutEye) {{
+            return fullLayoutEye;
+          }}
+          const sceneCamera = figure._fullLayout?.scene?._scene?.camera?.eye;
+          if (sceneCamera) {{
+            return sceneCamera;
+          }}
+          const getCamera = figure._fullLayout?.scene?._scene?.getCamera;
+          if (typeof getCamera === 'function') {{
+            const cam = getCamera.call(figure._fullLayout.scene._scene);
+            if (cam?.eye) {{
+              return cam.eye;
+            }}
+          }}
+          return null;
+        }}
+
+        function describeEye(eye) {{
+          const mag = Math.hypot(eye.x, eye.y, eye.z);
+          if (!mag) {{
+            return 'camera eye is not set';
+          }}
+          const theta = Math.acos(eye.z / mag);
+          const phi = Math.atan2(eye.y, eye.x);
+          const thetaDeg = (theta * 180) / Math.PI;
+          const phiDeg = (phi * 180) / Math.PI;
+          return 'camera θ=' + thetaDeg.toFixed(1) + '°, φ=' + phiDeg.toFixed(1) + '°';
+        }}
+
         function updateLatticeSizesForCamera() {{
           if (latticeIdx == null || latticeIdx < 0) {{
             return;
@@ -1379,8 +1414,11 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           if (!trace || !Array.isArray(trace.x) || !Array.isArray(trace.y) || !Array.isArray(trace.z)) {{
             return;
           }}
-          const eye = figure._fullLayout?.scene?.camera?.eye || figure.layout?.scene?.camera?.eye;
+          const eye = resolveCameraEye();
           if (!eye) {{
+            if (selectorStatus) {{
+              selectorStatus.textContent = 'Camera position unavailable.';
+            }}
             return;
           }}
           const distances = trace.x.map((xVal, idx) => {{
@@ -1412,6 +1450,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             return baseSizes[idx] * scale;
           }});
           Plotly.restyle(figure, {{ 'marker.size': [scaled], customdata: [baseSizes] }}, [latticeIdx]);
+          if (selectorStatus) {{
+            selectorStatus.textContent = 'Lattice sizes updated (' + describeEye(eye) + ').';
+          }}
         }}
 
         if (ewaldSlider) {{
