@@ -1120,6 +1120,7 @@ def build_mono_figure(
         ],
         meta=dict(
             lattice_visibility=lattice_visibility,
+            lattice_idx=lattice_idx,
             g_sphere_visibility=g_sphere_visibility,
             g_sphere_indices=g_sphere_indices,
             g_circle_indices=g_circle_indices,
@@ -1308,7 +1309,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const ewaldIdx = typeof meta.ewald_idx === 'number'
           ? meta.ewald_idx
           : (figure.data || []).findIndex((trace) => trace && trace.name === 'Ewald sphere');
-        const latticeIdx = (figure.data || []).findIndex((trace) => trace && trace.name === 'Integer lattice');
+        const latticeIdx = typeof meta.lattice_idx === 'number'
+          ? meta.lattice_idx
+          : (figure.data || []).findIndex((trace) => trace && trace.name === 'Integer lattice');
         const latticeScaleMin = {LATTICE_MARKER_MIN_SCALE};
         const latticeScaleMax = {LATTICE_MARKER_MAX_SCALE};
         const gSphereGroups = meta.g_group_indices || [];
