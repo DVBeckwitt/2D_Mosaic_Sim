@@ -1340,6 +1340,33 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           applyFlagsToState(gCylinderState, gCylinderGroups, cylinderFlags);
         }}
 
+        let currentEye = figure.layout?.scene?.camera?.eye || {{ x: {CAMERA_EYE[0]}, y: {CAMERA_EYE[1]}, z: {CAMERA_EYE[2]} }};
+
+        function readEyeFromEvent(evt) {{
+          if (!evt) {{
+            return null;
+          }}
+          if (evt['scene.camera'] && evt['scene.camera'].eye) {{
+            return evt['scene.camera'].eye;
+          }}
+          if (evt['scene.camera.eye']) {{
+            return evt['scene.camera.eye'];
+          }}
+          return null;
+        }}
+
+        function resolveEye() {{
+          const layoutEye = figure.layout?.scene?.camera?.eye;
+          if (layoutEye) {{
+            return layoutEye;
+          }}
+          const fullEye = figure._fullLayout?.scene?.camera?.eye;
+          if (fullEye) {{
+            return fullEye;
+          }}
+          return currentEye;
+        }}
+
         function updateLatticeSizes() {{
           if (latticeIdx == null || latticeIdx < 0) {{
             return;
@@ -1348,7 +1375,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           if (!trace || !Array.isArray(trace.x) || !Array.isArray(trace.y) || !Array.isArray(trace.z)) {{
             return;
           }}
-          const eye = figure.layout?.scene?.camera?.eye || {{ x: {CAMERA_EYE[0]}, y: {CAMERA_EYE[1]}, z: {CAMERA_EYE[2]} }};
+          const eye = resolveEye() || {{ x: {CAMERA_EYE[0]}, y: {CAMERA_EYE[1]}, z: {CAMERA_EYE[2]} }};
           const distances = trace.x.map((xVal, idx) => {{
             const yVal = trace.y[idx] ?? 0;
             const zVal = trace.z[idx] ?? 0;
@@ -1431,8 +1458,20 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         figure.on?.('plotly_sliderchange', scheduleLatticeUpdate);
         figure.on?.('plotly_animated', scheduleLatticeUpdate);
         figure.on?.('plotly_animatingframe', scheduleLatticeUpdate);
-        figure.on?.('plotly_relayout', scheduleLatticeUpdate);
-        figure.on?.('plotly_relayouting', scheduleLatticeUpdate);
+        figure.on?.('plotly_relayout', (evt) => {{
+          const nextEye = readEyeFromEvent(evt);
+          if (nextEye) {{
+            currentEye = nextEye;
+          }}
+          scheduleLatticeUpdate();
+        }});
+        figure.on?.('plotly_relayouting', (evt) => {{
+          const nextEye = readEyeFromEvent(evt);
+          if (nextEye) {{
+            currentEye = nextEye;
+          }}
+          scheduleLatticeUpdate();
+        }});
 
         function traceVisibilitySnapshot() {{
           return (figure.data || []).map((trace) => {{
