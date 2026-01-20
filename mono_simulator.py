@@ -57,7 +57,7 @@ RING_INTERSECTION_MARKER_SIZE = 18.0
 CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
-HIT_COLOR = "#e60073"
+HIT_COLOR = "#000000"
 
 
 def _scaled_opacity(
@@ -813,7 +813,7 @@ def build_mono_figure(
                     y=y_combined,
                     z=z_combined,
                     mode="lines",
-                    line=dict(color=color, width=7),
+                    line=dict(color=HIT_COLOR, width=7),
                     showlegend=False,
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹)",
                     visible=visibility,
@@ -839,7 +839,7 @@ def build_mono_figure(
     )
 
     def g_intersection_circle(
-        theta: float, g_val: float, color: str, *, visibility: bool | None = False
+        theta: float, g_val: float, *, visibility: bool | None = False
     ) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
@@ -870,15 +870,15 @@ def build_mono_figure(
             y=circle[1],
             z=circle[2],
             mode="lines",
-            line=dict(color=color, width=5),
+            line=dict(color=HIT_COLOR, width=5),
             showlegend=False,
             name=f"|G| ∩ Ewald ({g_val:.3f} Å⁻¹)",
             visible=visibility,
         )
 
     g_circle_traces = [
-        g_intersection_circle(theta_all[0], g_val, palette[i % len(palette)])
-        for i, g_val in enumerate(unique_g)
+        g_intersection_circle(theta_all[0], g_val)
+        for g_val in unique_g
     ]
     for trace in g_circle_traces:
         fig.add_trace(trace)
@@ -966,10 +966,8 @@ def build_mono_figure(
         Bx, By, Bz = _ewald_surface(th, Ew_x, Ew_y, Ew_z)
         kx, ky, kz = _k_vector(th)
         circles = [
-            g_intersection_circle(
-                th, g_val, palette[j % len(palette)], visibility=None
-            )
-        for j, g_val in enumerate(unique_g)
+            g_intersection_circle(th, g_val, visibility=None)
+        for g_val in unique_g
     ]
         ring_intersections = g_ring_intersection_points(th, visibility=None)
         cylinder_intersections = g_cylinder_intersection_curves(th, visibility=None)
