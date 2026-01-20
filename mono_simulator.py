@@ -1340,14 +1340,6 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           applyFlagsToState(gCylinderState, gCylinderGroups, cylinderFlags);
         }}
 
-        function normalizeVec(vec) {{
-          const mag = Math.hypot(vec.x, vec.y, vec.z);
-          if (!mag) {{
-            return {{ x: 0, y: 0, z: 1 }};
-          }}
-          return {{ x: vec.x / mag, y: vec.y / mag, z: vec.z / mag }};
-        }}
-
         function updateLatticeSizes() {{
           if (latticeIdx == null || latticeIdx < 0) {{
             return;
@@ -1357,29 +1349,31 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             return;
           }}
           const eye = figure.layout?.scene?.camera?.eye || {{ x: {CAMERA_EYE[0]}, y: {CAMERA_EYE[1]}, z: {CAMERA_EYE[2]} }};
-          const viewDir = normalizeVec(eye);
-          const depths = trace.x.map((xVal, idx) => {{
+          const distances = trace.x.map((xVal, idx) => {{
             const yVal = trace.y[idx] ?? 0;
             const zVal = trace.z[idx] ?? 0;
-            return xVal * viewDir.x + yVal * viewDir.y + zVal * viewDir.z;
+            const dx = xVal - eye.x;
+            const dy = yVal - eye.y;
+            const dz = zVal - eye.z;
+            return Math.hypot(dx, dy, dz);
           }});
-          let minDepth = Math.min(...depths);
-          let maxDepth = Math.max(...depths);
-          if (!Number.isFinite(minDepth) || !Number.isFinite(maxDepth)) {{
+          let minDist = Math.min(...distances);
+          let maxDist = Math.max(...distances);
+          if (!Number.isFinite(minDist) || !Number.isFinite(maxDist)) {{
             return;
           }}
-          const span = maxDepth - minDepth;
+          const span = maxDist - minDist;
           if (span < 1e-9) {{
-            minDepth -= 1;
-            maxDepth += 1;
+            minDist -= 1;
+            maxDist += 1;
           }}
-          const baseSizes = Array.isArray(trace.customdata) && trace.customdata.length === depths.length
+          const baseSizes = Array.isArray(trace.customdata) && trace.customdata.length === distances.length
             ? trace.customdata
             : Array.isArray(trace.marker?.size)
               ? trace.marker.size
-              : depths.map(() => trace.marker?.size ?? {LATTICE_POINT_MARKER_SIZE});
-          const scaled = depths.map((depth, idx) => {{
-            const t = (depth - minDepth) / (maxDepth - minDepth);
+              : distances.map(() => trace.marker?.size ?? {LATTICE_POINT_MARKER_SIZE});
+          const scaled = distances.map((dist, idx) => {{
+            const t = (maxDist - dist) / (maxDist - minDist);
             const scale = latticeScaleMin + (latticeScaleMax - latticeScaleMin) * t;
             return baseSizes[idx] * scale;
           }});
