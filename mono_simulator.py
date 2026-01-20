@@ -157,8 +157,10 @@ def build_mono_figure(
 
     lattice_points = _reciprocal_points(lattice_indices)
     nonzero_mask = ~np.all(lattice_indices == 0, axis=1)
-    lattice_indices = lattice_indices[nonzero_mask]
-    lattice_points = lattice_points[nonzero_mask]
+    even_mask = np.all(lattice_indices % 2 == 0, axis=1)
+    lattice_mask = nonzero_mask & even_mask
+    lattice_indices = lattice_indices[lattice_mask]
+    lattice_points = lattice_points[lattice_mask]
 
     g_magnitudes = np.linalg.norm(lattice_points, axis=1)
     rounded_g = np.round(g_magnitudes, 6)
