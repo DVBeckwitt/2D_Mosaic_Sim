@@ -58,6 +58,8 @@ CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#e60073"
+LATTICE_MARKER_MIN_SCALE = 0.6
+LATTICE_MARKER_MAX_SCALE = 1.6
 
 
 def _scaled_opacity(
@@ -76,6 +78,13 @@ def _rgba(hex_color: str, alpha: float) -> str:
     b = int(value[4:6], 16)
     clamped = max(0.0, min(1.0, alpha))
     return f"rgba({r},{g},{b},{clamped:.3f})"
+
+
+def _distance_scale(points: np.ndarray) -> np.ndarray:
+    distances = np.linalg.norm(points - CAMERA_EYE, axis=1)
+    reference = np.linalg.norm(CAMERA_EYE)
+    scale = reference / np.maximum(distances, 1e-6)
+    return np.clip(scale, LATTICE_MARKER_MIN_SCALE, LATTICE_MARKER_MAX_SCALE)
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -291,7 +300,8 @@ def build_mono_figure(
         distances = np.linalg.norm(lattice_points - center, axis=1)
         inside_mask = distances < (K_MAG_PLOT - 1e-3)
         inside_mask &= ~hit_mask
-        sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
+        base_sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
+        sizes = base_sizes * _distance_scale(lattice_points)
         outside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_OPACITY)
         inside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_IN_SPHERE_OPACITY)
         hit_color = _rgba(HIT_COLOR, LATTICE_POINT_OPACITY)
@@ -302,6 +312,7 @@ def build_mono_figure(
             z=lattice_points[:, 2],
             mode="markers",
             marker=dict(size=sizes, color=colors, opacity=1.0),
+            customdata=base_sizes,
             name="Integer lattice",
         )
 
@@ -1109,6 +1120,7 @@ def build_mono_figure(
         ],
         meta=dict(
             lattice_visibility=lattice_visibility,
+            lattice_idx=lattice_idx,
             g_sphere_visibility=g_sphere_visibility,
             g_sphere_indices=g_sphere_indices,
             g_circle_indices=g_circle_indices,
@@ -1264,6 +1276,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
       <div id=\"controls\">
         <button id=\"open-selector\">Open powder selector window</button>
         <button id=\"download-all\" style=\"margin-left:8px;\">Download all views</button>
+        <button id=\"update-lattice-sizes\" style=\"margin-left:8px;\">Update lattice sizes</button>
         <label style=\"margin-left:12px;\">Ewald opacity:
           <input id=\"ewald-opacity\" type=\"range\" min=\"0\" max=\"1\" step=\"0.05\" value=\"1\">
           <span id=\"ewald-opacity-value\">1.00</span>
@@ -1287,6 +1300,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const cylinderSelectorHtml = `{cylinder_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
         const downloadBtn = document.getElementById('download-all');
+        const updateSizesBtn = document.getElementById('update-lattice-sizes');
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
         const ewaldValue = document.getElementById('ewald-opacity-value');
@@ -1295,6 +1309,11 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const ewaldIdx = typeof meta.ewald_idx === 'number'
           ? meta.ewald_idx
           : (figure.data || []).findIndex((trace) => trace && trace.name === 'Ewald sphere');
+        const latticeIdx = typeof meta.lattice_idx === 'number'
+          ? meta.lattice_idx
+          : (figure.data || []).findIndex((trace) => trace && trace.name === 'Integer lattice');
+        const latticeScaleMin = {LATTICE_MARKER_MIN_SCALE};
+        const latticeScaleMax = {LATTICE_MARKER_MAX_SCALE};
         const gSphereGroups = meta.g_group_indices || [];
         const gRingGroups = meta.g_ring_groups || [];
         const gCylinderGroups = meta.g_cylinder_group_indices || [];
@@ -1352,12 +1371,102 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           }}
         }}
 
+        function resolveCameraEye() {{
+          const layoutEye = figure.layout?.scene?.camera?.eye;
+          if (layoutEye) {{
+            return layoutEye;
+          }}
+          const fullLayoutEye = figure._fullLayout?.scene?.camera?.eye;
+          if (fullLayoutEye) {{
+            return fullLayoutEye;
+          }}
+          const sceneCamera = figure._fullLayout?.scene?._scene?.camera?.eye;
+          if (sceneCamera) {{
+            return sceneCamera;
+          }}
+          const getCamera = figure._fullLayout?.scene?._scene?.getCamera;
+          if (typeof getCamera === 'function') {{
+            const cam = getCamera.call(figure._fullLayout.scene._scene);
+            if (cam?.eye) {{
+              return cam.eye;
+            }}
+          }}
+          return null;
+        }}
+
+        function describeEye(eye) {{
+          const mag = Math.hypot(eye.x, eye.y, eye.z);
+          if (!mag) {{
+            return 'camera eye is not set';
+          }}
+          const theta = Math.acos(eye.z / mag);
+          const phi = Math.atan2(eye.y, eye.x);
+          const thetaDeg = (theta * 180) / Math.PI;
+          const phiDeg = (phi * 180) / Math.PI;
+          return 'camera θ=' + thetaDeg.toFixed(1) + '°, φ=' + phiDeg.toFixed(1) + '°';
+        }}
+
+        function updateLatticeSizesForCamera() {{
+          if (latticeIdx == null || latticeIdx < 0) {{
+            return;
+          }}
+          const trace = figure.data?.[latticeIdx];
+          if (!trace || !Array.isArray(trace.x) || !Array.isArray(trace.y) || !Array.isArray(trace.z)) {{
+            return;
+          }}
+          const eye = resolveCameraEye();
+          if (!eye) {{
+            if (selectorStatus) {{
+              selectorStatus.textContent = 'Camera position unavailable.';
+            }}
+            return;
+          }}
+          const distances = trace.x.map((xVal, idx) => {{
+            const yVal = trace.y[idx] ?? 0;
+            const zVal = trace.z[idx] ?? 0;
+            const dx = xVal - eye.x;
+            const dy = yVal - eye.y;
+            const dz = zVal - eye.z;
+            return Math.hypot(dx, dy, dz);
+          }});
+          let minDist = Math.min(...distances);
+          let maxDist = Math.max(...distances);
+          if (!Number.isFinite(minDist) || !Number.isFinite(maxDist)) {{
+            return;
+          }}
+          const span = maxDist - minDist;
+          if (span < 1e-9) {{
+            minDist -= 1;
+            maxDist += 1;
+          }}
+          const baseSizes = Array.isArray(trace.customdata) && trace.customdata.length === distances.length
+            ? trace.customdata
+            : Array.isArray(trace.marker?.size)
+              ? trace.marker.size
+              : distances.map(() => trace.marker?.size ?? {LATTICE_POINT_MARKER_SIZE});
+          const scaled = distances.map((dist, idx) => {{
+            const t = (maxDist - dist) / (maxDist - minDist);
+            const scale = latticeScaleMin + (latticeScaleMax - latticeScaleMin) * t;
+            return baseSizes[idx] * scale;
+          }});
+          Plotly.restyle(figure, {{ 'marker.size': [scaled], customdata: [baseSizes] }}, [latticeIdx]);
+          if (selectorStatus) {{
+            selectorStatus.textContent = 'Lattice sizes updated (' + describeEye(eye) + ').';
+          }}
+        }}
+
         if (ewaldSlider) {{
           ewaldSlider.addEventListener('input', (evt) => {{
             const val = parseFloat(evt.target.value);
             applyEwaldOpacity(val);
           }});
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
+        }}
+
+        if (updateSizesBtn) {{
+          updateSizesBtn.addEventListener('click', () => {{
+            updateLatticeSizesForCamera();
+          }});
         }}
 
         const reapplyEwaldOpacity = () => applyEwaldOpacity(ewaldAlpha);
