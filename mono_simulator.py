@@ -57,7 +57,7 @@ RING_INTERSECTION_MARKER_SIZE = 18.0
 CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
-HIT_COLOR = "#e60073"
+HIT_COLOR = "#000000"
 
 
 def _scaled_opacity(
@@ -620,7 +620,6 @@ def build_mono_figure(
         zip(
             g_ring_indices,
             g_ring_intersection_indices,
-            g_ring_point_indices,
             strict=True,
         )
     )
@@ -814,7 +813,7 @@ def build_mono_figure(
                     y=y_combined,
                     z=z_combined,
                     mode="lines",
-                    line=dict(color=color, width=7),
+                    line=dict(color=HIT_COLOR, width=7),
                     showlegend=False,
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹)",
                     visible=visibility,
@@ -835,13 +834,12 @@ def build_mono_figure(
             g_cylinder_indices,
             g_cylinder_intersection_indices,
             g_cylinder_ring_indices,
-            g_cylinder_point_indices,
             strict=True,
         )
     )
 
     def g_intersection_circle(
-        theta: float, g_val: float, color: str, *, visibility: bool | None = False
+        theta: float, g_val: float, *, visibility: bool | None = False
     ) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
@@ -872,15 +870,15 @@ def build_mono_figure(
             y=circle[1],
             z=circle[2],
             mode="lines",
-            line=dict(color=color, width=5),
+            line=dict(color=HIT_COLOR, width=5),
             showlegend=False,
             name=f"|G| ∩ Ewald ({g_val:.3f} Å⁻¹)",
             visible=visibility,
         )
 
     g_circle_traces = [
-        g_intersection_circle(theta_all[0], g_val, palette[i % len(palette)])
-        for i, g_val in enumerate(unique_g)
+        g_intersection_circle(theta_all[0], g_val)
+        for g_val in unique_g
     ]
     for trace in g_circle_traces:
         fig.add_trace(trace)
@@ -898,10 +896,17 @@ def build_mono_figure(
         g_related = g_sphere_indices + g_circle_indices + g_point_indices
         ring_related = [idx for group in g_ring_groups for idx in group]
         cylinder_related = [idx for group in g_cylinder_groups for idx in group]
+        powder_point_indices = {
+            *g_point_indices,
+            *g_ring_point_indices,
+            *g_cylinder_point_indices,
+        }
         vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
                 vis.append(True)
+            elif idx in powder_point_indices:
+                vis.append(False)
             elif idx in lattice_related:
                 vis.append(mode == "lattice")
             elif idx in g_related:
@@ -928,21 +933,15 @@ def build_mono_figure(
 
     g_mask_default = [i == 0 for i in range(len(g_sphere_indices))]
     g_mask_default.extend([i == 0 for i in range(len(g_circle_indices))])
-    g_mask_default.extend([i == 0 for i in range(len(g_point_indices))])
+    g_mask_default.extend([False for _ in range(len(g_point_indices))])
     lattice_visibility = _mode_visibility("lattice")
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
     g_ring_mask_default = [True for _ in g_ring_groups]
     g_ring_visibility = _mode_visibility("g_rings", ring_mask=g_ring_mask_default)
-    for idx in g_ring_point_indices:
-        g_ring_visibility[idx] = True
     g_cylinder_mask_default = [i == 0 for i in range(len(g_cylinder_groups))]
     g_cylinder_visibility = _mode_visibility(
         "g_cylinders", cylinder_mask=g_cylinder_mask_default
     )
-    for idx in g_cylinder_point_indices:
-        g_cylinder_visibility[idx] = g_cylinder_visibility[idx] or g_cylinder_mask_default[
-            next(pos for pos, group in enumerate(g_cylinder_groups) if idx in group)
-        ]
 
     def _two_theta_str(g_mag: float) -> str:
         ratio = g_mag / (2.0 * K_MAG_PLOT)
@@ -952,13 +951,12 @@ def build_mono_figure(
         return f"{2.0 * math.degrees(math.asin(ratio)):.2f}°"
 
     g_two_thetas = [_two_theta_str(val) for val in unique_g]
-    g_group_indices = list(zip(g_sphere_indices, g_circle_indices, g_point_indices, strict=True))
+    g_group_indices = list(zip(g_sphere_indices, g_circle_indices, strict=True))
     g_cylinder_group_indices = list(
         zip(
             g_cylinder_indices,
             g_cylinder_intersection_indices,
             g_cylinder_ring_indices,
-            g_cylinder_point_indices,
             strict=True,
         )
     )
@@ -968,10 +966,8 @@ def build_mono_figure(
         Bx, By, Bz = _ewald_surface(th, Ew_x, Ew_y, Ew_z)
         kx, ky, kz = _k_vector(th)
         circles = [
-            g_intersection_circle(
-                th, g_val, palette[j % len(palette)], visibility=None
-            )
-        for j, g_val in enumerate(unique_g)
+            g_intersection_circle(th, g_val, visibility=None)
+        for g_val in unique_g
     ]
         ring_intersections = g_ring_intersection_points(th, visibility=None)
         cylinder_intersections = g_cylinder_intersection_curves(th, visibility=None)
@@ -1159,15 +1155,19 @@ def build_mono_figure(
     return fig, context
 
 
-def _selector_checkbox_html(g_values: list[float], group_indices: list[tuple[int, int, int]], two_thetas: list[str]) -> str:
+def _selector_checkbox_html(
+    g_values: list[float],
+    group_indices: list[tuple[int, int]],
+    two_thetas: list[str],
+) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, (g_val, (sphere_idx, circle_idx, points_idx), two_theta) in enumerate(
+    for i, (g_val, (sphere_idx, circle_idx), two_theta) in enumerate(
         zip(g_values, group_indices, two_thetas, strict=True)
     ):
         checked = "checked" if i == 0 else ""
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{sphere_idx},{circle_idx},{points_idx}" {checked}>'
+            f'data-pos="{i}" data-traces="{sphere_idx},{circle_idx}" {checked}>'
             f'2θ ≈ {two_theta}</label>'
         )
     lines.append("</div>")
@@ -1176,15 +1176,15 @@ def _selector_checkbox_html(g_values: list[float], group_indices: list[tuple[int
 
 def _ring_selector_checkbox_html(
     ring_specs: list[tuple[float, float]],
-    ring_groups: list[tuple[int, int, int]],
+    ring_groups: list[tuple[int, int]],
 ) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, ((g_r_val, g_z_val), (ring_idx, intersection_idx, points_idx)) in enumerate(
+    for i, ((g_r_val, g_z_val), (ring_idx, intersection_idx)) in enumerate(
         zip(ring_specs, ring_groups, strict=True)
     ):
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{ring_idx},{intersection_idx},{points_idx}" checked>'
+            f'data-pos="{i}" data-traces="{ring_idx},{intersection_idx}" checked>'
             f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹, G_z ≈ {g_z_val:.3f} Å⁻¹</label>'
         )
     lines.append("</div>")
@@ -1192,16 +1192,16 @@ def _ring_selector_checkbox_html(
 
 
 def _cylinder_selector_checkbox_html(
-    cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int, int]]
+    cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int]]
 ) -> str:
     lines = ["<div id=\"g-selector\">"]
-    for i, (g_r_val, (cyl_idx, intersection_idx, ring_idx, points_idx)) in enumerate(
+    for i, (g_r_val, (cyl_idx, intersection_idx, ring_idx)) in enumerate(
         zip(cylinder_specs, cylinder_groups, strict=True)
     ):
         checked = "checked" if i == 0 else ""
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
-            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{ring_idx},{points_idx}" {checked}>'
+            f'data-pos="{i}" data-traces="{cyl_idx},{intersection_idx},{ring_idx}" {checked}>'
             f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹</label>'
         )
     lines.append("</div>")
@@ -1212,17 +1212,17 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     import plotly.io as pio
 
     g_values: list[float] = context["g_values"]
-    g_group_indices: list[tuple[int, int, int]] = context["g_group_indices"]
+    g_group_indices: list[tuple[int, int]] = context["g_group_indices"]
     g_two_thetas: list[str] = context["g_two_thetas"]
     g_ring_specs: list[tuple[float, float]] = context["g_ring_specs"]
     g_ring_indices: list[int] = context["g_ring_indices"]
-    g_ring_groups: list[tuple[int, int, int]] = context["g_ring_groups"]
+    g_ring_groups: list[tuple[int, int]] = context["g_ring_groups"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
     g_ring_visibility: list[bool] = context["g_ring_visibility"]
     g_cylinder_visibility: list[bool] = context["g_cylinder_visibility"]
     g_cylinder_specs: list[float] = context["g_cylinder_specs"]
-    g_cylinder_groups: list[tuple[int, int, int, int]] = context["g_cylinder_groups"]
+    g_cylinder_groups: list[tuple[int, int, int]] = context["g_cylinder_groups"]
 
     figure_id = "mono-figure"
     figure_html = pio.to_html(
