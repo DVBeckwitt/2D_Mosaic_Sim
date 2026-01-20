@@ -312,6 +312,7 @@ def build_mono_figure(
             z=lattice_points[:, 2],
             mode="markers",
             marker=dict(size=sizes, color=colors, opacity=1.0),
+            customdata=base_sizes,
             name="Integer lattice",
         )
 
@@ -1274,6 +1275,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
       <div id=\"controls\">
         <button id=\"open-selector\">Open powder selector window</button>
         <button id=\"download-all\" style=\"margin-left:8px;\">Download all views</button>
+        <button id=\"update-lattice-sizes\" style=\"margin-left:8px;\">Update lattice sizes</button>
         <label style=\"margin-left:12px;\">Ewald opacity:
           <input id=\"ewald-opacity\" type=\"range\" min=\"0\" max=\"1\" step=\"0.05\" value=\"1\">
           <span id=\"ewald-opacity-value\">1.00</span>
@@ -1297,6 +1299,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const cylinderSelectorHtml = `{cylinder_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
         const downloadBtn = document.getElementById('download-all');
+        const updateSizesBtn = document.getElementById('update-lattice-sizes');
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
         const ewaldValue = document.getElementById('ewald-opacity-value');
@@ -1305,6 +1308,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const ewaldIdx = typeof meta.ewald_idx === 'number'
           ? meta.ewald_idx
           : (figure.data || []).findIndex((trace) => trace && trace.name === 'Ewald sphere');
+        const latticeIdx = (figure.data || []).findIndex((trace) => trace && trace.name === 'Integer lattice');
+        const latticeScaleMin = {LATTICE_MARKER_MIN_SCALE};
+        const latticeScaleMax = {LATTICE_MARKER_MAX_SCALE};
         const gSphereGroups = meta.g_group_indices || [];
         const gRingGroups = meta.g_ring_groups || [];
         const gCylinderGroups = meta.g_cylinder_group_indices || [];
@@ -1362,12 +1368,61 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           }}
         }}
 
+        function updateLatticeSizesForCamera() {{
+          if (latticeIdx == null || latticeIdx < 0) {{
+            return;
+          }}
+          const trace = figure.data?.[latticeIdx];
+          if (!trace || !Array.isArray(trace.x) || !Array.isArray(trace.y) || !Array.isArray(trace.z)) {{
+            return;
+          }}
+          const eye = figure._fullLayout?.scene?.camera?.eye || figure.layout?.scene?.camera?.eye;
+          if (!eye) {{
+            return;
+          }}
+          const distances = trace.x.map((xVal, idx) => {{
+            const yVal = trace.y[idx] ?? 0;
+            const zVal = trace.z[idx] ?? 0;
+            const dx = xVal - eye.x;
+            const dy = yVal - eye.y;
+            const dz = zVal - eye.z;
+            return Math.hypot(dx, dy, dz);
+          }});
+          let minDist = Math.min(...distances);
+          let maxDist = Math.max(...distances);
+          if (!Number.isFinite(minDist) || !Number.isFinite(maxDist)) {{
+            return;
+          }}
+          const span = maxDist - minDist;
+          if (span < 1e-9) {{
+            minDist -= 1;
+            maxDist += 1;
+          }}
+          const baseSizes = Array.isArray(trace.customdata) && trace.customdata.length === distances.length
+            ? trace.customdata
+            : Array.isArray(trace.marker?.size)
+              ? trace.marker.size
+              : distances.map(() => trace.marker?.size ?? {LATTICE_POINT_MARKER_SIZE});
+          const scaled = distances.map((dist, idx) => {{
+            const t = (maxDist - dist) / (maxDist - minDist);
+            const scale = latticeScaleMin + (latticeScaleMax - latticeScaleMin) * t;
+            return baseSizes[idx] * scale;
+          }});
+          Plotly.restyle(figure, {{ 'marker.size': [scaled], customdata: [baseSizes] }}, [latticeIdx]);
+        }}
+
         if (ewaldSlider) {{
           ewaldSlider.addEventListener('input', (evt) => {{
             const val = parseFloat(evt.target.value);
             applyEwaldOpacity(val);
           }});
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
+        }}
+
+        if (updateSizesBtn) {{
+          updateSizesBtn.addEventListener('click', () => {{
+            updateLatticeSizesForCamera();
+          }});
         }}
 
         const reapplyEwaldOpacity = () => applyEwaldOpacity(ewaldAlpha);
