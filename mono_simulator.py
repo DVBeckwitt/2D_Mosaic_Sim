@@ -37,6 +37,8 @@ K_VECTOR_LABEL_COLOR = "black"
 
 # Reciprocal lattice point styling.
 LATTICE_POINT_COLOR = "#a0a0a0"
+LATTICE_POINT_OPACITY = 0.95
+LATTICE_POINT_IN_SPHERE_OPACITY = 0.35
 
 def _d_cubic(h: int, k: int, l: int, a: float = SC_A) -> float:
     return a / math.sqrt(h * h + k * k + l * l)
@@ -65,6 +67,15 @@ def _scaled_opacity(
         return min_opacity
     ratio = max(0.0, min(1.0, count / max_count))
     return min_opacity + (max_opacity - min_opacity) * ratio
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    value = hex_color.lstrip("#")
+    r = int(value[0:2], 16)
+    g = int(value[2:4], 16)
+    b = int(value[4:6], 16)
+    clamped = max(0.0, min(1.0, alpha))
+    return f"rgba({r},{g},{b},{clamped:.3f})"
 
 
 def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -276,14 +287,21 @@ def build_mono_figure(
 
     def lattice_marker(theta: float) -> go.Scatter3d:
         hit_mask, _ = lattice_hits(theta)
+        center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
+        distances = np.linalg.norm(lattice_points - center, axis=1)
+        inside_mask = distances < (K_MAG_PLOT - 1e-3)
+        inside_mask &= ~hit_mask
         sizes = np.where(hit_mask, HIT_MARKER_SIZE, LATTICE_POINT_MARKER_SIZE)
-        colors = np.where(hit_mask, HIT_COLOR, LATTICE_POINT_COLOR)
+        outside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_OPACITY)
+        inside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_IN_SPHERE_OPACITY)
+        hit_color = _rgba(HIT_COLOR, LATTICE_POINT_OPACITY)
+        colors = np.where(hit_mask, hit_color, np.where(inside_mask, inside_color, outside_color))
         return go.Scatter3d(
             x=lattice_points[:, 0],
             y=lattice_points[:, 1],
             z=lattice_points[:, 2],
             mode="markers",
-            marker=dict(size=sizes, color=colors, opacity=0.95),
+            marker=dict(size=sizes, color=colors, opacity=1.0),
             name="Integer lattice",
         )
 
