@@ -1401,54 +1401,54 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
         }}
 
-        function snapSliderToIntersection(evt) {
-          if (!intersectionIndices.length || !thetaDegrees.length || snappingSlider) {
+        function snapSliderToIntersection(evt) {{
+          if (!intersectionIndices.length || !thetaDegrees.length || snappingSlider) {{
             return;
-          }
+          }}
           const activeIndex = evt?.slider?.active;
-          if (typeof activeIndex !== 'number') {
+          if (typeof activeIndex !== 'number') {{
             return;
-          }
+          }}
           const currentDeg = thetaDegrees[activeIndex];
-          if (!Number.isFinite(currentDeg)) {
+          if (!Number.isFinite(currentDeg)) {{
             return;
-          }
+          }}
           let bestIndex = null;
           let bestDelta = Infinity;
-          intersectionIndices.forEach((idx) => {
+          intersectionIndices.forEach((idx) => {{
             const val = thetaDegrees[idx];
-            if (!Number.isFinite(val)) {
+            if (!Number.isFinite(val)) {{
               return;
-            }
+            }}
             const delta = Math.abs(val - currentDeg);
-            if (delta < bestDelta) {
+            if (delta < bestDelta) {{
               bestDelta = delta;
               bestIndex = idx;
-            }
-          });
-          if (bestIndex == null) {
+            }}
+          }});
+          if (bestIndex == null) {{
             return;
-          }
+          }}
           const snapThreshold = 0.35;
-          if (bestDelta <= snapThreshold && bestIndex !== activeIndex) {
-            const frameName = `f${bestIndex}`;
+          if (bestDelta <= snapThreshold && bestIndex !== activeIndex) {{
+            const frameName = `f${{bestIndex}}`;
             snappingSlider = true;
-            Plotly.animate(figure, [frameName], {
-              frame: { duration: 0, redraw: true },
-              transition: { duration: 0 },
+            Plotly.animate(figure, [frameName], {{
+              frame: {{ duration: 0, redraw: true }},
+              transition: {{ duration: 0 }},
               mode: 'immediate',
-            }).then(() => {
+            }}).then(() => {{
               snappingSlider = false;
-            }).catch(() => {
+            }}).catch(() => {{
               snappingSlider = false;
-            });
-          }
-        }
+            }});
+          }}
+        }}
 
-        const reapplyEwaldOpacity = (evt) => {
+        const reapplyEwaldOpacity = (evt) => {{
           applyEwaldOpacity(ewaldAlpha);
           snapSliderToIntersection(evt);
-        };
+        }};
 
         figure.on?.('plotly_sliderchange', reapplyEwaldOpacity);
         figure.on?.('plotly_animated', reapplyEwaldOpacity);
