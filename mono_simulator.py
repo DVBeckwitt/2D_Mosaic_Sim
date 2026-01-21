@@ -213,13 +213,37 @@ def build_mono_figure(
             thetas.extend([arcsin - delta, math.pi - arcsin - delta])
         return thetas
 
-    intersection_thetas = [th for th in _intersection_thetas() if 0.0 <= th <= math.pi / 2]
+    def _unique_sorted(values: list[float], *, tol: float = 1e-6) -> list[float]:
+        if not values:
+            return []
+        ordered = sorted(values)
+        unique = [ordered[0]]
+        for val in ordered[1:]:
+            if not math.isclose(val, unique[-1], rel_tol=0.0, abs_tol=tol):
+                unique.append(val)
+        return unique
+
+    intersection_thetas = _unique_sorted(
+        [th for th in _intersection_thetas() if 0.0 <= th <= math.pi / 2]
+    )
     theta_min = max(theta_min, 0.0)
     theta_max = min(math.pi / 2, max(theta_max, 0.0, *intersection_thetas))
     theta_max = max(theta_min, theta_max)
 
     theta_all = np.linspace(theta_min, theta_max, n_frames)
     theta_all = np.unique(np.concatenate([theta_all, [0.0], intersection_thetas]))
+    theta_all = np.sort(theta_all)
+
+    def _intersection_indices() -> list[int]:
+        indices: list[int] = []
+        for th in intersection_thetas:
+            diff = np.abs(theta_all - th)
+            idx = int(np.argmin(diff))
+            if math.isclose(theta_all[idx], th, rel_tol=0.0, abs_tol=1e-6):
+                indices.append(idx)
+        return sorted(set(indices))
+
+    intersection_indices = _intersection_indices()
 
     fig = go.Figure()
 
@@ -282,7 +306,7 @@ def build_mono_figure(
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
         distances = np.linalg.norm(lattice_points - center, axis=1)
-        mask = np.isclose(distances, K_MAG_PLOT, atol=1e-3)
+        mask = np.isclose(distances, K_MAG_PLOT, atol=2e-3)
         return mask, lattice_points[mask]
 
     def lattice_marker(theta: float) -> go.Scatter3d:
@@ -1031,13 +1055,22 @@ def build_mono_figure(
         )
     fig.frames = frames
 
-    steps = [dict(method="animate",
-                  args=[[f.name],
-                        dict(frame=dict(duration=0, redraw=True),
-                             transition=dict(duration=0),
-                             mode="immediate")],
-                  label=f"{math.degrees(th):.1f}°")
-             for th, f in zip(theta_all, fig.frames)]
+    intersection_labels = {idx for idx in intersection_indices}
+    steps = [
+        dict(
+            method="animate",
+            args=[
+                [f.name],
+                dict(
+                    frame=dict(duration=0, redraw=True),
+                    transition=dict(duration=0),
+                    mode="immediate",
+                ),
+            ],
+            label=f"{math.degrees(th):.1f}°{' ★' if i in intersection_labels else ''}",
+        )
+        for i, (th, f) in enumerate(zip(theta_all, fig.frames))
+    ]
     sliders = [dict(steps=steps,
                     currentvalue=dict(prefix="θᵢ: "),
                     x=0.5, xanchor="center", y=-0.1, len=0.9)]
@@ -1127,6 +1160,8 @@ def build_mono_figure(
             g_cylinder_group_keys=g_cylinder_group_keys,
             g_cylinder_visibility=g_cylinder_visibility,
             g_values=unique_g.tolist(),
+            theta_degrees=[float(math.degrees(th)) for th in theta_all],
+            intersection_indices=intersection_indices,
         ),
     )
 
@@ -1302,8 +1337,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const gSphereKeys = (meta.g_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
         const gRingKeys = (meta.g_ring_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
         const gCylinderKeys = (meta.g_cylinder_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
+        const thetaDegrees = Array.isArray(meta.theta_degrees) ? meta.theta_degrees : [];
+        const intersectionIndices = Array.isArray(meta.intersection_indices)
+          ? meta.intersection_indices
+          : [];
         let selectorMode = '3d';
         let selectorWin = null;
+        let snappingSlider = false;
 
         function buildFlagsFromKeys(selectedKeys, keyList) {{
           return keyList.map((keys) => (keys || []).some((key) => selectedKeys.has(key)));
@@ -1361,7 +1401,54 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           applyEwaldOpacity(parseFloat(ewaldSlider.value));
         }}
 
-        const reapplyEwaldOpacity = () => applyEwaldOpacity(ewaldAlpha);
+        function snapSliderToIntersection(evt) {{
+          if (!intersectionIndices.length || !thetaDegrees.length || snappingSlider) {{
+            return;
+          }}
+          const activeIndex = evt?.slider?.active;
+          if (typeof activeIndex !== 'number') {{
+            return;
+          }}
+          const currentDeg = thetaDegrees[activeIndex];
+          if (!Number.isFinite(currentDeg)) {{
+            return;
+          }}
+          let bestIndex = null;
+          let bestDelta = Infinity;
+          intersectionIndices.forEach((idx) => {{
+            const val = thetaDegrees[idx];
+            if (!Number.isFinite(val)) {{
+              return;
+            }}
+            const delta = Math.abs(val - currentDeg);
+            if (delta < bestDelta) {{
+              bestDelta = delta;
+              bestIndex = idx;
+            }}
+          }});
+          if (bestIndex == null) {{
+            return;
+          }}
+          const snapThreshold = 0.35;
+          if (bestDelta <= snapThreshold && bestIndex !== activeIndex) {{
+            const frameName = `f${{bestIndex}}`;
+            snappingSlider = true;
+            Plotly.animate(figure, [frameName], {{
+              frame: {{ duration: 0, redraw: true }},
+              transition: {{ duration: 0 }},
+              mode: 'immediate',
+            }}).then(() => {{
+              snappingSlider = false;
+            }}).catch(() => {{
+              snappingSlider = false;
+            }});
+          }}
+        }}
+
+        const reapplyEwaldOpacity = (evt) => {{
+          applyEwaldOpacity(ewaldAlpha);
+          snapSliderToIntersection(evt);
+        }};
 
         figure.on?.('plotly_sliderchange', reapplyEwaldOpacity);
         figure.on?.('plotly_animated', reapplyEwaldOpacity);
