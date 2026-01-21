@@ -1091,6 +1091,7 @@ def build_mono_figure(
         ),
         paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, b=0, t=0),
+        showlegend=False,
         sliders=sliders,
         updatemenus=[
             dict(
