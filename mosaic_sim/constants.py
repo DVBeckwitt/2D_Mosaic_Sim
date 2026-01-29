@@ -11,9 +11,12 @@ c_hex = 28.636e-10
 # Magnitude of the incident wavevector |k|
 K_MAG = 2 * math.pi / λ
 
+# Styling for intersection curves/rings in Plotly figures.
+INTERSECTION_LINE_WIDTH = 8
+
 
 def d_hex(h: int, k: int, l: int, a: float = a_hex, c: float = c_hex) -> float:
     """Return the d-spacing for (h k l) using hexagonal parameters."""
     return 1.0 / math.sqrt((4/3) * (h*h + h*k + k*k) / a**2 + (l / c) ** 2)
 
-__all__ = ["λ", "a_hex", "c_hex", "K_MAG", "d_hex"]
+__all__ = ["λ", "a_hex", "c_hex", "K_MAG", "INTERSECTION_LINE_WIDTH", "d_hex"]

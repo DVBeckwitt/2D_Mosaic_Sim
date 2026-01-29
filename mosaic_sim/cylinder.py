@@ -12,7 +12,7 @@ import math
 import numpy as np
 import plotly.graph_objects as go
 
-from .constants import a_hex, c_hex, K_MAG, d_hex
+from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import (
     sphere,
     rot_x,
@@ -106,7 +106,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             y=ring_y,
             z=ring_z,
             mode="lines",
-            line=dict(color="red", width=5),
+            line=dict(color="red", width=INTERSECTION_LINE_WIDTH),
             name="Ewald/Bragg overlap",
         )
     )
@@ -131,7 +131,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             y=cyl_line_y,
             z=cyl_line_z,
             mode="lines",
-            line=dict(color="green", width=5),
+            line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
             name="Cylinder/Ewald overlap",
         )
     )
@@ -143,7 +143,7 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
             y=br_line_y,
             z=br_line_z,
             mode="lines",
-            line=dict(color="orange", width=5),
+            line=dict(color="orange", width=INTERSECTION_LINE_WIDTH),
             name="Cylinder/Bragg overlap",
         )
     )
@@ -257,14 +257,14 @@ def build_cylinder_figure(H: int = 0, K: int = 0, L: int = 12,
                         y=Ly,
                         z=Lz,
                         mode="lines",
-                        line=dict(color="green", width=5),
+                        line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
                     ),
                     go.Scatter3d(
                         x=Bcx,
                         y=Bcy,
                         z=Bcz,
                         mode="lines",
-                        line=dict(color="orange", width=5),
+                        line=dict(color="orange", width=INTERSECTION_LINE_WIDTH),
                     ),
                     go.Scatter3d(
                         x=ax_line_x,

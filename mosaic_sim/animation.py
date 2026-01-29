@@ -9,7 +9,7 @@ import math
 import numpy as np
 import plotly.graph_objects as go
 
-from .constants import a_hex, c_hex, K_MAG, d_hex
+from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import sphere, rot_x, intersection_circle
 from .intensity import mosaic_intensity
 
@@ -81,7 +81,7 @@ def build_animation(H: int = 0, K: int = 0, L: int = 1,
                              showscale=False, name="Ewald sphere"))
     fig.add_trace(go.Scatter3d(x=ring_x, y=ring_y, z=ring_z,
                                mode="lines",
-                               line=dict(color="green", width=5),
+                               line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
                                name="2θB ring"))
     fig.add_trace(go.Scatter3d(x=[k_tail[0], k_head[0]], y=[k_tail[1], k_head[1]], z=[k_tail[2], k_head[2]],
                                mode="lines", line=dict(color="black", width=5), name="kᵢ"))

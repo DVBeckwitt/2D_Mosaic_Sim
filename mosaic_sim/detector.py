@@ -9,7 +9,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .constants import a_hex, c_hex, K_MAG, d_hex
+from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import sphere, rot_x, intersection_circle
 from .intensity import mosaic_intensity
 
@@ -96,7 +96,8 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                              opacity=0.3, colorscale="Blues", showscale=False), 1, 1)
 
     fig.add_trace(go.Scatter3d(x=ring_x, y=ring_y, z=ring_z,
-                               mode="lines", line=dict(color="green", width=5)), 1, 1)
+                               mode="lines",
+                               line=dict(color="green", width=INTERSECTION_LINE_WIDTH)), 1, 1)
 
     k_tail, k_head = np.zeros(3), np.array([0, K_MAG, 0])
     fig.add_trace(go.Scatter3d(x=[0, k_head[0]], y=[0, k_head[1]], z=[0, k_head[2]],
@@ -143,7 +144,7 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                              mode="markers+lines",
                              marker=dict(size=7, color=I_blur0, colorscale="Viridis",
                                          showscale=False, opacity=0.9),
-                             line=dict(width=3, color="grey")), 1, 2)
+                             line=dict(width=INTERSECTION_LINE_WIDTH, color="grey")), 1, 2)
     ring2d_idx = len(fig.data) - 1
     fig.update_xaxes(visible=False, scaleanchor="y", row=1, col=2)
     fig.update_yaxes(visible=False, row=1, col=2)
@@ -172,7 +173,7 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                              mode="markers+lines",
                              marker=dict(size=7, color=I_blur, colorscale="Viridis",
                                          showscale=False, opacity=0.9),
-                             line=dict(width=3, color="grey"))
+                             line=dict(width=INTERSECTION_LINE_WIDTH, color="grey"))
 
         G_dir = np.array([0, math.sin(th), math.cos(th)])
         G_vec = G_dir * G_MAG

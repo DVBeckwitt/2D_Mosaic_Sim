@@ -58,6 +58,7 @@ CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#000000"
+INTERSECTION_LINE_WIDTH = 8
 
 
 def _scaled_opacity(
@@ -837,7 +838,7 @@ def build_mono_figure(
                     y=y_combined,
                     z=z_combined,
                     mode="lines",
-                    line=dict(color=HIT_COLOR, width=7),
+                    line=dict(color=HIT_COLOR, width=INTERSECTION_LINE_WIDTH),
                     showlegend=False,
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹)",
                     visible=visibility,
@@ -894,7 +895,7 @@ def build_mono_figure(
             y=circle[1],
             z=circle[2],
             mode="lines",
-            line=dict(color=HIT_COLOR, width=5),
+            line=dict(color=HIT_COLOR, width=INTERSECTION_LINE_WIDTH),
             showlegend=False,
             name=f"|G| ∩ Ewald ({g_val:.3f} Å⁻¹)",
             visible=visibility,
