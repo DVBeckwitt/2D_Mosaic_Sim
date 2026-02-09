@@ -52,13 +52,10 @@ G_002 = 2 * math.pi / _d_cubic(0, 0, 2)
 THETA_BRAGG_002 = math.degrees(math.asin(G_002 / (2.0 * K_MAG_PLOT)))
 THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = 90.0
-N_FRAMES_DEFAULT = 180
+N_FRAMES_DEFAULT = 120
 CAMERA_EYE = np.array([2.0, 2.0, 1.6])
 AXIS_RANGE = 5.0
 ARC_RADIUS = 0.6
-RING_POINT_MARKER_SIZE = 14.0
-RING_INTERSECTION_MARKER_SIZE = 18.0
-CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 24.0
 HIT_MARKER_SIZE = 48.0
 HIT_COLOR = "#000000"
@@ -67,6 +64,33 @@ CYLINDER_RING_LINE_WIDTH = 8  # px
 LATTICE_HIT_TOLERANCE = 2e-3
 AXIS_RING_TOLERANCE = 1e-9
 EWALD_DEFAULT_OPACITY = 0.9
+
+RENDER_PROFILE_SAMPLES: dict[str, dict[str, int]] = {
+    "balanced": dict(
+        arc_samples=30,
+        ewald_phi_samples=60,
+        ewald_theta_samples=120,
+        ring_samples=120,
+        cylinder_theta_samples=48,
+        cylinder_z_samples=40,
+        g_sphere_phi_samples=24,
+        g_sphere_theta_samples=48,
+        cylinder_intersection_samples=240,
+        circle_samples=120,
+    ),
+    "full": dict(
+        arc_samples=50,
+        ewald_phi_samples=100,
+        ewald_theta_samples=200,
+        ring_samples=200,
+        cylinder_theta_samples=80,
+        cylinder_z_samples=60,
+        g_sphere_phi_samples=40,
+        g_sphere_theta_samples=80,
+        cylinder_intersection_samples=720,
+        circle_samples=200,
+    ),
+}
 
 
 def _scaled_opacity(
@@ -85,6 +109,37 @@ def _rgba(hex_color: str, alpha: float) -> str:
     b = int(value[4:6], 16)
     clamped = max(0.0, min(1.0, alpha))
     return f"rgba({r},{g},{b},{clamped:.3f})"
+
+
+def _compact_figure_numeric_payload(fig: go.Figure) -> None:
+    """Reduce figure payload size by casting numeric arrays to float32."""
+
+    keys = ("x", "y", "z", "u", "v", "w", "surfacecolor")
+
+    def _cast_trace(trace: object) -> None:
+        for key in keys:
+            if not hasattr(trace, key):
+                continue
+            value = getattr(trace, key)
+            if value is None:
+                continue
+            try:
+                arr = np.asarray(value)
+            except Exception:
+                continue
+            if arr.dtype.kind not in ("f", "i", "u"):
+                continue
+            try:
+                setattr(trace, key, arr.astype(np.float32))
+            except Exception:
+                # Some trace properties are read-only typed wrappers; skip safely.
+                continue
+
+    for trace in fig.data:
+        _cast_trace(trace)
+    for frame in fig.frames:
+        for trace in frame.data:
+            _cast_trace(trace)
 
 
 def _ewald_surface(
@@ -158,7 +213,8 @@ def build_mono_figure(
     theta_max: float = math.radians(THETA_DEFAULT_MAX),
     n_frames: int = N_FRAMES_DEFAULT,
     *,
-    low_quality: bool = False,
+    low_quality: bool | None = None,
+    render_profile: str | None = None,
 ) -> tuple[go.Figure, dict]:
     """Return a Plotly figure showing only the Ewald sphere.
 
@@ -166,16 +222,27 @@ def build_mono_figure(
     about the *qx* axis.
     """
 
-    arc_samples = 30 if low_quality else 50
-    ewald_phi_samples = 60 if low_quality else 100
-    ewald_theta_samples = 120 if low_quality else 200
-    ring_samples = 120 if low_quality else 200
-    cylinder_theta_samples = 48 if low_quality else 80
-    cylinder_z_samples = 40 if low_quality else 60
-    g_sphere_phi_samples = 24 if low_quality else 40
-    g_sphere_theta_samples = 48 if low_quality else 80
-    cylinder_intersection_samples = 240 if low_quality else 720
-    circle_samples = 120 if low_quality else 200
+    profile = render_profile.lower() if render_profile is not None else None
+    if profile is None:
+        if low_quality is None:
+            profile = "balanced"
+        else:
+            profile = "balanced" if low_quality else "full"
+    if profile not in RENDER_PROFILE_SAMPLES:
+        options = ", ".join(sorted(RENDER_PROFILE_SAMPLES))
+        raise ValueError(f"Unknown render profile '{profile}'. Expected one of: {options}")
+
+    samples = RENDER_PROFILE_SAMPLES[profile]
+    arc_samples = samples["arc_samples"]
+    ewald_phi_samples = samples["ewald_phi_samples"]
+    ewald_theta_samples = samples["ewald_theta_samples"]
+    ring_samples = samples["ring_samples"]
+    cylinder_theta_samples = samples["cylinder_theta_samples"]
+    cylinder_z_samples = samples["cylinder_z_samples"]
+    g_sphere_phi_samples = samples["g_sphere_phi_samples"]
+    g_sphere_theta_samples = samples["g_sphere_theta_samples"]
+    cylinder_intersection_samples = samples["cylinder_intersection_samples"]
+    circle_samples = samples["circle_samples"]
 
     phi, theta = np.meshgrid(
         np.linspace(0, math.pi, ewald_phi_samples),
@@ -451,32 +518,6 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_sphere_indices = list(range(len(fig.data) - len(g_sphere_traces), len(fig.data)))
 
-    g_magnitude_rounded = np.round(g_magnitudes, 6)
-
-    def g_magnitude_points() -> list[go.Scatter3d]:
-        traces: list[go.Scatter3d] = []
-        for i, g_val in enumerate(unique_g):
-            mask = np.isclose(g_magnitude_rounded, g_val, atol=1e-6)
-            pts = lattice_points[mask]
-            color = palette[i % len(palette)]
-            traces.append(
-                go.Scatter3d(
-                    x=pts[:, 0] if len(pts) else [],
-                    y=pts[:, 1] if len(pts) else [],
-                    z=pts[:, 2] if len(pts) else [],
-                    mode="markers",
-                    marker=dict(color=color, size=5, opacity=0.95),
-                    name=f"|G| shell points ({g_val:.3f} Å⁻¹)",
-                    visible=False,
-                )
-            )
-        return traces
-
-    g_point_traces = g_magnitude_points()
-    for trace in g_point_traces:
-        fig.add_trace(trace)
-    g_point_indices = list(range(len(fig.data) - len(g_point_traces), len(fig.data)))
-
     g_r = np.linalg.norm(lattice_points[:, :2], axis=1)
     g_z = lattice_points[:, 2]
     rounded_pairs: dict[tuple[float, float], tuple[float, float]] = {}
@@ -496,14 +537,6 @@ def build_mono_figure(
         )
         ring_counts.append(int(np.count_nonzero(mask)))
     ring_max_count = max(ring_counts, default=0)
-
-    def _point_keys(points: np.ndarray) -> list[str]:
-        return [f"{x:.6f},{y:.6f},{z:.6f}" for x, y, z in points]
-
-    g_group_keys: list[list[str]] = []
-    for g_val in unique_g:
-        mask = np.isclose(g_magnitude_rounded, g_val, atol=1e-6)
-        g_group_keys.append(_point_keys(lattice_points[mask]))
 
     def g_radial_rings() -> list[go.Scatter3d]:
         rings: list[go.Scatter3d] = []
@@ -552,40 +585,6 @@ def build_mono_figure(
     for trace in g_ring_traces:
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
-
-    g_ring_group_keys: list[list[str]] = []
-
-    def g_ring_points() -> list[go.Scatter3d]:
-        traces: list[go.Scatter3d] = []
-        for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
-            color = palette[i % len(palette)]
-            mask = np.isclose(rounded_r, g_r_val, atol=1e-6) & np.isclose(
-                rounded_z, g_z_val, atol=1e-6
-            )
-            pts = lattice_points[mask]
-            g_ring_group_keys.append(_point_keys(pts))
-            traces.append(
-                go.Scatter3d(
-                    x=pts[:, 0] if len(pts) else [],
-                    y=pts[:, 1] if len(pts) else [],
-                    z=pts[:, 2] if len(pts) else [],
-                    mode="markers",
-                    marker=dict(
-                        color=color,
-                        size=RING_POINT_MARKER_SIZE,
-                        opacity=1.0,
-                    ),
-                    name=f"|Gᵣ| ring points ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
-                    visible=False,
-                    showlegend=False,
-                )
-            )
-        return traces
-
-    g_ring_point_traces = g_ring_points()
-    for trace in g_ring_point_traces:
-        fig.add_trace(trace)
-    g_ring_point_indices = list(range(len(fig.data) - len(g_ring_point_traces), len(fig.data)))
 
     RING_HIT_MARKER_SIZE = HIT_MARKER_SIZE * 0.5
 
@@ -683,7 +682,6 @@ def build_mono_figure(
     g_ring_groups = list(zip(g_ring_indices, g_ring_intersection_indices, strict=True))
 
     cylinder_values = sorted({float(val) for val in np.round(g_r[g_r > 0], 6)})
-    g_cylinder_group_keys: list[list[str]] = []
 
     def g_radial_cylinders() -> list[go.Surface]:
         cylinders: list[go.Surface] = []
@@ -767,37 +765,6 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_cylinder_ring_indices = list(range(len(fig.data) - len(g_cylinder_ring_traces), len(fig.data)))
 
-    def g_cylinder_points() -> list[go.Scatter3d]:
-        traces: list[go.Scatter3d] = []
-        rounded_r2 = np.round(g_r, 6)
-        for i, g_r_val in enumerate(cylinder_values):
-            color = palette[i % len(palette)]
-            mask = np.isclose(rounded_r2, g_r_val, atol=1e-6)
-            pts = lattice_points[mask]
-            g_cylinder_group_keys.append(_point_keys(pts))
-            traces.append(
-                go.Scatter3d(
-                    x=pts[:, 0] if len(pts) else [],
-                    y=pts[:, 1] if len(pts) else [],
-                    z=pts[:, 2] if len(pts) else [],
-                    mode="markers",
-                    marker=dict(
-                        color=color,
-                        size=CYLINDER_POINT_MARKER_SIZE,
-                        opacity=0.95,
-                    ),
-                    name=f"|Gᵣ| cylinder points ({g_r_val:.3f} Å⁻¹)",
-                    visible=False,
-                    showlegend=False,
-                )
-            )
-        return traces
-
-    g_cylinder_point_traces = g_cylinder_points()
-    for trace in g_cylinder_point_traces:
-        fig.add_trace(trace)
-    g_cylinder_point_indices = list(range(len(fig.data) - len(g_cylinder_point_traces), len(fig.data)))
-
     def g_cylinder_intersection_curves(theta: float, *, visibility: bool | None = False) -> list[go.Scatter3d]:
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
@@ -850,7 +817,7 @@ def build_mono_figure(
                     y=y_combined,
                     z=z_combined,
                     mode="lines",
-                    line=dict(color=HIT_COLOR, width=CYLINDER_INTERSECTION_LINE_WIDTH),  # <- changed
+                    line=dict(color=HIT_COLOR, width=CYLINDER_INTERSECTION_LINE_WIDTH),
                     showlegend=False,
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹)",
                     visible=visibility,
@@ -895,7 +862,7 @@ def build_mono_figure(
             y=circle[1],
             z=circle[2],
             mode="lines",
-            line=dict(color=HIT_COLOR, width=CIRCLE_INTERSECTION_LINE_WIDTH),  # <- changed
+            line=dict(color=HIT_COLOR, width=CIRCLE_INTERSECTION_LINE_WIDTH),
             showlegend=False,
             name=f"|G| ∩ Ewald ({g_val:.3f} Å⁻¹)",
             visible=visibility,
@@ -915,20 +882,13 @@ def build_mono_figure(
         cylinder_mask: list[bool] | None = None,
     ) -> list[bool]:
         lattice_related = {lattice_idx, projection_idx, hit_label_idx}
-        g_related = g_sphere_indices + g_circle_indices + g_point_indices
+        g_related = g_sphere_indices + g_circle_indices
         ring_related = [idx for group in g_ring_groups for idx in group]
         cylinder_related = [idx for group in g_cylinder_groups for idx in group]
-        powder_point_indices = {
-            *g_point_indices,
-            *g_ring_point_indices,
-            *g_cylinder_point_indices,
-        }
         vis: list[bool] = []
         for idx in range(len(fig.data)):
             if idx in base_indices:
                 vis.append(True)
-            elif idx in powder_point_indices:
-                vis.append(False)
             elif idx in lattice_related:
                 vis.append(mode == "lattice")
             elif idx in g_related:
@@ -955,7 +915,6 @@ def build_mono_figure(
 
     g_mask_default = [i == 0 for i in range(len(g_sphere_indices))]
     g_mask_default.extend([i == 0 for i in range(len(g_circle_indices))])
-    g_mask_default.extend([False for _ in range(len(g_point_indices))])
     lattice_visibility = _mode_visibility("lattice")
     g_sphere_visibility = _mode_visibility("g_spheres", g_mask_default)
     g_ring_mask_default = [True for _ in g_ring_groups]
@@ -1122,28 +1081,10 @@ def build_mono_figure(
             )
         ],
         meta=dict(
-            lattice_visibility=lattice_visibility,
-            g_sphere_visibility=g_sphere_visibility,
-            g_sphere_indices=g_sphere_indices,
-            g_circle_indices=g_circle_indices,
-            g_point_indices=g_point_indices,
-            g_group_keys=g_group_keys,
             ewald_idx=ewald_idx,
-            g_ring_indices=g_ring_indices,
-            g_ring_intersection_indices=g_ring_intersection_indices,
-            g_ring_point_indices=g_ring_point_indices,
             g_group_indices=g_group_indices,
             g_ring_groups=g_ring_groups,
-            g_ring_group_keys=g_ring_group_keys,
-            g_ring_visibility=g_ring_visibility,
-            g_cylinder_indices=g_cylinder_indices,
-            g_cylinder_intersection_indices=g_cylinder_intersection_indices,
-            g_cylinder_ring_indices=g_cylinder_ring_indices,
-            g_cylinder_point_indices=g_cylinder_point_indices,
             g_cylinder_group_indices=g_cylinder_group_indices,
-            g_cylinder_group_keys=g_cylinder_group_keys,
-            g_cylinder_visibility=g_cylinder_visibility,
-            g_values=unique_g.tolist(),
             theta_degrees=[float(math.degrees(th)) for th in theta_all],
             intersection_indices=intersection_indices,
         ),
@@ -1151,24 +1092,15 @@ def build_mono_figure(
 
     context = dict(
         g_values=unique_g.tolist(),
-        g_sphere_indices=g_sphere_indices,
-        g_circle_indices=g_circle_indices,
-        g_point_indices=g_point_indices,
-        g_ring_indices=g_ring_indices,
-        g_ring_point_indices=g_ring_point_indices,
         g_ring_groups=g_ring_groups,
         g_group_indices=g_group_indices,
         g_ring_specs=g_ring_specs,
-        g_group_keys=g_group_keys,
-        g_ring_group_keys=g_ring_group_keys,
         lattice_visibility=lattice_visibility,
         g_sphere_visibility=g_sphere_visibility,
         g_ring_visibility=g_ring_visibility,
         g_cylinder_visibility=g_cylinder_visibility,
         g_cylinder_specs=cylinder_values,
         g_cylinder_groups=g_cylinder_group_indices,
-        g_cylinder_group_keys=g_cylinder_group_keys,
-        g_cylinder_point_indices=g_cylinder_point_indices,
         g_two_thetas=g_two_thetas,
     )
 
@@ -1240,7 +1172,6 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     g_group_indices: list[tuple[int, int]] = context["g_group_indices"]
     g_two_thetas: list[str] = context["g_two_thetas"]
     g_ring_specs: list[tuple[float, float]] = context["g_ring_specs"]
-    g_ring_indices: list[int] = context["g_ring_indices"]
     g_ring_groups: list[tuple[int, int]] = context["g_ring_groups"]
     lattice_visibility: list[bool] = context["lattice_visibility"]
     g_sphere_visibility: list[bool] = context["g_sphere_visibility"]
@@ -1249,11 +1180,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     g_cylinder_specs: list[float] = context["g_cylinder_specs"]
     g_cylinder_groups: list[tuple[int, int, int]] = context["g_cylinder_groups"]
 
+    _compact_figure_numeric_payload(fig)
+
     figure_id = "mono-figure"
     figure_html = pio.to_html(
         fig,
         include_plotlyjs="cdn",
-        include_mathjax="cdn",
+        include_mathjax=False,
         full_html=False,
         auto_play=False,
         div_id=figure_id,
@@ -1649,12 +1582,18 @@ def parse_args() -> argparse.Namespace:
         default=N_FRAMES_DEFAULT,
         help=f"Number of slider steps (default: {N_FRAMES_DEFAULT})",
     )
-    parser.add_argument(
+    quality_group = parser.add_mutually_exclusive_group()
+    quality_group.add_argument(
+        "--full-quality",
+        action="store_true",
+        help="Use the full-resolution render profile (slower, larger output)",
+    )
+    quality_group.add_argument(
         "-low",
         "--low",
         dest="low_quality",
         action="store_true",
-        help="Use reduced-resolution rendering for faster testing",
+        help="Compatibility flag; uses the balanced render profile",
     )
     return parser.parse_args()
 
@@ -1664,6 +1603,8 @@ def main(
     theta_max: float | None = None,
     frames: int = N_FRAMES_DEFAULT,
     low_quality: bool = False,
+    *,
+    full_quality: bool = False,
 ) -> None:
     """Launch the mono simulator."""
     import plotly.io as pio
@@ -1673,7 +1614,12 @@ def main(
     th_min = math.radians(theta_min if theta_min is not None else THETA_DEFAULT_MIN)
     th_max = math.radians(theta_max if theta_max is not None else THETA_DEFAULT_MAX)
 
-    fig, context = build_mono_figure(th_min, th_max, frames, low_quality=low_quality)
+    # Keep --low as a compatibility alias for the balanced profile.
+    render_profile = "full" if full_quality else "balanced"
+    if low_quality:
+        render_profile = "balanced"
+
+    fig, context = build_mono_figure(th_min, th_max, frames, render_profile=render_profile)
     html = build_interactive_page(fig, context)
 
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as handle:
@@ -1685,4 +1631,10 @@ def main(
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.theta_min, args.theta_max, args.frames, args.low_quality)
+    main(
+        args.theta_min,
+        args.theta_max,
+        args.frames,
+        args.low_quality,
+        full_quality=args.full_quality,
+    )

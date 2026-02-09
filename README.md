@@ -37,7 +37,8 @@ Run the examples directly from the source tree:
 python simulate_detector.py         # Open the static detector figure
 python simulate_mosaic.py           # Launch the interactive animation
 python fibrous_simulator.py         # Cylinder intersection with slider
-python mono_simulator.py            # Single Ewald sphere with θᵢ slider
+python mono_simulator.py            # Single Ewald sphere (balanced fast default)
+python mono_simulator.py --full-quality  # Full-resolution mono view
 python simulate_cylinder_pdf.py     # Explore orientation PDF interactively
 python simulate_screen.py           # Pattern on a distant flat detector
 ```
