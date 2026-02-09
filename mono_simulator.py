@@ -40,6 +40,10 @@ LATTICE_POINT_COLOR = "#a0a0a0"
 LATTICE_POINT_OPACITY = 0.95
 LATTICE_POINT_IN_SPHERE_OPACITY = 0.35
 
+# Intersection styling (clean option: central constants).
+CIRCLE_INTERSECTION_LINE_WIDTH = 30  # px, |G| ∩ Ewald circles
+CYLINDER_INTERSECTION_LINE_WIDTH = 30  # px, |G_r| cylinder ∩ Ewald curves
+
 def _d_cubic(h: int, k: int, l: int, a: float = SC_A) -> float:
     return a / math.sqrt(h * h + k * k + l * l)
 
@@ -58,7 +62,11 @@ CYLINDER_POINT_MARKER_SIZE = 12.0
 LATTICE_POINT_MARKER_SIZE = 13.0
 HIT_MARKER_SIZE = 26.0
 HIT_COLOR = "#000000"
-INTERSECTION_LINE_WIDTH = 8
+RING_LINE_WIDTH = 8  # px
+CYLINDER_RING_LINE_WIDTH = 8  # px
+LATTICE_HIT_TOLERANCE = 2e-3
+AXIS_RING_TOLERANCE = 1e-9
+EWALD_DEFAULT_OPACITY = 0.9
 
 
 def _scaled_opacity(
@@ -79,15 +87,18 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{clamped:.3f})"
 
 
-def _ewald_surface(theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _ewald_surface(
+    theta_i: float, Ew_x: np.ndarray, Ew_y: np.ndarray, Ew_z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return rot_x(Ew_x, Ew_y, Ew_z, theta_i)
 
 
 def _k_vector(theta_i: float) -> tuple[list[float], list[float], list[float]]:
     """Return the incident wavevector from its tip back to the origin."""
-
     k_tip = np.array([0.0, K_MAG_PLOT, 0.0])
-    tip_x, tip_y, tip_z = rot_x(np.array([k_tip[0]]), np.array([k_tip[1]]), np.array([k_tip[2]]), theta_i)
+    tip_x, tip_y, tip_z = rot_x(
+        np.array([k_tip[0]]), np.array([k_tip[1]]), np.array([k_tip[2]]), theta_i
+    )
     return (
         [tip_x[0], 0.0],
         [tip_y[0], 0.0],
@@ -185,8 +196,9 @@ def build_mono_figure(
     nonzero_mask = ~np.all(lattice_indices == 0, axis=1)
     lattice_mask = nonzero_mask
     if LATTICE_INDEX_FILTER_ENABLED:
-        lattice_mask &= (
-            np.all(lattice_indices % LATTICE_INDEX_FILTER_MOD == LATTICE_INDEX_FILTER_RESIDUE, axis=1)
+        lattice_mask &= np.all(
+            lattice_indices % LATTICE_INDEX_FILTER_MOD == LATTICE_INDEX_FILTER_RESIDUE,
+            axis=1,
         )
     lattice_indices = lattice_indices[lattice_mask]
     lattice_points = lattice_points[lattice_mask]
@@ -194,7 +206,10 @@ def build_mono_figure(
     g_magnitudes = np.linalg.norm(lattice_points, axis=1)
     rounded_g = np.round(g_magnitudes, 6)
     unique_g = np.unique(rounded_g)
-    g_counts = [int(np.count_nonzero(np.isclose(rounded_g, g_val, atol=1e-6))) for g_val in unique_g]
+    g_counts = [
+        int(np.count_nonzero(np.isclose(rounded_g, g_val, atol=1e-6)))
+        for g_val in unique_g
+    ]
     g_max_count = max(g_counts, default=0)
 
     def _intersection_thetas() -> list[float]:
@@ -227,13 +242,34 @@ def build_mono_figure(
     intersection_thetas = _unique_sorted(
         [th for th in _intersection_thetas() if 0.0 <= th <= math.pi / 2]
     )
+
+    def _first_positive_00l_theta() -> float | None:
+        axis_gz: list[float] = []
+        for (hx, hy, hz), (_, _, z) in zip(lattice_indices, lattice_points, strict=True):
+            if hx == 0 and hy == 0 and hz > 0:
+                axis_gz.append(float(z))
+        for g_z_val in sorted(set(axis_gz)):
+            ratio = g_z_val / (2.0 * K_MAG_PLOT)
+            if -1.0 <= ratio <= 1.0:
+                return math.asin(ratio)
+        return None
+
+    theta_init_target = _first_positive_00l_theta()
     theta_min = max(theta_min, 0.0)
     theta_max = min(math.pi / 2, max(theta_max, 0.0, *intersection_thetas))
     theta_max = max(theta_min, theta_max)
 
     theta_all = np.linspace(theta_min, theta_max, n_frames)
-    theta_all = np.unique(np.concatenate([theta_all, [0.0], intersection_thetas]))
+    theta_seed = [0.0]
+    if theta_init_target is not None:
+        theta_seed.append(theta_init_target)
+    theta_all = np.unique(np.concatenate([theta_all, theta_seed, intersection_thetas]))
     theta_all = np.sort(theta_all)
+
+    theta_initial_idx = 0
+    if theta_init_target is not None and len(theta_all):
+        theta_initial_idx = int(np.argmin(np.abs(theta_all - theta_init_target)))
+    theta_initial = float(theta_all[theta_initial_idx]) if len(theta_all) else 0.0
 
     def _intersection_indices() -> list[int]:
         indices: list[int] = []
@@ -248,13 +284,13 @@ def build_mono_figure(
 
     fig = go.Figure()
 
-    Ew_x0, Ew_y0, Ew_z0 = _ewald_surface(theta_all[0], Ew_x, Ew_y, Ew_z)
+    Ew_x0, Ew_y0, Ew_z0 = _ewald_surface(theta_initial, Ew_x, Ew_y, Ew_z)
     fig.add_trace(
         go.Surface(
             x=Ew_x0,
             y=Ew_y0,
             z=Ew_z0,
-            opacity=1.0,
+            opacity=EWALD_DEFAULT_OPACITY,
             colorscale="Blues",
             showscale=False,
             name="Ewald sphere",
@@ -262,14 +298,14 @@ def build_mono_figure(
     )
     ewald_idx = len(fig.data) - 1
 
-    kx, ky, kz = _k_vector(theta_all[0])
+    kx, ky, kz = _k_vector(theta_initial)
     fig.add_trace(
         go.Scatter3d(
             x=kx,
             y=ky,
             z=kz,
             mode="lines",
-        line=dict(color=K_VECTOR_COLOR, width=K_VECTOR_LINE_WIDTH),
+            line=dict(color=K_VECTOR_COLOR, width=K_VECTOR_LINE_WIDTH),
             name="kᵢ",
         )
     )
@@ -283,8 +319,8 @@ def build_mono_figure(
             w=[kz[1] - kz[0]],
             anchor="tip",
             sizemode="absolute",
-        sizeref=K_VECTOR_CONE_SIZE,
-        colorscale=[[0, K_VECTOR_COLOR], [1, K_VECTOR_COLOR]],
+            sizeref=K_VECTOR_CONE_SIZE,
+            colorscale=[[0, K_VECTOR_COLOR], [1, K_VECTOR_COLOR]],
             showscale=False,
         )
     )
@@ -292,11 +328,11 @@ def build_mono_figure(
     k_label_idx = len(fig.data) - 1
     cone_idx = k_label_idx - 1
 
-    arc_trace = _theta_arc(theta_all[0], samples=arc_samples)
+    arc_trace = _theta_arc(theta_initial, samples=arc_samples)
     fig.add_trace(arc_trace)
     arc_idx = len(fig.data) - 1
 
-    arc_label = _theta_arc_label(theta_all[0])
+    arc_label = _theta_arc_label(theta_initial)
     fig.add_trace(arc_label)
     arc_label_idx = len(fig.data) - 1
 
@@ -307,7 +343,7 @@ def build_mono_figure(
     def lattice_hits(theta: float) -> tuple[np.ndarray, np.ndarray]:
         center = np.array([0.0, K_MAG_PLOT * math.cos(theta), K_MAG_PLOT * math.sin(theta)])
         distances = np.linalg.norm(lattice_points - center, axis=1)
-        mask = np.isclose(distances, K_MAG_PLOT, atol=2e-3)
+        mask = np.isclose(distances, K_MAG_PLOT, atol=LATTICE_HIT_TOLERANCE)
         return mask, lattice_points[mask]
 
     def lattice_marker(theta: float) -> go.Scatter3d:
@@ -370,15 +406,15 @@ def build_mono_figure(
             showlegend=False,
         )
 
-    lattice_trace = lattice_marker(theta_all[0])
+    lattice_trace = lattice_marker(theta_initial)
     fig.add_trace(lattice_trace)
     lattice_idx = len(fig.data) - 1
 
-    projection_trace = hit_projection(theta_all[0])
+    projection_trace = hit_projection(theta_initial)
     fig.add_trace(projection_trace)
     projection_idx = len(fig.data) - 1
 
-    label_trace = hit_labels(theta_all[0])
+    label_trace = hit_labels(theta_initial)
     fig.add_trace(label_trace)
     hit_label_idx = len(fig.data) - 1
 
@@ -475,6 +511,26 @@ def build_mono_figure(
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
             color = palette[i % len(palette)]
             ring_opacity = 1.0
+            if math.isclose(g_r_val, 0.0, abs_tol=AXIS_RING_TOLERANCE):
+                rings.append(
+                    go.Scatter3d(
+                        x=[0.0],
+                        y=[0.0],
+                        z=[g_z_val],
+                        mode="markers",
+                        marker=dict(
+                            color=_rgba(LATTICE_POINT_COLOR, LATTICE_POINT_OPACITY),
+                            size=LATTICE_POINT_MARKER_SIZE,
+                            opacity=1.0,
+                            symbol="circle",
+                        ),
+                        opacity=ring_opacity,
+                        name=f"00L peak (G_z = {g_z_val:.3f} Å⁻¹)",
+                        visible=False,
+                        showlegend=False,
+                    )
+                )
+                continue
             x = g_r_val * np.cos(t_vals)
             y = g_r_val * np.sin(t_vals)
             z = np.full_like(t_vals, g_z_val)
@@ -484,7 +540,7 @@ def build_mono_figure(
                     y=y,
                     z=z,
                     mode="lines",
-                    line=dict(color=color, width=4),
+                    line=dict(color=color, width=RING_LINE_WIDTH),
                     opacity=ring_opacity,
                     name=f"|Gᵣ| ring ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=False,
@@ -498,6 +554,7 @@ def build_mono_figure(
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
     g_ring_group_keys: list[list[str]] = []
+
     def g_ring_points() -> list[go.Scatter3d]:
         traces: list[go.Scatter3d] = []
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
@@ -528,26 +585,26 @@ def build_mono_figure(
     g_ring_point_traces = g_ring_points()
     for trace in g_ring_point_traces:
         fig.add_trace(trace)
-    g_ring_point_indices = list(
-        range(len(fig.data) - len(g_ring_point_traces), len(fig.data))
-    )
+    g_ring_point_indices = list(range(len(fig.data) - len(g_ring_point_traces), len(fig.data)))
 
     RING_HIT_MARKER_SIZE = HIT_MARKER_SIZE * 0.5
 
-    def g_ring_intersection_points(
-        theta: float, *, visibility: bool | None = False
-    ) -> list[go.Scatter3d]:
+    def g_ring_intersection_points(theta: float, *, visibility: bool | None = False) -> list[go.Scatter3d]:
         intersections: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
 
         for i, (g_r_val, g_z_val) in enumerate(g_ring_specs):
-            color = palette[i % len(palette)]
             ring_opacity = _scaled_opacity(ring_counts[i], ring_max_count)
 
-            if g_r_val == 0:
-                dist_sq = center_y * center_y + (g_z_val - center_z) ** 2
-                on_sphere = math.isclose(dist_sq, K_MAG_PLOT * K_MAG_PLOT, rel_tol=1e-9, abs_tol=1e-9)
+            if math.isclose(g_r_val, 0.0, abs_tol=AXIS_RING_TOLERANCE):
+                distance = math.hypot(center_y, g_z_val - center_z)
+                on_sphere = math.isclose(
+                    distance,
+                    K_MAG_PLOT,
+                    rel_tol=0.0,
+                    abs_tol=LATTICE_HIT_TOLERANCE,
+                )
                 intersections.append(
                     go.Scatter3d(
                         x=[0.0] if on_sphere else [],
@@ -556,13 +613,14 @@ def build_mono_figure(
                         mode="markers",
                         marker=dict(
                             color=HIT_COLOR,
-                            size=RING_HIT_MARKER_SIZE,
+                            size=HIT_MARKER_SIZE,
                             symbol="circle",
                             opacity=0.95,
                         ),
                         name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                         visible=visibility,
                         showlegend=False,
+                        opacity=ring_opacity,
                     )
                 )
                 continue
@@ -576,30 +634,12 @@ def build_mono_figure(
             )
 
             if abs(denominator) < 1e-12:
-                intersections.append(
-                    go.Scatter3d(
-                        x=[],
-                        y=[],
-                        z=[],
-                        mode="markers",
-                        showlegend=False,
-                        visible=visibility,
-                    )
-                )
+                intersections.append(go.Scatter3d(x=[], y=[], z=[], mode="markers", showlegend=False, visible=visibility))
                 continue
 
             ratio = numerator / denominator
             if abs(ratio) > 1.0:
-                intersections.append(
-                    go.Scatter3d(
-                        x=[],
-                        y=[],
-                        z=[],
-                        mode="markers",
-                        showlegend=False,
-                        visible=visibility,
-                    )
-                )
+                intersections.append(go.Scatter3d(x=[], y=[], z=[], mode="markers", showlegend=False, visible=visibility))
                 continue
 
             t0 = math.asin(ratio)
@@ -629,25 +669,18 @@ def build_mono_figure(
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=visibility,
                     showlegend=False,
+                    opacity=ring_opacity,
                 )
             )
 
         return intersections
 
-    g_ring_intersection_traces = g_ring_intersection_points(theta_all[0])
+    g_ring_intersection_traces = g_ring_intersection_points(theta_initial)
     for trace in g_ring_intersection_traces:
         fig.add_trace(trace)
-    g_ring_intersection_indices = list(
-        range(len(fig.data) - len(g_ring_intersection_traces), len(fig.data))
-    )
+    g_ring_intersection_indices = list(range(len(fig.data) - len(g_ring_intersection_traces), len(fig.data)))
 
-    g_ring_groups = list(
-        zip(
-            g_ring_indices,
-            g_ring_intersection_indices,
-            strict=True,
-        )
-    )
+    g_ring_groups = list(zip(g_ring_indices, g_ring_intersection_indices, strict=True))
 
     cylinder_values = sorted({float(val) for val in np.round(g_r[g_r > 0], 6)})
     g_cylinder_group_keys: list[list[str]] = []
@@ -679,24 +712,18 @@ def build_mono_figure(
     g_cylinder_traces = g_radial_cylinders()
     for trace in g_cylinder_traces:
         fig.add_trace(trace)
-    g_cylinder_indices = list(
-        range(len(fig.data) - len(g_cylinder_traces), len(fig.data))
-    )
+    g_cylinder_indices = list(range(len(fig.data) - len(g_cylinder_traces), len(fig.data)))
 
     def g_cylinder_rings() -> list[go.Scatter3d]:
         traces: list[go.Scatter3d] = []
         rounded = np.round(g_r, 6)
         for i, g_r_val in enumerate(cylinder_values):
+            color = palette[i % len(palette)]
             mask = np.isclose(rounded, g_r_val, atol=1e-6)
             z_vals = g_z[mask]
-            color = palette[i % len(palette)]
 
             if len(z_vals) == 0:
-                traces.append(
-                    go.Scatter3d(
-                        x=[], y=[], z=[], mode="lines", showlegend=False, visible=False
-                    )
-                )
+                traces.append(go.Scatter3d(x=[], y=[], z=[], mode="lines", showlegend=False, visible=False))
                 continue
 
             z_lookup: dict[float, float] = {}
@@ -728,7 +755,7 @@ def build_mono_figure(
                     y=np.concatenate(y_segments),
                     z=np.concatenate(z_segments),
                     mode="lines",
-                    line=dict(color=color, width=4),
+                    line=dict(color=color, width=CYLINDER_RING_LINE_WIDTH),
                     name=f"|Gᵣ| rings ({g_r_val:.3f} Å⁻¹)",
                     visible=False,
                 )
@@ -738,16 +765,14 @@ def build_mono_figure(
     g_cylinder_ring_traces = g_cylinder_rings()
     for trace in g_cylinder_ring_traces:
         fig.add_trace(trace)
-    g_cylinder_ring_indices = list(
-        range(len(fig.data) - len(g_cylinder_ring_traces), len(fig.data))
-    )
+    g_cylinder_ring_indices = list(range(len(fig.data) - len(g_cylinder_ring_traces), len(fig.data)))
 
     def g_cylinder_points() -> list[go.Scatter3d]:
         traces: list[go.Scatter3d] = []
-        rounded_r = np.round(g_r, 6)
+        rounded_r2 = np.round(g_r, 6)
         for i, g_r_val in enumerate(cylinder_values):
             color = palette[i % len(palette)]
-            mask = np.isclose(rounded_r, g_r_val, atol=1e-6)
+            mask = np.isclose(rounded_r2, g_r_val, atol=1e-6)
             pts = lattice_points[mask]
             g_cylinder_group_keys.append(_point_keys(pts))
             traces.append(
@@ -771,27 +796,20 @@ def build_mono_figure(
     g_cylinder_point_traces = g_cylinder_points()
     for trace in g_cylinder_point_traces:
         fig.add_trace(trace)
-    g_cylinder_point_indices = list(
-        range(len(fig.data) - len(g_cylinder_point_traces), len(fig.data))
-    )
+    g_cylinder_point_indices = list(range(len(fig.data) - len(g_cylinder_point_traces), len(fig.data)))
 
-    def g_cylinder_intersection_curves(
-        theta: float, *, visibility: bool | None = False
-    ) -> list[go.Scatter3d]:
+    def g_cylinder_intersection_curves(theta: float, *, visibility: bool | None = False) -> list[go.Scatter3d]:
         curves: list[go.Scatter3d] = []
         center_y = K_MAG_PLOT * math.cos(theta)
         center_z = K_MAG_PLOT * math.sin(theta)
         base_t = np.linspace(0.0, 2 * math.pi, cylinder_intersection_samples, endpoint=False)
 
         for i, g_r_val in enumerate(cylinder_values):
-            color = palette[i % len(palette)]
             t_candidates = [*base_t]
             if abs(center_y) > 1e-12 and g_r_val > 0:
-                boundary_ratio = (
-                    g_r_val * g_r_val
-                    + center_y * center_y
-                    - K_MAG_PLOT * K_MAG_PLOT
-                ) / (2.0 * g_r_val * center_y)
+                boundary_ratio = (g_r_val * g_r_val + center_y * center_y - K_MAG_PLOT * K_MAG_PLOT) / (
+                    2.0 * g_r_val * center_y
+                )
                 if abs(boundary_ratio) <= 1.0 + 1e-9:
                     clamped = max(-1.0, min(1.0, boundary_ratio))
                     t0 = math.asin(clamped)
@@ -801,16 +819,10 @@ def build_mono_figure(
             sin_t = np.sin(t_vals)
             cos_t = np.cos(t_vals)
 
-            rhs = K_MAG_PLOT * K_MAG_PLOT - (g_r_val * cos_t) ** 2 - (
-                g_r_val * sin_t - center_y
-            ) ** 2
+            rhs = K_MAG_PLOT * K_MAG_PLOT - (g_r_val * cos_t) ** 2 - (g_r_val * sin_t - center_y) ** 2
             valid = rhs >= -1e-7
             if not np.any(valid):
-                curves.append(
-                    go.Scatter3d(
-                        x=[], y=[], z=[], mode="lines", showlegend=False, visible=visibility
-                    )
-                )
+                curves.append(go.Scatter3d(x=[], y=[], z=[], mode="lines", showlegend=False, visible=visibility))
                 continue
 
             sqrt_rhs = np.sqrt(np.maximum(rhs, 0.0))
@@ -838,7 +850,7 @@ def build_mono_figure(
                     y=y_combined,
                     z=z_combined,
                     mode="lines",
-                    line=dict(color=HIT_COLOR, width=INTERSECTION_LINE_WIDTH),
+                    line=dict(color=HIT_COLOR, width=CYLINDER_INTERSECTION_LINE_WIDTH),  # <- changed
                     showlegend=False,
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹)",
                     visible=visibility,
@@ -847,25 +859,14 @@ def build_mono_figure(
 
         return curves
 
-    g_cylinder_intersection_traces = g_cylinder_intersection_curves(theta_all[0])
+    g_cylinder_intersection_traces = g_cylinder_intersection_curves(theta_initial)
     for trace in g_cylinder_intersection_traces:
         fig.add_trace(trace)
-    g_cylinder_intersection_indices = list(
-        range(len(fig.data) - len(g_cylinder_intersection_traces), len(fig.data))
-    )
+    g_cylinder_intersection_indices = list(range(len(fig.data) - len(g_cylinder_intersection_traces), len(fig.data)))
 
-    g_cylinder_groups = list(
-        zip(
-            g_cylinder_indices,
-            g_cylinder_intersection_indices,
-            g_cylinder_ring_indices,
-            strict=True,
-        )
-    )
+    g_cylinder_groups = list(zip(g_cylinder_indices, g_cylinder_intersection_indices, g_cylinder_ring_indices, strict=True))
 
-    def g_intersection_circle(
-        theta: float, g_val: float, *, visibility: bool | None = False
-    ) -> go.Scatter3d:
+    def g_intersection_circle(theta: float, g_val: float, *, visibility: bool | None = False) -> go.Scatter3d:
         R_ewald = K_MAG_PLOT
         d = K_MAG_PLOT
         if g_val <= 0 or g_val > 2 * R_ewald:
@@ -886,8 +887,7 @@ def build_mono_figure(
         t_vals = np.linspace(0.0, 2 * math.pi, circle_samples)
         circle = (
             center.reshape(3, 1)
-            + r
-            * (u.reshape(3, 1) * np.cos(t_vals) + v.reshape(3, 1) * np.sin(t_vals))
+            + r * (u.reshape(3, 1) * np.cos(t_vals) + v.reshape(3, 1) * np.sin(t_vals))
         )
 
         return go.Scatter3d(
@@ -895,16 +895,13 @@ def build_mono_figure(
             y=circle[1],
             z=circle[2],
             mode="lines",
-            line=dict(color=HIT_COLOR, width=INTERSECTION_LINE_WIDTH),
+            line=dict(color=HIT_COLOR, width=CIRCLE_INTERSECTION_LINE_WIDTH),  # <- changed
             showlegend=False,
             name=f"|G| ∩ Ewald ({g_val:.3f} Å⁻¹)",
             visible=visibility,
         )
 
-    g_circle_traces = [
-        g_intersection_circle(theta_all[0], g_val)
-        for g_val in unique_g
-    ]
+    g_circle_traces = [g_intersection_circle(theta_initial, g_val) for g_val in unique_g]
     for trace in g_circle_traces:
         fig.add_trace(trace)
     g_circle_indices = list(range(len(fig.data) - len(g_circle_traces), len(fig.data)))
@@ -964,9 +961,7 @@ def build_mono_figure(
     g_ring_mask_default = [True for _ in g_ring_groups]
     g_ring_visibility = _mode_visibility("g_rings", ring_mask=g_ring_mask_default)
     g_cylinder_mask_default = [i == 0 for i in range(len(g_cylinder_groups))]
-    g_cylinder_visibility = _mode_visibility(
-        "g_cylinders", cylinder_mask=g_cylinder_mask_default
-    )
+    g_cylinder_visibility = _mode_visibility("g_cylinders", cylinder_mask=g_cylinder_mask_default)
 
     def _two_theta_str(g_mag: float) -> str:
         ratio = g_mag / (2.0 * K_MAG_PLOT)
@@ -977,23 +972,13 @@ def build_mono_figure(
 
     g_two_thetas = [_two_theta_str(val) for val in unique_g]
     g_group_indices = list(zip(g_sphere_indices, g_circle_indices, strict=True))
-    g_cylinder_group_indices = list(
-        zip(
-            g_cylinder_indices,
-            g_cylinder_intersection_indices,
-            g_cylinder_ring_indices,
-            strict=True,
-        )
-    )
+    g_cylinder_group_indices = list(zip(g_cylinder_indices, g_cylinder_intersection_indices, g_cylinder_ring_indices, strict=True))
 
     frames = []
     for i, th in enumerate(theta_all):
         Bx, By, Bz = _ewald_surface(th, Ew_x, Ew_y, Ew_z)
         kx, ky, kz = _k_vector(th)
-        circles = [
-            g_intersection_circle(th, g_val, visibility=None)
-        for g_val in unique_g
-    ]
+        circles = [g_intersection_circle(th, g_val, visibility=None) for g_val in unique_g]
         ring_intersections = g_ring_intersection_points(th, visibility=None)
         cylinder_intersections = g_cylinder_intersection_curves(th, visibility=None)
         frames.append(
@@ -1004,7 +989,7 @@ def build_mono_figure(
                         x=Bx,
                         y=By,
                         z=Bz,
-                        opacity=1.0,
+                        opacity=EWALD_DEFAULT_OPACITY,
                         colorscale="Blues",
                         showscale=False,
                     ),
@@ -1072,23 +1057,23 @@ def build_mono_figure(
         )
         for i, (th, f) in enumerate(zip(theta_all, fig.frames))
     ]
-    sliders = [dict(steps=steps,
-                    currentvalue=dict(prefix="θᵢ: "),
-                    x=0.5, xanchor="center", y=-0.1, len=0.9)]
+    sliders = [
+        dict(
+            steps=steps,
+            currentvalue=dict(prefix="θᵢ: "),
+            active=theta_initial_idx,
+            x=0.5,
+            xanchor="center",
+            y=-0.1,
+            len=0.9,
+        )
+    ]
 
     buttons = [
-        dict(label="Single crystal",
-             method="update",
-             args=[{"visible": lattice_visibility}, {}]),
-        dict(label="3D Powder",
-             method="update",
-             args=[{"visible": g_sphere_visibility}, {}]),
-        dict(label="2D Powder",
-             method="update",
-             args=[{"visible": g_ring_visibility}, {}]),
-        dict(label="Cylinder",
-             method="update",
-             args=[{"visible": g_cylinder_visibility}, {}]),
+        dict(label="Single crystal", method="update", args=[{"visible": lattice_visibility}, {}]),
+        dict(label="3D Powder", method="update", args=[{"visible": g_sphere_visibility}, {}]),
+        dict(label="2D Powder", method="update", args=[{"visible": g_ring_visibility}, {}]),
+        dict(label="Cylinder", method="update", args=[{"visible": g_cylinder_visibility}, {}]),
     ]
 
     fig.update_layout(
@@ -1119,9 +1104,7 @@ def build_mono_figure(
             ),
             aspectmode="cube",
             bgcolor="rgba(0,0,0,0)",
-            camera=dict(
-                eye=dict(x=CAMERA_EYE[0], y=CAMERA_EYE[1], z=CAMERA_EYE[2])
-            ),
+            camera=dict(eye=dict(x=CAMERA_EYE[0], y=CAMERA_EYE[1], z=CAMERA_EYE[2])),
         ),
         paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, b=0, t=0),
@@ -1197,7 +1180,7 @@ def _selector_checkbox_html(
     group_indices: list[tuple[int, int]],
     two_thetas: list[str],
 ) -> str:
-    lines = ["<div id=\"g-selector\">"]
+    lines = ['<div id="g-selector">']
     for i, (g_val, (sphere_idx, circle_idx), two_theta) in enumerate(
         zip(g_values, group_indices, two_thetas, strict=True)
     ):
@@ -1215,14 +1198,19 @@ def _ring_selector_checkbox_html(
     ring_specs: list[tuple[float, float]],
     ring_groups: list[tuple[int, int]],
 ) -> str:
-    lines = ["<div id=\"g-selector\">"]
+    lines = ['<div id="g-selector">']
     for i, ((g_r_val, g_z_val), (ring_idx, intersection_idx)) in enumerate(
         zip(ring_specs, ring_groups, strict=True)
     ):
+        label = (
+            f"00L peak, G_z ≈ {g_z_val:.3f} Å⁻¹"
+            if math.isclose(g_r_val, 0.0, abs_tol=AXIS_RING_TOLERANCE)
+            else f"|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹, G_z ≈ {g_z_val:.3f} Å⁻¹"
+        )
         lines.append(
             f'<label class="g-option"><input class="g-toggle" type="checkbox" '
             f'data-pos="{i}" data-traces="{ring_idx},{intersection_idx}" checked>'
-            f'|Gᵣ| ≈ {g_r_val:.3f} Å⁻¹, G_z ≈ {g_z_val:.3f} Å⁻¹</label>'
+            f"{label}</label>"
         )
     lines.append("</div>")
     return "\n".join(lines)
@@ -1231,7 +1219,7 @@ def _ring_selector_checkbox_html(
 def _cylinder_selector_checkbox_html(
     cylinder_specs: list[float], cylinder_groups: list[tuple[int, int, int]]
 ) -> str:
-    lines = ["<div id=\"g-selector\">"]
+    lines = ['<div id="g-selector">']
     for i, (g_r_val, (cyl_idx, intersection_idx, ring_idx)) in enumerate(
         zip(cylinder_specs, cylinder_groups, strict=True)
     ):
@@ -1273,15 +1261,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
     )
     selector_controls = _selector_checkbox_html(g_values, g_group_indices, g_two_thetas)
     ring_selector_controls = _ring_selector_checkbox_html(g_ring_specs, g_ring_groups)
-    cylinder_selector_controls = _cylinder_selector_checkbox_html(
-        g_cylinder_specs, g_cylinder_groups
-    )
+    cylinder_selector_controls = _cylinder_selector_checkbox_html(g_cylinder_specs, g_cylinder_groups)
 
     return f"""
 <!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\">
+  <meta charset="utf-8">
   <title>Mono simulator</title>
   <style>
     html, body {{ height: 100%; width: 100%; margin: 0; padding: 0; }}
@@ -1296,18 +1282,18 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
   </style>
 </head>
   <body>
-    <div id=\"wrapper\">
-      <div id=\"note\">Use the pop-out window to toggle 3D powder shells, 2D powder rings, or Gᵣ cylinders, or use the buttons to switch between lattice, 3D Powder, 2D Powder, and Cylinder views.</div>
-      <div id=\"controls\">
-        <button id=\"open-selector\">Open powder selector window</button>
-        <button id=\"download-all\" style=\"margin-left:8px;\">Download all views</button>
-        <label style=\"margin-left:12px;\">Ewald opacity:
-          <input id=\"ewald-opacity\" type=\"range\" min=\"0\" max=\"1\" step=\"0.05\" value=\"1\">
-          <span id=\"ewald-opacity-value\">1.00</span>
+    <div id="wrapper">
+      <div id="note">Use the pop-out window to toggle 3D powder shells, 2D powder rings, or Gᵣ cylinders, or use the buttons to switch between lattice, 3D Powder, 2D Powder, and Cylinder views.</div>
+      <div id="controls">
+        <button id="open-selector">Open powder selector window</button>
+        <button id="download-all" style="margin-left:8px;">Download all views</button>
+        <label style="margin-left:12px;">Ewald opacity:
+          <input id="ewald-opacity" type="range" min="0" max="1" step="0.05" value="{EWALD_DEFAULT_OPACITY:.2f}">
+          <span id="ewald-opacity-value">{EWALD_DEFAULT_OPACITY:.2f}</span>
         </label>
-        <span id=\"selector-status\" style=\"margin-left:8px;color:#444;\"></span>
+        <span id="selector-status" style="margin-left:8px;color:#444;"></span>
       </div>
-      <div id=\"figure-container\">{figure_html}</div>
+      <div id="figure-container">{figure_html}</div>
     </div>
     <script>
       window.addEventListener('DOMContentLoaded', () => {{
@@ -1327,7 +1313,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
         const ewaldValue = document.getElementById('ewald-opacity-value');
-        let ewaldAlpha = 1;
+        const defaultEwaldAlpha = {EWALD_DEFAULT_OPACITY:.2f};
+        let ewaldAlpha = defaultEwaldAlpha;
         const meta = figure.layout && figure.layout.meta ? figure.layout.meta : {{}};
         const ewaldIdx = typeof meta.ewald_idx === 'number'
           ? meta.ewald_idx
@@ -1335,9 +1322,6 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const gSphereGroups = meta.g_group_indices || [];
         const gRingGroups = meta.g_ring_groups || [];
         const gCylinderGroups = meta.g_cylinder_group_indices || [];
-        const gSphereKeys = (meta.g_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
-        const gRingKeys = (meta.g_ring_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
-        const gCylinderKeys = (meta.g_cylinder_group_keys || []).map((keys) => Array.isArray(keys) ? keys : []);
         const thetaDegrees = Array.isArray(meta.theta_degrees) ? meta.theta_degrees : [];
         const intersectionIndices = Array.isArray(meta.intersection_indices)
           ? meta.intersection_indices
@@ -1346,35 +1330,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         let selectorWin = null;
         let snappingSlider = false;
 
-        function buildFlagsFromKeys(selectedKeys, keyList) {{
-          return keyList.map((keys) => (keys || []).some((key) => selectedKeys.has(key)));
-        }}
-
-        function applyFlagsToState(state, groups, flags) {{
-          const vis = Array.from(state);
-          groups.forEach((group, idx) => {{
-            const shouldShow = Boolean(flags[idx]);
-            (group || []).forEach((traceIdx) => {{
-              if (traceIdx != null) {{
-                vis[traceIdx] = shouldShow;
-              }}
-            }});
-          }});
-          vis.forEach((val, i) => {{ state[i] = val; }});
-          return vis;
-        }}
-
-        function syncStatesFromKeys(selectedKeys) {{
-          const sphereFlags = buildFlagsFromKeys(selectedKeys, gSphereKeys);
-          const ringFlags = buildFlagsFromKeys(selectedKeys, gRingKeys);
-          const cylinderFlags = buildFlagsFromKeys(selectedKeys, gCylinderKeys);
-          applyFlagsToState(gSphereState, gSphereGroups, sphereFlags);
-          applyFlagsToState(gRingState, gRingGroups, ringFlags);
-          applyFlagsToState(gCylinderState, gCylinderGroups, cylinderFlags);
-        }}
-
         function applyEwaldOpacity(alpha) {{
-          const clamped = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 1));
+          const clamped = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : defaultEwaldAlpha));
           ewaldAlpha = clamped;
           if (ewaldValue) {{
             ewaldValue.textContent = clamped.toFixed(2);
@@ -1479,13 +1436,13 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           const menuBackup = figure.layout?.updatemenus
             ? JSON.parse(JSON.stringify(figure.layout.updatemenus))
             : null;
-            const hideControlsForExport = () =>
-              Plotly.relayout(figure, {{ sliders: [], updatemenus: [] }});
-            const restoreControls = () =>
-              Plotly.relayout(figure, {{
-                sliders: sliderBackup || [],
-                updatemenus: menuBackup || [],
-              }});
+          const hideControlsForExport = () =>
+            Plotly.relayout(figure, {{ sliders: [], updatemenus: [] }});
+          const restoreControls = () =>
+            Plotly.relayout(figure, {{
+              sliders: sliderBackup || [],
+              updatemenus: menuBackup || [],
+            }});
           const modes = [
             {{ label: 'single_crystal', vis: latticeVis }},
             {{ label: '3d_powder', vis: gSphereState }},
@@ -1546,72 +1503,55 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           targetWin.__selectorMode = mode;
         }}
 
-          function hookSelector(targetWin, mode = '3d') {{
-            const state = mode === '3d' ? gSphereState : mode === '2d' ? gRingState : gCylinderState;
-            const keyList = mode === '3d' ? gSphereKeys : mode === '2d' ? gRingKeys : gCylinderKeys;
-            const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
+        function hookSelector(targetWin, mode = '3d') {{
+          const state = mode === '3d' ? gSphereState : mode === '2d' ? gRingState : gCylinderState;
+          const checkboxes = targetWin.document.querySelectorAll('.g-toggle');
 
-            function parseTraces(cb) {{
-              return (cb.getAttribute('data-traces') || '')
-                .split(',')
-                .map(Number)
-                .filter((v) => !Number.isNaN(v));
-            }}
+          function parseTraces(cb) {{
+            return (cb.getAttribute('data-traces') || '')
+              .split(',')
+              .map(Number)
+              .filter((v) => !Number.isNaN(v));
+          }}
 
-            function syncCheckboxesFromState() {{
-              checkboxes.forEach((cb) => {{
-                const traces = parseTraces(cb);
-                cb.checked = traces.every((idx) => state[idx]);
-              }});
-            }}
+          function syncCheckboxesFromState() {{
+            checkboxes.forEach((cb) => {{
+              const traces = parseTraces(cb);
+              cb.checked = traces.every((idx) => state[idx]);
+            }});
+          }}
 
-            function collectSelectedKeys() {{
-              const selected = new Set();
-              checkboxes.forEach((cb) => {{
-                if (!cb.checked) {{
-                  return;
-                }}
-                const pos = Number(cb.getAttribute('data-pos'));
-                const keys = keyList[pos] || [];
-                keys.forEach((key) => selected.add(key));
-              }});
-              return selected;
-            }}
+          function applySelection() {{
+            const vis = Array.from(state);
+            checkboxes.forEach((cb) => {{
+              const traces = parseTraces(cb);
+              traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
+            }});
+            vis.forEach((val, i) => {{ state[i] = val; }});
+            Plotly.update(figure, {{visible: vis}});
+            syncCheckboxesFromState();
+          }}
 
-            function applySelection() {{
-              const vis = Array.from(state);
-              checkboxes.forEach((cb) => {{
-                const traces = parseTraces(cb);
-                traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
-              }});
-              vis.forEach((val, i) => {{ state[i] = val; }});
-              Plotly.update(figure, {{visible: vis}});
-              const selectedKeys = collectSelectedKeys();
-              syncStatesFromKeys(selectedKeys);
-              syncCheckboxesFromState();
-            }}
+          checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
+          syncCheckboxesFromState();
 
-              checkboxes.forEach((cb) => cb.addEventListener('change', applySelection));
+          const checkAll = targetWin.document.getElementById('check-all');
+          if (checkAll) {{
+            checkAll.addEventListener('click', () => {{
+              checkboxes.forEach((cb) => {{ cb.checked = true; }});
+              applySelection();
+            }});
+          }}
+          const checkNone = targetWin.document.getElementById('check-none');
+          if (checkNone) {{
+            checkNone.addEventListener('click', () => {{
+              checkboxes.forEach((cb) => {{ cb.checked = false; }});
+              applySelection();
+            }});
+          }}
 
-              syncCheckboxesFromState();
-
-              const checkAll = targetWin.document.getElementById('check-all');
-              if (checkAll) {{
-                checkAll.addEventListener('click', () => {{
-                  checkboxes.forEach((cb) => {{ cb.checked = true; }});
-                  applySelection();
-                }});
-              }}
-              const checkNone = targetWin.document.getElementById('check-none');
-              if (checkNone) {{
-                checkNone.addEventListener('click', () => {{
-                  checkboxes.forEach((cb) => {{ cb.checked = false; }});
-                  applySelection();
-                }});
-              }}
-
-              return applySelection;
-            }}
+          return applySelection;
+        }}
 
         function openSelectorWindow(focusOnly = false, mode = selectorMode) {{
           selectorMode = mode;
@@ -1658,6 +1598,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             Plotly.update(figure, {{visible: latticeVis}});
           }} else if (label === '3D Powder') {{
             selectorMode = '3d';
+            Plotly.update(figure, {{visible: gSphereState}});
             const applyFn = openSelectorWindow(true, '3d');
             if (applyFn) {{
               applySelection = applyFn;
@@ -1665,6 +1606,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             }}
           }} else if (label === '2D Powder') {{
             selectorMode = '2d';
+            Plotly.update(figure, {{visible: gRingState}});
             const applyFn = openSelectorWindow(true, '2d');
             if (applyFn) {{
               applySelection = applyFn;
@@ -1672,6 +1614,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             }}
           }} else if (label === 'Cylinder') {{
             selectorMode = 'cyl';
+            Plotly.update(figure, {{visible: gCylinderState}});
             const applyFn = openSelectorWindow(true, 'cyl');
             if (applyFn) {{
               applySelection = applyFn;
@@ -1688,14 +1631,29 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Single Ewald-sphere simulator")
-    parser.add_argument("--theta-min", type=float, default=THETA_DEFAULT_MIN,
-                        help=f"Minimum θᵢ in degrees (default: {THETA_DEFAULT_MIN})")
-    parser.add_argument("--theta-max", type=float, default=THETA_DEFAULT_MAX,
-                        help=f"Maximum θᵢ in degrees (default: {THETA_DEFAULT_MAX})")
-    parser.add_argument("--frames", type=int, default=N_FRAMES_DEFAULT,
-                        help=f"Number of slider steps (default: {N_FRAMES_DEFAULT})")
     parser.add_argument(
-        "-low", "--low", dest="low_quality", action="store_true",
+        "--theta-min",
+        type=float,
+        default=THETA_DEFAULT_MIN,
+        help=f"Minimum θᵢ in degrees (default: {THETA_DEFAULT_MIN})",
+    )
+    parser.add_argument(
+        "--theta-max",
+        type=float,
+        default=THETA_DEFAULT_MAX,
+        help=f"Maximum θᵢ in degrees (default: {THETA_DEFAULT_MAX})",
+    )
+    parser.add_argument(
+        "--frames",
+        type=int,
+        default=N_FRAMES_DEFAULT,
+        help=f"Number of slider steps (default: {N_FRAMES_DEFAULT})",
+    )
+    parser.add_argument(
+        "-low",
+        "--low",
+        dest="low_quality",
+        action="store_true",
         help="Use reduced-resolution rendering for faster testing",
     )
     return parser.parse_args()
@@ -1708,7 +1666,6 @@ def main(
     low_quality: bool = False,
 ) -> None:
     """Launch the mono simulator."""
-
     import plotly.io as pio
 
     pio.renderers.default = "browser"
