@@ -36,9 +36,13 @@ K_VECTOR_LABEL_SIZE = 22
 K_VECTOR_LABEL_COLOR = "black"
 
 # Reciprocal lattice point styling.
-LATTICE_POINT_COLOR = "#a0a0a0"
-LATTICE_POINT_OPACITY = 0.95
-LATTICE_POINT_IN_SPHERE_OPACITY = 0.35
+LATTICE_POINT_COLOR = "#d7d7d7"
+LATTICE_POINT_OPACITY = 0.98
+LATTICE_POINT_IN_SPHERE_OPACITY = 0.65
+LATTICE_POINT_OUTLINE_COLOR = "#4a4a4a"
+LATTICE_POINT_OUTLINE_WIDTH = 3
+HIT_MARKER_OUTLINE_COLOR = "#f4f4f4"
+HIT_MARKER_OUTLINE_WIDTH = 4
 
 # Intersection styling (clean option: central constants).
 CIRCLE_INTERSECTION_LINE_WIDTH = 30  # px, |G| ∩ Ewald circles
@@ -53,14 +57,14 @@ THETA_BRAGG_002 = math.degrees(math.asin(G_002 / (2.0 * K_MAG_PLOT)))
 THETA_DEFAULT_MIN = 0.0
 THETA_DEFAULT_MAX = 90.0
 N_FRAMES_DEFAULT = 120
-CAMERA_EYE = np.array([2.0, 2.0, 1.6])
+CAMERA_EYE = np.array([1.45, 1.45, 1.15])
 AXIS_RANGE = 5.0
 ARC_RADIUS = 0.6
-LATTICE_POINT_MARKER_SIZE = 24.0
-HIT_MARKER_SIZE = 48.0
+LATTICE_POINT_MARKER_SIZE = 34.0
+HIT_MARKER_SIZE = 68.0
 HIT_COLOR = "#000000"
-RING_LINE_WIDTH = 8  # px
-CYLINDER_RING_LINE_WIDTH = 8  # px
+RING_LINE_WIDTH = 12  # px
+CYLINDER_RING_LINE_WIDTH = 12  # px
 LATTICE_HIT_TOLERANCE = 2e-3
 AXIS_RING_TOLERANCE = 1e-9
 EWALD_DEFAULT_OPACITY = 0.9
@@ -424,12 +428,18 @@ def build_mono_figure(
         inside_color = _rgba(LATTICE_POINT_COLOR, LATTICE_POINT_IN_SPHERE_OPACITY)
         hit_color = _rgba(HIT_COLOR, LATTICE_POINT_OPACITY)
         colors = np.where(hit_mask, hit_color, np.where(inside_mask, inside_color, outside_color))
+        line_colors = np.where(hit_mask, HIT_MARKER_OUTLINE_COLOR, LATTICE_POINT_OUTLINE_COLOR)
         return go.Scatter3d(
             x=lattice_points[:, 0],
             y=lattice_points[:, 1],
             z=lattice_points[:, 2],
             mode="markers",
-            marker=dict(size=sizes, color=colors, opacity=1.0),
+            marker=dict(
+                size=sizes,
+                color=colors,
+                opacity=1.0,
+                line=dict(color=line_colors, width=LATTICE_POINT_OUTLINE_WIDTH),
+            ),
             name="Integer lattice",
         )
 
@@ -447,7 +457,7 @@ def build_mono_figure(
             y=y,
             z=z,
             mode="lines",
-            line=dict(color=HIT_COLOR, width=2, dash="dash"),
+            line=dict(color=HIT_COLOR, width=5, dash="dash"),
             showlegend=False,
         )
 
@@ -556,6 +566,10 @@ def build_mono_figure(
                             size=LATTICE_POINT_MARKER_SIZE,
                             opacity=1.0,
                             symbol="circle",
+                            line=dict(
+                                color=LATTICE_POINT_OUTLINE_COLOR,
+                                width=LATTICE_POINT_OUTLINE_WIDTH,
+                            ),
                         ),
                         opacity=ring_opacity,
                         name=f"00L peak (G_z = {g_z_val:.3f} Å⁻¹)",
@@ -586,7 +600,7 @@ def build_mono_figure(
         fig.add_trace(trace)
     g_ring_indices = list(range(len(fig.data) - len(g_ring_traces), len(fig.data)))
 
-    RING_HIT_MARKER_SIZE = HIT_MARKER_SIZE * 0.5
+    RING_HIT_MARKER_SIZE = HIT_MARKER_SIZE * 0.6
 
     def g_ring_intersection_points(theta: float, *, visibility: bool | None = False) -> list[go.Scatter3d]:
         intersections: list[go.Scatter3d] = []
@@ -615,6 +629,10 @@ def build_mono_figure(
                             size=HIT_MARKER_SIZE,
                             symbol="circle",
                             opacity=0.95,
+                            line=dict(
+                                color=HIT_MARKER_OUTLINE_COLOR,
+                                width=HIT_MARKER_OUTLINE_WIDTH,
+                            ),
                         ),
                         name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                         visible=visibility,
@@ -664,6 +682,10 @@ def build_mono_figure(
                         size=RING_HIT_MARKER_SIZE,
                         symbol="circle",
                         opacity=0.95,
+                        line=dict(
+                            color=HIT_MARKER_OUTLINE_COLOR,
+                            width=HIT_MARKER_OUTLINE_WIDTH,
+                        ),
                     ),
                     name=f"|Gᵣ| ∩ Ewald ({g_r_val:.3f} Å⁻¹, G_z = {g_z_val:.3f} Å⁻¹)",
                     visible=visibility,
@@ -1377,10 +1399,10 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
               updatemenus: menuBackup || [],
             }});
           const modes = [
-            {{ label: 'single_crystal', vis: latticeVis }},
-            {{ label: '3d_powder', vis: gSphereState }},
-            {{ label: '2d_powder', vis: gRingState }},
-            {{ label: 'cylinder', vis: gCylinderState }},
+            {{ label: 'single_crystal', filename: 'mono_single_crystal.png', vis: latticeVis }},
+            {{ label: '3d_powder', filename: 'reciprocal_3d_powder.png', vis: gSphereState }},
+            {{ label: '2d_powder', filename: 'reciprocal_2d_powder.png', vis: gRingState }},
+            {{ label: 'cylinder', filename: 'mono_cylinder.png', vis: gCylinderState }},
           ];
 
           try {{
@@ -1396,7 +1418,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 
               const link = document.createElement('a');
               link.href = uri;
-              link.download = `mono_${{mode.label}}.png`;
+              link.download = mode.filename;
               document.body.appendChild(link);
               link.click();
               link.remove();
