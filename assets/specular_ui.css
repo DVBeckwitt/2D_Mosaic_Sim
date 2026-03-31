@@ -1,0 +1,201 @@
+:root {
+  --specular-bg: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  --specular-panel: rgba(248, 250, 252, 0.96);
+  --specular-card: #fbfcfd;
+  --specular-border: #dbe4ee;
+  --specular-text: #0f172a;
+  --specular-muted: #475569;
+  --specular-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+}
+
+.specular-workspace,
+.simulation-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--specular-bg);
+  color: var(--specular-text);
+}
+
+.specular-sidebar,
+.simulation-sidebar {
+  display: flex;
+  flex: 0 0 320px;
+  width: 320px;
+  min-width: 320px;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+  box-sizing: border-box;
+  max-height: 100vh;
+  overflow-y: auto;
+  background: var(--specular-panel);
+  border-right: 1px solid var(--specular-border);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.75);
+}
+
+.specular-sidebar,
+.simulation-sidebar--specular {
+  flex-basis: clamp(360px, 28vw, 420px);
+  width: clamp(360px, 28vw, 420px);
+  min-width: clamp(360px, 28vw, 420px);
+}
+
+.specular-main,
+.simulation-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 100vh;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.specular-visuals {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 1rem;
+  grid-template-rows: minmax(360px, 1.3fr) minmax(320px, 1fr);
+}
+
+.specular-visual-card,
+.simulation-visual-card {
+  display: grid;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+.specular-visual-header,
+.simulation-visual-header {
+  padding-inline: 0.15rem;
+}
+
+.specular-graph-frame,
+.simulation-graph-frame {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--specular-shadow);
+  overflow: hidden;
+}
+
+.specular-graph-frame > div,
+.simulation-graph-frame > div,
+.specular-graph-frame .dash-graph,
+.simulation-graph-frame .dash-graph,
+.specular-graph-frame .js-plotly-plot,
+.simulation-graph-frame .js-plotly-plot {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.specular-graph-frame--primary,
+.simulation-graph-frame--primary {
+  min-height: clamp(360px, 52vh, 720px);
+}
+
+.specular-graph-frame--secondary,
+.simulation-graph-frame--secondary {
+  min-height: clamp(320px, 40vh, 560px);
+}
+
+.specular-summary-card {
+  margin: 0;
+  color: var(--specular-text);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+}
+
+.specular-section-card {
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+}
+
+.specular-section-title {
+  letter-spacing: 0.01em;
+}
+
+.specular-control-label,
+.simulation-control > label {
+  color: var(--specular-text);
+}
+
+.specular-control,
+.simulation-control {
+  gap: 0.4rem !important;
+}
+
+.specular-control-row,
+.simulation-control-pair {
+  align-items: center;
+}
+
+.specular-control-row input,
+.simulation-control-pair input {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  color: var(--specular-text);
+  background: #ffffff;
+}
+
+.specular-control-row input:focus,
+.simulation-control-pair input:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.22);
+  border-color: #60a5fa;
+}
+
+.specular-sidebar .rc-slider-track,
+.simulation-sidebar--specular .rc-slider-track {
+  background-color: #2563eb;
+}
+
+.specular-sidebar .rc-slider-handle,
+.simulation-sidebar--specular .rc-slider-handle {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.specular-sidebar .rc-slider-mark-text,
+.simulation-sidebar--specular .rc-slider-mark-text {
+  color: var(--specular-muted);
+  font-size: 0.72rem;
+}
+
+#simulation-main > div:first-child {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1100px) {
+  .specular-workspace,
+  .simulation-shell {
+    flex-direction: column;
+  }
+
+  .specular-sidebar,
+  .simulation-sidebar,
+  .simulation-sidebar--specular {
+    width: auto;
+    min-width: 0;
+    flex-basis: auto;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--specular-border);
+    order: 2;
+  }
+
+  .specular-main,
+  .simulation-main {
+    min-height: 60vh;
+    order: 1;
+  }
+
+  .specular-visuals {
+    grid-template-rows: none;
+  }
+}

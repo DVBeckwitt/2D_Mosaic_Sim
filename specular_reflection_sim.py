@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Standalone beam -> sample -> detector specular reflection simulator.
+"""Standalone beam -> sample -> detector specular diffraction simulator.
 
-This module keeps all geometry in one lab frame and intentionally models only
-the pieces needed for a simplified specular-reflection experiment:
+This module keeps all geometry in one lab frame and models the pieces needed
+for a simplified specular-diffraction experiment:
 
 - a family of incoming rays with transverse width and divergence,
 - a finite rectangular sample,
 - explicit sample rotations ``theta_i``, ``delta``, ``alpha``, and ``psi``,
 - explicit detector rotations ``beta``, ``gamma``, and ``chi``,
-- line-plane intersections for the sample and detector, and
-- mirror reflection from the current sample normal.
+- HKL/mosaic controls that generate exit-ray diffraction families, and
+- line-plane intersections for the sample and detector.
 
-The implementation does not solve reciprocal-lattice or refraction physics.
-It is a geometry-first simplification of the fuller diffraction model.
+The implementation is a geometry-first diffraction model that emphasizes the
+beam, sample, detector, and detector-hit relationships.
 
 Rotation conventions
 --------------------
@@ -41,13 +41,16 @@ in-plane rotation inside the detector plane.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
+from functools import lru_cache
 import math
 import tempfile
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import plotly.graph_objects as go
@@ -61,6 +64,32 @@ EPSILON = 1e-12
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8051
 SPECULAR_CAMERA_UIREVISION = "specular-camera"
+DIFFRACTION_SAMPLES = 180
+ProgressCallback = Callable[[str], None]
+
+
+class TerminalProgressReporter:
+    """Emit concise elapsed-time status lines for CLI startup work."""
+
+    def __init__(self, label: str = "specular") -> None:
+        self._label = label
+        self._start = time.perf_counter()
+        self._step = 0
+
+    def emit(self, message: str) -> None:
+        self._step += 1
+        elapsed = time.perf_counter() - self._start
+        print(
+            f"[{self._label}] +{elapsed:6.2f}s | step {self._step:02d} | {message}",
+            flush=True,
+        )
+
+
+def _emit_progress(progress: ProgressCallback | None, message: str) -> None:
+    """Send a progress update if a callback is available."""
+
+    if progress is not None:
+        progress(message)
 
 
 @dataclass(frozen=True)
@@ -96,8 +125,8 @@ class DetectorConfig:
     """Finite detector plane and detector-frame calibration."""
 
     distance: float = 200.0
-    width: float = 180.0
-    height: float = 180.0
+    width: float = 1000.0
+    height: float = 1000.0
     beta_deg: float = 0.0
     gamma_deg: float = 0.0
     chi_deg: float = 0.0
@@ -105,6 +134,18 @@ class DetectorConfig:
     pixel_v: float = 0.1
     i0: float = 1024.0
     j0: float = 1024.0
+
+
+@dataclass(frozen=True)
+class DiffractionConfig:
+    """HKL and mosaic controls for the specular diffraction family."""
+
+    H: int = 1
+    K: int = 1
+    L: int = 1
+    sigma_deg: float = 0.8
+    mosaic_gamma_deg: float = 5.0
+    eta: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -127,6 +168,7 @@ class ControlSpec:
     step: int | float
     min_value: int | float
     max_value: int | float
+    updatemode: str = "mouseup"
 
 
 CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
@@ -149,7 +191,16 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
         (
             ControlSpec("sample_width", "W", "sample", "width", 0.5, 0.001, 400.0),
             ControlSpec("sample_height", "H", "sample", "height", 0.5, 0.001, 400.0),
-            ControlSpec("theta_i", MathLabel("θ", "i", " (deg)"), "sample", "theta_i_deg", 0.1, -89.0, 89.0),
+            ControlSpec(
+                "theta_i",
+                MathLabel("θ", "i", " (deg)"),
+                "sample",
+                "theta_i_deg",
+                0.1,
+                -89.0,
+                89.0,
+                updatemode="drag",
+            ),
             ControlSpec("delta", "δ (deg)", "sample", "delta_deg", 0.05, -45.0, 45.0),
             ControlSpec("alpha", "α (deg)", "sample", "alpha_deg", 0.05, -45.0, 45.0),
             ControlSpec("psi", "ψ (deg)", "sample", "psi_deg", 0.05, -45.0, 45.0),
@@ -169,6 +220,33 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
             ControlSpec("pixel_v", MathLabel("p", "v"), "detector", "pixel_v", 0.01, 0.000001, 5.0),
             ControlSpec("i0", MathLabel("i", "0"), "detector", "i0", 1.0, 0.0, 4096.0),
             ControlSpec("j0", MathLabel("j", "0"), "detector", "j0", 1.0, 0.0, 4096.0),
+        ),
+    ),
+    (
+        "Diffraction",
+        (
+            ControlSpec("H", "H", "diffraction", "H", 1, -12, 12),
+            ControlSpec("K", "K", "diffraction", "K", 1, -12, 12),
+            ControlSpec("L", "L", "diffraction", "L", 1, 0, 40),
+            ControlSpec(
+                "sigma_deg",
+                MathLabel("σ", None, " (deg)"),
+                "diffraction",
+                "sigma_deg",
+                0.05,
+                0.05,
+                10.0,
+            ),
+            ControlSpec(
+                "mosaic_gamma_deg",
+                MathLabel("Γ", None, " (deg)"),
+                "diffraction",
+                "mosaic_gamma_deg",
+                0.1,
+                0.1,
+                30.0,
+            ),
+            ControlSpec("eta", "η", "diffraction", "eta", 0.01, 0.0, 1.0),
         ),
     ),
 )
@@ -194,14 +272,16 @@ class RayBundle:
 
 @dataclass(frozen=True)
 class SimulationResult:
-    """Outputs from the specular ray trace."""
+    """Outputs from the HKL-driven specular diffraction trace."""
 
     beam: RayBundle
     sample: Frame3D
     detector: Frame3D
     sample_hit_indices: np.ndarray
     hit_points: np.ndarray
-    reflected_dirs: np.ndarray
+    exit_parent_indices: np.ndarray
+    exit_dirs: np.ndarray
+    exit_weights: np.ndarray
     sample_uv: np.ndarray
     plane_hit_indices: np.ndarray
     plane_points: np.ndarray
@@ -217,6 +297,10 @@ class SimulationResult:
         return int(self.sample_hit_indices.size)
 
     @property
+    def diffraction_ray_count(self) -> int:
+        return int(self.exit_parent_indices.size)
+
+    @property
     def detector_plane_hit_count(self) -> int:
         return int(self.plane_hit_indices.size)
 
@@ -229,12 +313,28 @@ class SimulationResult:
         return self.plane_points[self.active_detector_mask]
 
     @property
+    def plane_parent_indices(self) -> np.ndarray:
+        return self.exit_parent_indices[self.plane_hit_indices]
+
+    @property
+    def detector_parent_indices(self) -> np.ndarray:
+        return self.plane_parent_indices[self.active_detector_mask]
+
+    @property
     def detector_uv(self) -> np.ndarray:
         return self.plane_uv[self.active_detector_mask]
 
     @property
     def detector_pixels(self) -> np.ndarray:
         return self.plane_pixels[self.active_detector_mask]
+
+    @property
+    def plane_weights(self) -> np.ndarray:
+        return self.exit_weights[self.plane_hit_indices]
+
+    @property
+    def detector_weights(self) -> np.ndarray:
+        return self.plane_weights[self.active_detector_mask]
 
 
 def normalize_vector(vector: np.ndarray) -> np.ndarray:
@@ -257,6 +357,51 @@ def normalize_rows(array: np.ndarray) -> np.ndarray:
     if np.any(norms <= EPSILON):
         raise ValueError("Cannot normalize one or more zero-length rows")
     return arr / norms
+
+
+@lru_cache(maxsize=1)
+def _hkl_engine():
+    """Load the HKL helpers lazily to avoid import-time package cycles."""
+
+    from mosaic_sim.common import normalize_peak_params
+    from mosaic_sim.constants import K_MAG, d_hex
+    from mosaic_sim.geometry import intersection_circle
+    from mosaic_sim.intensity import mosaic_intensity
+
+    return normalize_peak_params, K_MAG, d_hex, intersection_circle, mosaic_intensity
+
+
+def normalized_diffraction_params(
+    config: DiffractionConfig,
+) -> tuple[int, int, int, float, float, float]:
+    """Return validated HKL/mosaic parameters with angular widths in radians."""
+
+    normalize_peak_params, _, _, _, _ = _hkl_engine()
+    params = normalize_peak_params(
+        config.H,
+        config.K,
+        config.L,
+        config.sigma_deg,
+        config.mosaic_gamma_deg,
+        config.eta,
+        defaults=(
+            DiffractionConfig.H,
+            DiffractionConfig.K,
+            DiffractionConfig.L,
+            DiffractionConfig.sigma_deg,
+            DiffractionConfig.mosaic_gamma_deg,
+            DiffractionConfig.eta,
+        ),
+    )
+    return params.as_tuple()
+
+
+def diffraction_magnitude_angstrom(diffraction: DiffractionConfig) -> float:
+    """Return ``|G|`` in reciprocal angstroms for the selected HKL."""
+
+    _, _, d_hex, _, _ = _hkl_engine()
+    d_spacing = d_hex(diffraction.H, diffraction.K, diffraction.L)
+    return (2.0 * math.pi / d_spacing) * 1e-10
 
 
 def rotation_x(angle_rad: float) -> np.ndarray:
@@ -292,10 +437,50 @@ def rotation_z(angle_rad: float) -> np.ndarray:
     )
 
 
+def skew_symmetric(vector: np.ndarray) -> np.ndarray:
+    """Return the skew-symmetric matrix for ``vector``."""
+
+    x, y, z = np.asarray(vector, dtype=float)
+    return np.array(
+        [[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]],
+        dtype=float,
+    )
+
+
+def rotation_between_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Return a rotation matrix that maps ``source`` to ``target``."""
+
+    source_unit = normalize_vector(source)
+    target_unit = normalize_vector(target)
+    cross = np.cross(source_unit, target_unit)
+    sin_angle = float(np.linalg.norm(cross))
+    cos_angle = float(np.clip(np.dot(source_unit, target_unit), -1.0, 1.0))
+
+    if sin_angle <= EPSILON:
+        if cos_angle > 0.0:
+            return np.eye(3, dtype=float)
+
+        axis = np.cross(source_unit, LAB_X)
+        if float(np.linalg.norm(axis)) <= EPSILON:
+            axis = np.cross(source_unit, LAB_Z)
+        axis = normalize_vector(axis)
+        skew = skew_symmetric(axis)
+        return np.eye(3, dtype=float) + 2.0 * (skew @ skew)
+
+    axis = cross / sin_angle
+    skew = skew_symmetric(axis)
+    return (
+        np.eye(3, dtype=float)
+        + sin_angle * skew
+        + (1.0 - cos_angle) * (skew @ skew)
+    )
+
+
 def validate_configs(
     beam: BeamConfig,
     sample: SampleConfig,
     detector: DetectorConfig,
+    diffraction: DiffractionConfig | None = None,
 ) -> None:
     """Validate basic geometry inputs."""
 
@@ -311,6 +496,8 @@ def validate_configs(
         raise ValueError("detector.width and detector.height must be positive")
     if detector.pixel_u <= 0.0 or detector.pixel_v <= 0.0:
         raise ValueError("detector pixel sizes must be positive")
+    if diffraction is not None:
+        normalized_diffraction_params(diffraction)
 
 
 def coerce_value(value: Any, default: int | float, cast: type[int] | type[float]) -> int | float:
@@ -352,15 +539,26 @@ def configs_from_values(
     pixel_v: Any = None,
     i0: Any = None,
     j0: Any = None,
+    H: Any = None,
+    K: Any = None,
+    L: Any = None,
+    h_index: Any = None,
+    k_index: Any = None,
+    l_index: Any = None,
+    sigma_deg: Any = None,
+    mosaic_gamma_deg: Any = None,
+    eta: Any = None,
     default_beam: BeamConfig | None = None,
     default_sample: SampleConfig | None = None,
     default_detector: DetectorConfig | None = None,
-) -> tuple[BeamConfig, SampleConfig, DetectorConfig]:
+    default_diffraction: DiffractionConfig | None = None,
+) -> tuple[BeamConfig, SampleConfig, DetectorConfig, DiffractionConfig]:
     """Build strongly typed configs from CLI or GUI values."""
 
     beam_defaults = default_beam or BeamConfig()
     sample_defaults = default_sample or SampleConfig()
     detector_defaults = default_detector or DetectorConfig()
+    diffraction_defaults = default_diffraction or DiffractionConfig()
 
     beam = BeamConfig(
         ray_count=int(coerce_value(rays, beam_defaults.ray_count, int)),
@@ -398,8 +596,22 @@ def configs_from_values(
         i0=float(coerce_value(i0, detector_defaults.i0, float)),
         j0=float(coerce_value(j0, detector_defaults.j0, float)),
     )
-    validate_configs(beam, sample, detector)
-    return beam, sample, detector
+    diffraction = DiffractionConfig(
+        H=int(coerce_value(h_index if h_index is not None else H, diffraction_defaults.H, int)),
+        K=int(coerce_value(k_index if k_index is not None else K, diffraction_defaults.K, int)),
+        L=int(coerce_value(l_index if l_index is not None else L, diffraction_defaults.L, int)),
+        sigma_deg=float(coerce_value(sigma_deg, diffraction_defaults.sigma_deg, float)),
+        mosaic_gamma_deg=float(
+            coerce_value(
+                mosaic_gamma_deg,
+                diffraction_defaults.mosaic_gamma_deg,
+                float,
+            )
+        ),
+        eta=float(coerce_value(eta, diffraction_defaults.eta, float)),
+    )
+    validate_configs(beam, sample, detector, diffraction)
+    return beam, sample, detector, diffraction
 
 
 def extract_scene_camera(relayout_data: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -586,6 +798,52 @@ def project_ray_to_detector(
     return point, uv, pixels
 
 
+def project_rays_to_detector(
+    origins: np.ndarray,
+    directions: np.ndarray,
+    detector_frame: Frame3D,
+    detector_config: DetectorConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Project many rays onto the detector plane."""
+
+    if origins.size == 0 or directions.size == 0:
+        empty_points = np.empty((0, 3), dtype=float)
+        empty_uv = np.empty((0, 2), dtype=float)
+        empty_pixels = np.empty((0, 2), dtype=float)
+        return np.zeros(0, dtype=bool), empty_points, empty_uv, empty_pixels
+
+    origin_arr = np.asarray(origins, dtype=float)
+    direction_arr = normalize_rows(np.asarray(directions, dtype=float))
+    plane_normal = normalize_vector(detector_frame.normal)
+    denominator = direction_arr @ plane_normal
+    mask = np.abs(denominator) > EPSILON
+
+    distances = np.empty(direction_arr.shape[0], dtype=float)
+    distances.fill(np.nan)
+    numerator = (detector_frame.origin - origin_arr) @ plane_normal
+    distances[mask] = numerator[mask] / denominator[mask]
+    mask &= distances > 0.0
+
+    if not np.any(mask):
+        empty_points = np.empty((0, 3), dtype=float)
+        empty_uv = np.empty((0, 2), dtype=float)
+        empty_pixels = np.empty((0, 2), dtype=float)
+        return mask, empty_points, empty_uv, empty_pixels
+
+    points = origin_arr[mask] + distances[mask, None] * direction_arr[mask]
+    rel = points - detector_frame.origin
+    u = rel @ detector_frame.axis_u
+    v = rel @ detector_frame.axis_v
+    uv = np.column_stack([u, v])
+    pixels = np.column_stack(
+        [
+            detector_config.i0 + u / detector_config.pixel_u,
+            detector_config.j0 - v / detector_config.pixel_v,
+        ]
+    )
+    return mask, points, uv, pixels
+
+
 def reflect_directions(directions: np.ndarray, normal: np.ndarray) -> np.ndarray:
     """Mirror incoming directions about a plane normal."""
 
@@ -606,18 +864,28 @@ def trace_specular_simulation(
     beam_config: BeamConfig | None = None,
     sample_config: SampleConfig | None = None,
     detector_config: DetectorConfig | None = None,
+    diffraction_config: DiffractionConfig | None = None,
+    progress: ProgressCallback | None = None,
 ) -> SimulationResult:
     """Trace the beam family from source to sample to detector."""
 
     beam = beam_config or BeamConfig()
     sample = sample_config or SampleConfig()
     detector = detector_config or DetectorConfig()
-    validate_configs(beam, sample, detector)
+    diffraction = diffraction_config or DiffractionConfig()
+    _emit_progress(progress, "Validating beam, sample, detector, and diffraction inputs")
+    validate_configs(beam, sample, detector, diffraction)
 
+    _emit_progress(progress, f"Generating {beam.ray_count} incident beam rays")
     rays = generate_beam_rays(beam)
+    _emit_progress(progress, "Building sample and detector frames")
     sample_frame = build_sample_frame(sample)
     detector_frame = build_detector_frame(detector)
+    sample_basis = np.vstack(
+        [sample_frame.axis_u, sample_frame.axis_v, sample_frame.normal]
+    )
 
+    _emit_progress(progress, "Intersecting incident rays with the sample plane")
     sample_denominator = rays.directions @ sample_frame.normal
     sample_numerator = (sample_frame.origin - rays.origins) @ sample_frame.normal
     sample_intersection_mask = np.abs(sample_denominator) > EPSILON
@@ -646,42 +914,130 @@ def trace_specular_simulation(
     sample_hit_indices = candidate_indices[inside_sample]
     hit_points = candidate_points[inside_sample]
     sample_uv = np.column_stack([sample_u[inside_sample], sample_v[inside_sample]])
-    reflected_dirs = reflect_directions(
-        rays.directions[sample_hit_indices],
-        sample_frame.normal,
+    _emit_progress(
+        progress,
+        f"Sample hits on finite sample: {sample_hit_indices.size}/{beam.ray_count}",
+    )
+    (
+        H,
+        K,
+        L,
+        sigma,
+        Gamma,
+        eta,
+    ) = normalized_diffraction_params(diffraction)
+    _, reciprocal_k_mag, d_hex, intersection_circle, mosaic_intensity = _hkl_engine()
+    g_mag = 2.0 * math.pi / d_hex(H, K, L)
+    _emit_progress(
+        progress,
+        (
+            "Building HKL diffraction ring for "
+            f"({H}, {K}, {L}) with {DIFFRACTION_SAMPLES} azimuthal samples"
+        ),
+    )
+    ring_x, ring_y, ring_z = intersection_circle(
+        g_mag,
+        reciprocal_k_mag,
+        reciprocal_k_mag,
+        npts=DIFFRACTION_SAMPLES,
     )
 
-    detector_denominator = reflected_dirs @ detector_frame.normal
-    detector_numerator = (detector_frame.origin - hit_points) @ detector_frame.normal
-    plane_hit_mask = np.abs(detector_denominator) > EPSILON
+    exit_parent_indices = np.empty(0, dtype=int)
+    exit_dirs = np.empty((0, 3), dtype=float)
+    exit_weights = np.empty(0, dtype=float)
+    plane_hit_indices = np.empty(0, dtype=int)
+    plane_points = np.empty((0, 3), dtype=float)
+    plane_uv = np.empty((0, 2), dtype=float)
+    plane_pixels = np.empty((0, 2), dtype=float)
+    active_detector_mask = np.zeros(0, dtype=bool)
 
-    plane_distance = np.empty_like(detector_denominator)
-    plane_distance.fill(np.nan)
-    plane_distance[plane_hit_mask] = (
-        detector_numerator[plane_hit_mask] / detector_denominator[plane_hit_mask]
-    )
-    plane_hit_mask &= plane_distance > 0.0
+    if sample_hit_indices.size and ring_x.size:
+        canonical_q = np.column_stack([ring_x, ring_y, ring_z])
+        incident_dirs_local = rays.directions[sample_hit_indices] @ sample_basis.T
+        exit_parent_parts: list[np.ndarray] = []
+        exit_dir_parts: list[np.ndarray] = []
+        exit_weight_parts: list[np.ndarray] = []
+        total_hits = incident_dirs_local.shape[0]
+        progress_interval = max(1, total_hits // 5)
 
-    plane_hit_indices = np.flatnonzero(plane_hit_mask)
-    plane_points = (
-        hit_points[plane_hit_indices]
-        + plane_distance[plane_hit_indices, None] * reflected_dirs[plane_hit_indices]
-    )
-    rel_detector = plane_points - detector_frame.origin
-    plane_u = rel_detector @ detector_frame.axis_u
-    plane_v = rel_detector @ detector_frame.axis_v
-    plane_uv = np.column_stack([plane_u, plane_v])
-    plane_pixels = np.column_stack(
-        [
-            detector.i0 + plane_u / detector.pixel_u,
-            detector.j0 - plane_v / detector.pixel_v,
-        ]
-    )
-    active_detector_mask = (
-        (np.abs(plane_u) <= 0.5 * detector.width)
-        & (np.abs(plane_v) <= 0.5 * detector.height)
-    )
+        for parent_index, incident_dir_local in enumerate(incident_dirs_local):
+            rotation = rotation_between_vectors(LAB_Y, -incident_dir_local)
+            q_local = canonical_q @ rotation.T
+            k_i_local = reciprocal_k_mag * incident_dir_local
+            exit_dirs_local = normalize_rows(q_local + k_i_local[None, :])
+            exit_parent_parts.append(
+                np.full(exit_dirs_local.shape[0], parent_index, dtype=int)
+            )
+            exit_dir_parts.append(exit_dirs_local @ sample_basis)
+            exit_weight_parts.append(
+                np.asarray(
+                    mosaic_intensity(
+                        q_local[:, 0],
+                        q_local[:, 1],
+                        q_local[:, 2],
+                        H,
+                        K,
+                        L,
+                        sigma,
+                        Gamma,
+                        eta,
+                    ),
+                    dtype=float,
+                )
+            )
+            processed_hits = parent_index + 1
+            if processed_hits == 1 or processed_hits == total_hits or processed_hits % progress_interval == 0:
+                _emit_progress(
+                    progress,
+                    f"Expanding diffraction families from sample hits: {processed_hits}/{total_hits}",
+                )
 
+        exit_parent_indices = np.concatenate(exit_parent_parts)
+        exit_dirs = np.vstack(exit_dir_parts)
+        exit_weights = np.concatenate(exit_weight_parts)
+        _emit_progress(
+            progress,
+            (
+                f"Generated {exit_parent_indices.size} diffraction rays from "
+                f"{sample_hit_indices.size} sample hits"
+            ),
+        )
+
+        exit_origins = hit_points[exit_parent_indices]
+        _emit_progress(
+            progress,
+            f"Projecting {exit_dirs.shape[0]} diffraction rays onto detector plane",
+        )
+        projection_mask, plane_points, plane_uv, plane_pixels = project_rays_to_detector(
+            exit_origins,
+            exit_dirs,
+            detector_frame,
+            detector,
+        )
+        plane_hit_indices = np.flatnonzero(projection_mask)
+        active_detector_mask = (
+            (np.abs(plane_uv[:, 0]) <= 0.5 * detector.width)
+            & (np.abs(plane_uv[:, 1]) <= 0.5 * detector.height)
+        )
+        _emit_progress(
+            progress,
+            (
+                f"Detector-plane intersections: {plane_hit_indices.size}; "
+                f"active detector hits: {int(np.count_nonzero(active_detector_mask))}"
+            ),
+        )
+    elif not sample_hit_indices.size:
+        _emit_progress(
+            progress,
+            "No incident rays hit the sample; skipping diffraction-family expansion",
+        )
+    else:
+        _emit_progress(
+            progress,
+            "Diffraction ring produced no samples; skipping detector projection",
+        )
+
+    _emit_progress(progress, "Tracing direct-beam reference to the detector")
     direct_beam_projection = project_ray_to_detector(
         np.zeros(3, dtype=float),
         LAB_Y,
@@ -694,6 +1050,7 @@ def trace_specular_simulation(
         direct_beam_pixels = None
     else:
         direct_beam_point, direct_beam_uv, direct_beam_pixels = direct_beam_projection
+    _emit_progress(progress, "Trace complete")
 
     return SimulationResult(
         beam=rays,
@@ -701,7 +1058,9 @@ def trace_specular_simulation(
         detector=detector_frame,
         sample_hit_indices=sample_hit_indices,
         hit_points=hit_points,
-        reflected_dirs=reflected_dirs,
+        exit_parent_indices=exit_parent_indices,
+        exit_dirs=exit_dirs,
+        exit_weights=exit_weights,
         sample_uv=sample_uv,
         plane_hit_indices=plane_hit_indices,
         plane_points=plane_points,
@@ -794,16 +1153,17 @@ def build_specular_figure(
     beam_config: BeamConfig,
     sample_config: SampleConfig,
     detector_config: DetectorConfig,
+    diffraction_config: DiffractionConfig,
     *,
     camera: dict[str, Any] | None = None,
 ) -> go.Figure:
-    """Build a 3-panel Plotly figure for the specular ray trace."""
+    """Build a 3-panel Plotly figure for the HKL diffraction trace."""
 
     fig = make_subplots(
         rows=1,
         cols=3,
         specs=[[{"type": "scene"}, {"type": "xy"}, {"type": "xy"}]],
-        column_widths=[0.56, 0.22, 0.22],
+        column_widths=[0.54, 0.16, 0.30],
         subplot_titles=("Lab Geometry", "Sample Footprint", "Detector Plane"),
     )
 
@@ -883,14 +1243,15 @@ def build_specular_figure(
         beam_config.display_rays,
     )
     if plane_display.size:
-        sample_display = result.plane_hit_indices[plane_display]
-        incident_starts = result.beam.origins[result.sample_hit_indices[sample_display]]
-        incident_ends = result.hit_points[sample_display]
-        reflected_starts = result.hit_points[sample_display]
-        reflected_ends = result.plane_points[plane_display]
+        display_parent_indices = np.unique(result.plane_parent_indices[plane_display])
+        incident_starts = result.beam.origins[result.sample_hit_indices[display_parent_indices]]
+        incident_ends = result.hit_points[display_parent_indices]
+        diffraction_starts = result.hit_points[result.plane_parent_indices[plane_display]]
+        diffraction_ends = result.plane_points[plane_display]
+        displayed_exit_dirs = result.exit_dirs[result.plane_hit_indices[plane_display]]
 
         inc_x, inc_y, inc_z = segmented_line_points(incident_starts, incident_ends)
-        ref_x, ref_y, ref_z = segmented_line_points(reflected_starts, reflected_ends)
+        diff_x, diff_y, diff_z = segmented_line_points(diffraction_starts, diffraction_ends)
 
         fig.add_trace(
             go.Scatter3d(
@@ -907,17 +1268,51 @@ def build_specular_figure(
         )
         fig.add_trace(
             go.Scatter3d(
-                x=ref_x,
-                y=ref_y,
-                z=ref_z,
+                x=diff_x,
+                y=diff_y,
+                z=diff_z,
                 mode="lines",
-                line=dict(color="#d62828", width=5),
-                name="Specular rays",
+                line=dict(color="rgba(214, 40, 40, 0.16)", width=4),
+                name="Diffraction rays",
                 hoverinfo="skip",
             ),
             row=1,
             col=1,
         )
+        arrow_display = choose_display_indices(plane_display.size, min(24, plane_display.size))
+        if arrow_display.size:
+            arrow_tips = diffraction_ends[arrow_display]
+            arrow_dirs = displayed_exit_dirs[arrow_display]
+            axis_scale = max(
+                sample_config.width,
+                sample_config.height,
+                detector_config.width,
+                detector_config.height,
+                detector_config.distance,
+            )
+            arrow_length = 0.06 * axis_scale
+            arrow_vectors = arrow_length * arrow_dirs
+            fig.add_trace(
+                go.Cone(
+                    x=arrow_tips[:, 0],
+                    y=arrow_tips[:, 1],
+                    z=arrow_tips[:, 2],
+                    u=arrow_vectors[:, 0],
+                    v=arrow_vectors[:, 1],
+                    w=arrow_vectors[:, 2],
+                    anchor="tip",
+                    sizemode="absolute",
+                    sizeref=max(arrow_length, EPSILON),
+                    colorscale=[[0.0, "#d62828"], [1.0, "#d62828"]],
+                    showscale=False,
+                    opacity=0.75,
+                    name="Diffraction direction",
+                    hoverinfo="skip",
+                    showlegend=False,
+                ),
+                row=1,
+                col=1,
+            )
 
     if result.sample_hit_count:
         fig.add_trace(
@@ -935,14 +1330,21 @@ def build_specular_figure(
         )
 
     if result.detector_plane_hit_count:
-        hit_colors = np.where(result.active_detector_mask, "#d62828", "#bdbdbd")
         fig.add_trace(
             go.Scatter3d(
                 x=result.plane_points[:, 0],
                 y=result.plane_points[:, 1],
                 z=result.plane_points[:, 2],
                 mode="markers",
-                marker=dict(size=4, color=hit_colors),
+                marker=dict(
+                    size=4,
+                    color=result.plane_weights,
+                    colorscale="Viridis",
+                    cmin=0.0,
+                    cmax=1.0,
+                    showscale=False,
+                    opacity=0.55,
+                ),
                 name="Detector intersections",
                 hovertemplate="x=%{x:.3f}<br>y=%{y:.3f}<br>z=%{z:.3f}<extra></extra>",
             ),
@@ -1048,11 +1450,19 @@ def build_specular_figure(
                     x=result.plane_uv[inactive, 0],
                     y=result.plane_uv[inactive, 1],
                     mode="markers",
-                    marker=dict(size=7, color="#bdbdbd", opacity=0.6),
+                    marker=dict(
+                        size=6,
+                        color=result.plane_weights[inactive],
+                        colorscale="Viridis",
+                        cmin=0.0,
+                        cmax=1.0,
+                        opacity=0.35,
+                        showscale=False,
+                    ),
                     name="Off-detector intersections",
                     hovertemplate=(
                         "u=%{x:.3f}<br>v=%{y:.3f}<br>i=%{customdata[0]:.2f}"
-                        "<br>j=%{customdata[1]:.2f}<extra></extra>"
+                        "<br>j=%{customdata[1]:.2f}<br>w=%{marker.color:.3f}<extra></extra>"
                     ),
                     customdata=result.plane_pixels[inactive],
                     showlegend=False,
@@ -1061,24 +1471,33 @@ def build_specular_figure(
                 col=3,
             )
 
-        if result.detector_hit_count:
-            fig.add_trace(
-                go.Scatter(
-                    x=result.detector_uv[:, 0],
-                    y=result.detector_uv[:, 1],
-                    mode="markers",
-                    marker=dict(size=8, color="#d62828", opacity=0.85),
-                    name="Detector hits",
-                    hovertemplate=(
-                        "u=%{x:.3f}<br>v=%{y:.3f}<br>i=%{customdata[0]:.2f}"
-                        "<br>j=%{customdata[1]:.2f}<extra></extra>"
-                    ),
-                    customdata=result.detector_pixels,
-                    showlegend=False,
+    if result.detector_hit_count:
+        fig.add_trace(
+            go.Scatter(
+                x=result.detector_uv[:, 0],
+                y=result.detector_uv[:, 1],
+                mode="markers",
+                marker=dict(
+                    size=8,
+                    color=result.detector_weights,
+                    colorscale="Viridis",
+                    cmin=0.0,
+                    cmax=1.0,
+                    opacity=0.9,
+                    showscale=True,
+                    colorbar=dict(title="w", len=0.72),
                 ),
-                row=1,
-                col=3,
-            )
+                name="Detector hits",
+                hovertemplate=(
+                    "u=%{x:.3f}<br>v=%{y:.3f}<br>i=%{customdata[0]:.2f}"
+                    "<br>j=%{customdata[1]:.2f}<br>w=%{marker.color:.3f}<extra></extra>"
+                ),
+                customdata=result.detector_pixels,
+                showlegend=False,
+            ),
+            row=1,
+            col=3,
+        )
 
     detector_outline_u = np.array(
         [
@@ -1132,20 +1551,53 @@ def build_specular_figure(
             col=3,
         )
 
-    nominal_two_theta = nominal_scattering_angle_deg(result.sample)
+    hkl_label = (
+        f"HKL = ({diffraction_config.H}, {diffraction_config.K}, {diffraction_config.L})"
+    )
+    g_mag = diffraction_magnitude_angstrom(diffraction_config)
+    sample_x_padding = max(0.05 * sample_half_u, 1e-6)
+    sample_y_padding = max(0.05 * sample_half_v, 1e-6)
+    sample_x_range = [
+        -(sample_half_u + sample_x_padding),
+        sample_half_u + sample_x_padding,
+    ]
+    sample_y_range = [
+        -(sample_half_v + sample_y_padding),
+        sample_half_v + sample_y_padding,
+    ]
+    detector_axis_extent = max(
+        detector_half_u,
+        detector_half_v,
+        float(np.max(np.abs(result.plane_uv))) if result.detector_plane_hit_count else 0.0,
+        float(np.max(np.abs(result.direct_beam_uv))) if result.direct_beam_uv is not None else 0.0,
+    )
+    detector_axis_padding = max(0.05 * detector_axis_extent, 1e-6)
+    detector_axis_range = [
+        -(detector_axis_extent + detector_axis_padding),
+        detector_axis_extent + detector_axis_padding,
+    ]
     title = (
-        "Specular Beam-Sample-Detector Simulation"
-        f" | sample hits {result.sample_hit_count}/{beam_config.ray_count}"
-        f" | detector hits {result.detector_hit_count}"
-        f" | nominal 2θ = {nominal_two_theta:.2f}°"
+        "Specular Diffraction"
+        f" | {hkl_label}"
+        f" | |G| = {g_mag:.3f} A^-1"
+        f" | sample {result.sample_hit_count}/{beam_config.ray_count}"
+        f" | diffraction rays {result.diffraction_ray_count}"
+        f" | detector hits {result.detector_hit_count}/{result.detector_plane_hit_count}"
     )
 
     fig.update_layout(
         title=dict(text=title, x=0.5, xanchor="center"),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin=dict(l=20, r=20, t=90, b=20),
-        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"),
+        margin=dict(l=20, r=20, t=64, b=20),
+        legend=dict(
+            x=0.01,
+            y=0.99,
+            bgcolor="rgba(255,255,255,0.74)",
+            bordercolor="rgba(15, 23, 42, 0.12)",
+            borderwidth=1,
+            font=dict(size=11),
+        ),
         uirevision=SPECULAR_CAMERA_UIREVISION,
     )
     fig.update_scenes(
@@ -1159,27 +1611,37 @@ def build_specular_figure(
         row=1,
         col=1,
     )
-    fig.update_xaxes(title="u_s", scaleanchor="y", row=1, col=2)
-    fig.update_yaxes(title="v_s", row=1, col=2)
-    fig.update_xaxes(title="u", scaleanchor="y", row=1, col=3)
-    fig.update_yaxes(title="v", row=1, col=3)
-
-    fig.add_annotation(
-        text=(
-            f"Sample rotations: θᵢ={sample_config.theta_i_deg:.2f}°, "
-            f"δ={sample_config.delta_deg:.2f}°, "
-            f"α={sample_config.alpha_deg:.2f}°, "
-            f"ψ={sample_config.psi_deg:.2f}°<br>"
-            f"Detector rotations: β={detector_config.beta_deg:.2f}°, "
-            f"γ={detector_config.gamma_deg:.2f}°, "
-            f"χ={detector_config.chi_deg:.2f}°"
-        ),
-        x=0.5,
-        y=1.05,
-        xref="paper",
-        yref="paper",
-        showarrow=False,
-        font=dict(size=12),
+    fig.update_xaxes(
+        title="u_s",
+        range=sample_x_range,
+        scaleanchor="y",
+        scaleratio=1,
+        constrain="domain",
+        row=1,
+        col=2,
+    )
+    fig.update_yaxes(
+        title="v_s",
+        range=sample_y_range,
+        constrain="domain",
+        row=1,
+        col=2,
+    )
+    fig.update_xaxes(
+        title="u",
+        range=detector_axis_range,
+        scaleanchor="y",
+        scaleratio=1,
+        constrain="domain",
+        row=1,
+        col=3,
+    )
+    fig.update_yaxes(
+        title="v",
+        range=detector_axis_range,
+        constrain="domain",
+        row=1,
+        col=3,
     )
 
     if camera:
@@ -1210,23 +1672,46 @@ def simulation_summary(
     result: SimulationResult,
     sample_config: SampleConfig,
     detector_config: DetectorConfig,
+    diffraction_config: DiffractionConfig,
 ) -> str:
     """Return a compact text summary for CLI use."""
 
-    nominal_direction = nominal_specular_direction(result.sample)
-    nominal_two_theta = nominal_scattering_angle_deg(result.sample)
+    hkl_label = (
+        f"({diffraction_config.H}, {diffraction_config.K}, {diffraction_config.L})"
+    )
+    g_mag = diffraction_magnitude_angstrom(diffraction_config)
 
     if result.detector_hit_count:
-        detector_centroid = np.mean(result.detector_uv, axis=0)
-        pixel_centroid = np.mean(result.detector_pixels, axis=0)
+        detector_centroid = np.average(
+            result.detector_uv,
+            axis=0,
+            weights=result.detector_weights,
+        )
+        pixel_centroid = np.average(
+            result.detector_pixels,
+            axis=0,
+            weights=result.detector_weights,
+        )
         centroid_text = (
-            f"detector centroid (u, v) = ({detector_centroid[0]:.4f}, "
+            f"weighted detector centroid (u, v) = ({detector_centroid[0]:.4f}, "
             f"{detector_centroid[1]:.4f}), "
-            f"pixel centroid (i, j) = ({pixel_centroid[0]:.2f}, "
+            f"weighted pixel centroid (i, j) = ({pixel_centroid[0]:.2f}, "
             f"{pixel_centroid[1]:.2f})"
         )
     else:
-        centroid_text = "detector centroid unavailable (no active detector hits)"
+        centroid_text = "weighted detector centroid unavailable (no active detector hits)"
+
+    plane_centroid_text = "weighted detector-plane centroid unavailable"
+    if result.detector_plane_hit_count:
+        plane_centroid = np.average(
+            result.plane_uv,
+            axis=0,
+            weights=result.plane_weights,
+        )
+        plane_centroid_text = (
+            f"weighted detector-plane centroid (u, v) = "
+            f"({plane_centroid[0]:.4f}, {plane_centroid[1]:.4f})"
+        )
 
     direct_beam_text = "direct beam center unavailable"
     if result.direct_beam_uv is not None and result.direct_beam_pixels is not None:
@@ -1238,41 +1723,176 @@ def simulation_summary(
 
     return "\n".join(
         [
-            "Specular reflection summary",
+            "Specular diffraction summary",
+            f"  HKL = {hkl_label}",
+            f"  |G|: {g_mag:.6f} A^-1",
             f"  sample hits: {result.sample_hit_count}/{result.beam.origins.shape[0]}",
+            f"  diffraction rays: {result.diffraction_ray_count}",
             f"  detector-plane intersections: {result.detector_plane_hit_count}",
             f"  active detector hits: {result.detector_hit_count}",
-            "  nominal sample normal: "
-            f"({result.sample.normal[0]:.6f}, {result.sample.normal[1]:.6f}, {result.sample.normal[2]:.6f})",
-            "  nominal reflected direction: "
-            f"({nominal_direction[0]:.6f}, {nominal_direction[1]:.6f}, {nominal_direction[2]:.6f})",
-            f"  nominal 2θ from +y: {nominal_two_theta:.6f} deg",
+            f"  mosaic sigma: {diffraction_config.sigma_deg:.4f} deg",
+            f"  mosaic Gamma: {diffraction_config.mosaic_gamma_deg:.4f} deg",
+            f"  mosaic eta: {diffraction_config.eta:.4f}",
             f"  sample size (W x H): {sample_config.width:.3f} x {sample_config.height:.3f}",
             f"  detector size (W x H): {detector_config.width:.3f} x {detector_config.height:.3f}",
+            f"  {plane_centroid_text}",
             f"  {centroid_text}",
             f"  {direct_beam_text}",
         ]
     )
 
 
-def build_specular_outputs(
+def build_specular_companion_figure(
+    sample_config: SampleConfig,
+    diffraction_config: DiffractionConfig,
+    *,
+    camera: dict[str, Any] | None = None,
+) -> go.Figure:
+    """Return the companion reciprocal-space/integration view for specular mode."""
+
+    from mosaic_sim.detector import build_detector_figure
+
+    base_figure = build_detector_figure(
+        diffraction_config.H,
+        diffraction_config.K,
+        diffraction_config.L,
+        math.radians(diffraction_config.sigma_deg),
+        Gamma=math.radians(diffraction_config.mosaic_gamma_deg),
+        eta=diffraction_config.eta,
+        theta_i=math.radians(sample_config.theta_i_deg),
+        camera=camera,
+    )
+    companion_figure = make_subplots(
+        rows=1,
+        cols=2,
+        specs=[[{"type": "scene"}, {"type": "xy"}]],
+        column_widths=[0.7, 0.3],
+        subplot_titles=("Reciprocal space", "Centered integration"),
+    )
+
+    for trace in base_figure.data:
+        if getattr(trace, "scene", None) == "scene":
+            companion_figure.add_trace(deepcopy(trace), row=1, col=1)
+        elif getattr(trace, "xaxis", None) == "x2" and getattr(trace, "yaxis", None) == "y2":
+            centered_trace = deepcopy(trace)
+            if hasattr(centered_trace, "xaxis"):
+                centered_trace.xaxis = None
+            if hasattr(centered_trace, "yaxis"):
+                centered_trace.yaxis = None
+            companion_figure.add_trace(centered_trace, row=1, col=2)
+
+    scene_layout = (
+        deepcopy(base_figure.layout.scene.to_plotly_json())
+        if base_figure.layout.scene is not None
+        else {}
+    )
+    centered_xaxis_layout = (
+        deepcopy(base_figure.layout.xaxis2.to_plotly_json())
+        if getattr(base_figure.layout, "xaxis2", None) is not None
+        else {}
+    )
+    centered_yaxis_layout = (
+        deepcopy(base_figure.layout.yaxis2.to_plotly_json())
+        if getattr(base_figure.layout, "yaxis2", None) is not None
+        else {}
+    )
+
+    companion_figure.update_layout(
+        paper_bgcolor=base_figure.layout.paper_bgcolor,
+        plot_bgcolor=base_figure.layout.plot_bgcolor,
+        showlegend=False,
+        uirevision=base_figure.layout.uirevision,
+        margin=dict(l=0, r=0, b=0, t=110),
+        title=deepcopy(base_figure.layout.title.to_plotly_json()),
+    )
+    companion_figure.update_scenes(row=1, col=1, **scene_layout)
+    companion_figure.update_xaxes(row=1, col=2, **centered_xaxis_layout)
+    companion_figure.update_yaxes(row=1, col=2, **centered_yaxis_layout)
+    return companion_figure
+
+
+def build_specular_companion_error_figure(message: str) -> go.Figure:
+    """Return a compact error figure for the companion mosaic view."""
+
+    from mosaic_sim.detector import build_detector_error_figure
+
+    figure = build_detector_error_figure(message)
+    figure.update_layout(
+        title=dict(
+            text="Reciprocal Space and Integrated Response",
+            x=0.5,
+            xanchor="center",
+        )
+    )
+    return figure
+
+
+def build_specular_dashboard_outputs(
     beam_config: BeamConfig,
     sample_config: SampleConfig,
     detector_config: DetectorConfig,
+    diffraction_config: DiffractionConfig,
     *,
     camera: dict[str, Any] | None = None,
-) -> tuple[go.Figure, str]:
-    """Return the live figure and summary text for the current configs."""
+    companion_camera: dict[str, Any] | None = None,
+    progress: ProgressCallback | None = None,
+) -> tuple[go.Figure, go.Figure, str]:
+    """Return the main specular figure, companion figure, and textual summary."""
 
-    result = trace_specular_simulation(beam_config, sample_config, detector_config)
+    result = trace_specular_simulation(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        progress=progress,
+    )
+    _emit_progress(progress, "Building specular geometry figure")
     figure = build_specular_figure(
         result,
         beam_config,
         sample_config,
         detector_config,
+        diffraction_config,
         camera=camera,
     )
-    summary = simulation_summary(result, sample_config, detector_config)
+    _emit_progress(progress, "Building reciprocal-space and integrated-response companion figure")
+    companion_figure = build_specular_companion_figure(
+        sample_config,
+        diffraction_config,
+        camera=companion_camera,
+    )
+    _emit_progress(progress, "Formatting textual summary")
+    summary = simulation_summary(
+        result,
+        sample_config,
+        detector_config,
+        diffraction_config,
+    )
+    _emit_progress(progress, "Initial outputs ready")
+    return figure, companion_figure, summary
+
+
+def build_specular_outputs(
+    beam_config: BeamConfig,
+    sample_config: SampleConfig,
+    detector_config: DetectorConfig,
+    diffraction_config: DiffractionConfig,
+    *,
+    camera: dict[str, Any] | None = None,
+    companion_camera: dict[str, Any] | None = None,
+    progress: ProgressCallback | None = None,
+) -> tuple[go.Figure, str]:
+    """Return the live figure and summary text for the current configs."""
+
+    figure, _, summary = build_specular_dashboard_outputs(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        camera=camera,
+        companion_camera=companion_camera,
+        progress=progress,
+    )
     return figure, summary
 
 
@@ -1284,6 +1904,7 @@ def build_number_control(
     step: int | float,
     min_value: int | float,
     max_value: int | float,
+    updatemode: str = "mouseup",
 ):
     """Return a compact slider plus numeric-entry control."""
 
@@ -1301,10 +1922,19 @@ def build_number_control(
         )
     else:
         label_content = label
+    marks = {
+        float(min_value): f"{min_value:g}",
+        float(max_value): f"{max_value:g}",
+    }
 
     return html.Div(
         [
-            html.Label(label_content, htmlFor=str(slider_id), style={"fontWeight": 600}),
+            html.Label(
+                label_content,
+                htmlFor=str(slider_id),
+                className="specular-control-label",
+                style={"fontWeight": 600},
+            ),
             html.Div(
                 [
                     dcc.Slider(
@@ -1313,10 +1943,11 @@ def build_number_control(
                         max=max_value,
                         step=step,
                         value=value,
-                        marks=None,
+                        marks=marks,
                         included=False,
-                        updatemode="drag",
+                        updatemode=updatemode,
                         tooltip={"placement": "bottom", "always_visible": False},
+                        className="specular-slider",
                     ),
                     dcc.Input(
                         id=input_id,
@@ -1325,23 +1956,25 @@ def build_number_control(
                         step=step,
                         min=min_value,
                         max=max_value,
-                        debounce=False,
-                        style={"width": "64px", "minWidth": "64px"},
+                        debounce=True,
+                        className="specular-number-input",
+                        style={"width": "88px", "minWidth": "88px"},
                     ),
                 ],
+                className="specular-control-row",
                 style={
                     "display": "grid",
-                    "gridTemplateColumns": "minmax(0, 1fr) 64px",
+                    "gridTemplateColumns": "minmax(0, 1fr) 88px",
                     "gap": "0.6rem",
                     "alignItems": "center",
                 },
             ),
         ],
+        className="specular-control",
         style={
             "display": "flex",
             "flexDirection": "column",
-            "gap": "0.45rem",
-            "minWidth": "130px",
+            "gap": "0.4rem",
         },
     )
 
@@ -1350,8 +1983,13 @@ def build_specular_app(
     initial_beam: BeamConfig | None = None,
     initial_sample: SampleConfig | None = None,
     initial_detector: DetectorConfig | None = None,
+    initial_diffraction: DiffractionConfig | None = None,
+    *,
+    initial_figure: go.Figure | None = None,
+    initial_companion_figure: go.Figure | None = None,
+    initial_summary: str | None = None,
 ):
-    """Return a Dash app exposing all beam, sample, and detector parameters."""
+    """Return a Dash app exposing all beam, sample, detector, and HKL parameters."""
 
     import dash
     from dash import ALL, MATCH, ctx, dcc, html
@@ -1361,39 +1999,54 @@ def build_specular_app(
     beam_defaults = initial_beam or BeamConfig()
     sample_defaults = initial_sample or SampleConfig()
     detector_defaults = initial_detector or DetectorConfig()
-    initial_figure, initial_summary = build_specular_outputs(
-        beam_defaults,
-        sample_defaults,
-        detector_defaults,
-    )
+    diffraction_defaults = initial_diffraction or DiffractionConfig()
+    if initial_figure is None or initial_summary is None:
+        initial_figure, initial_companion_figure, initial_summary = build_specular_dashboard_outputs(
+            beam_defaults,
+            sample_defaults,
+            detector_defaults,
+            diffraction_defaults,
+        )
+    elif initial_companion_figure is None:
+        initial_companion_figure = build_specular_companion_figure(
+            sample_defaults,
+            diffraction_defaults,
+        )
 
-    app = dash.Dash(__name__)
-    app.title = "Specular Reflection Simulator"
+    assets_folder = Path(__file__).resolve().parent / "assets"
+    app = dash.Dash(__name__, assets_folder=str(assets_folder))
+    app.title = "Specular Diffraction Simulator"
 
     config_by_group = {
         "beam": beam_defaults,
         "sample": sample_defaults,
         "detector": detector_defaults,
+        "diffraction": diffraction_defaults,
     }
 
     def section(title: str, children: list[Any]):
         return html.Div(
             [
-                html.H3(title, style={"margin": "0 0 0.75rem 0"}),
+                html.H3(title, className="specular-section-title", style={"margin": "0"}),
                 html.Div(
                     children,
                     style={
                         "display": "grid",
-                        "gridTemplateColumns": "repeat(auto-fit, minmax(135px, 1fr))",
+                        "gridTemplateColumns": "minmax(0, 1fr)",
                         "gap": "0.75rem",
                     },
+                    className="specular-section-grid",
                 ),
             ],
+            className="specular-section-card",
             style={
                 "border": "1px solid #d8dee9",
                 "borderRadius": "10px",
                 "padding": "0.9rem",
                 "backgroundColor": "#fbfcfd",
+                "display": "flex",
+                "flexDirection": "column",
+                "gap": "0.85rem",
             },
         )
 
@@ -1409,66 +2062,129 @@ def build_specular_app(
                     step=spec.step,
                     min_value=spec.min_value,
                     max_value=spec.max_value,
+                    updatemode=spec.updatemode,
                 )
             )
         return controls
+
+    def visual_card(
+        title: str,
+        description: str,
+        graph_id: str,
+        figure: go.Figure,
+        *,
+        frame_class_name: str,
+    ) -> html.Section:
+        return html.Section(
+            [
+                html.Div(
+                    [
+                        html.H3(title, style={"margin": "0"}),
+                        html.Div(
+                            description,
+                            style={"color": "#475569", "lineHeight": "1.5"},
+                        ),
+                    ],
+                    className="specular-visual-header",
+                    style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
+                ),
+                html.Div(
+                    [
+                        dcc.Graph(
+                            id=graph_id,
+                            figure=figure,
+                            style={"height": "100%", "minHeight": "0"},
+                            config={"responsive": True, "displaylogo": False},
+                        ),
+                    ],
+                    className=frame_class_name,
+                ),
+            ],
+            className="specular-visual-card",
+            style={"display": "grid", "gap": "0.75rem", "minHeight": "0"},
+        )
 
     app.layout = html.Div(
         [
             html.Div(
                 [
-                    html.H2("Specular Beam-Sample-Detector Simulation", style={"margin": "0"}),
                     html.Div(
-                        "All beam, sample, and detector parameters update the ray trace live in one lab frame.",
-                        style={"color": "#4a5568"},
+                        [
+                            html.H2("Specular Diffraction", style={"margin": "0"}),
+                            html.Div(
+                                "Beam, sample, detector, and HKL controls stay visible while the diffraction figure remains in view.",
+                                style={"color": "#4a5568"},
+                            ),
+                        ],
+                        className="specular-sidebar-header",
+                        style={"display": "flex", "flexDirection": "column", "gap": "0.45rem"},
+                    ),
+                    html.Pre(
+                        id="specular-summary",
+                        children=initial_summary,
+                        className="specular-summary-card",
+                        style={
+                            "whiteSpace": "pre-wrap",
+                            "backgroundColor": "#f7fafc",
+                            "border": "1px solid #e2e8f0",
+                            "borderRadius": "10px",
+                            "padding": "0.85rem",
+                            "fontFamily": "Consolas, Monaco, monospace",
+                            "fontSize": "0.92rem",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            section(
+                                "Beam",
+                                controls_for_section(CONTROL_SECTIONS[0][1]),
+                            ),
+                            section(
+                                "Sample",
+                                controls_for_section(CONTROL_SECTIONS[1][1]),
+                            ),
+                            section(
+                                "Detector",
+                                controls_for_section(CONTROL_SECTIONS[2][1]),
+                            ),
+                            section(
+                                "Diffraction",
+                                controls_for_section(CONTROL_SECTIONS[3][1]),
+                            ),
+                        ],
+                        className="specular-sections",
+                        style={"display": "grid", "gap": "1rem"},
                     ),
                 ],
-                style={"paddingBottom": "0.9rem"},
+                className="specular-sidebar",
             ),
             html.Div(
                 [
-                    section(
-                        "Beam",
-                        controls_for_section(CONTROL_SECTIONS[0][1]),
-                    ),
-                    section(
-                        "Sample",
-                        controls_for_section(CONTROL_SECTIONS[1][1]),
-                    ),
-                    section(
-                        "Detector",
-                        controls_for_section(CONTROL_SECTIONS[2][1]),
+                    html.Div(
+                        [
+                            visual_card(
+                                "Specular Geometry",
+                                "Lab-frame beam, sample footprint, and detector-hit geometry for the current incident and sample setup.",
+                                "specular-fig",
+                                initial_figure,
+                                frame_class_name="specular-graph-frame specular-graph-frame--primary",
+                            ),
+                            visual_card(
+                                "Reciprocal Space and Integrated Response",
+                                "The synchronized reciprocal-space and centered-integration mosaic panels for the current HKL, mosaic widths, and θᵢ.",
+                                "specular-companion-fig",
+                                initial_companion_figure,
+                                frame_class_name="specular-graph-frame specular-graph-frame--secondary",
+                            ),
+                        ],
+                        className="specular-visuals",
+                        style={"display": "grid", "gap": "1rem", "minHeight": "0"},
                     ),
                 ],
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": "repeat(auto-fit, minmax(320px, 1fr))",
-                    "gap": "1rem",
-                    "paddingBottom": "1rem",
-                },
-            ),
-            dcc.Graph(
-                id="specular-fig",
-                figure=initial_figure,
-                style={"height": "78vh"},
-                config={"responsive": True},
-            ),
-            html.Pre(
-                id="specular-summary",
-                children=initial_summary,
-                style={
-                    "whiteSpace": "pre-wrap",
-                    "backgroundColor": "#f7fafc",
-                    "border": "1px solid #e2e8f0",
-                    "borderRadius": "10px",
-                    "padding": "0.85rem",
-                    "marginTop": "0.9rem",
-                    "fontFamily": "Consolas, Monaco, monospace",
-                    "fontSize": "0.92rem",
-                },
+                className="specular-main",
             ),
         ],
-        style={"padding": "1rem"},
+        className="specular-workspace",
     )
 
     @app.callback(
@@ -1497,22 +2213,25 @@ def build_specular_app(
 
     @app.callback(
         Output("specular-fig", "figure"),
+        Output("specular-companion-fig", "figure"),
         Output("specular-summary", "children"),
         Input({"type": "specular-slider", "name": ALL}, "value"),
         State({"type": "specular-slider", "name": ALL}, "id"),
         State("specular-fig", "relayoutData"),
+        State("specular-companion-fig", "relayoutData"),
     )
     def update_specular_figure(
         slider_values,
         slider_ids,
         relayout_data,
+        companion_relayout_data,
     ):  # pragma: no cover - UI callback
         value_by_name = {
             control_id["name"]: control_value
             for control_id, control_value in zip(slider_ids, slider_values, strict=True)
         }
         try:
-            beam_config, sample_config, detector_config = configs_from_values(
+            beam_config, sample_config, detector_config, diffraction_config = configs_from_values(
                 rays=value_by_name.get("rays"),
                 seed=value_by_name.get("seed"),
                 display_rays=value_by_name.get("display_rays"),
@@ -1539,18 +2258,32 @@ def build_specular_app(
                 pixel_v=value_by_name.get("pixel_v"),
                 i0=value_by_name.get("i0"),
                 j0=value_by_name.get("j0"),
+                h_index=value_by_name.get("H"),
+                k_index=value_by_name.get("K"),
+                l_index=value_by_name.get("L"),
+                sigma_deg=value_by_name.get("sigma_deg"),
+                mosaic_gamma_deg=value_by_name.get("mosaic_gamma_deg"),
+                eta=value_by_name.get("eta"),
                 default_beam=beam_defaults,
                 default_sample=sample_defaults,
                 default_detector=detector_defaults,
+                default_diffraction=diffraction_defaults,
             )
         except ValueError as exc:
-            return build_specular_error_figure(str(exc)), f"Error: {exc}"
+            message = f"Error: {exc}"
+            return (
+                build_specular_error_figure(str(exc)),
+                build_specular_companion_error_figure(str(exc)),
+                message,
+            )
 
-        return build_specular_outputs(
+        return build_specular_dashboard_outputs(
             beam_config,
             sample_config,
             detector_config,
+            diffraction_config,
             camera=extract_scene_camera(relayout_data),
+            companion_camera=extract_scene_camera(companion_relayout_data),
         )
 
     return app
@@ -1560,7 +2293,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
     parser = argparse.ArgumentParser(
-        description="Standalone beam/sample/detector specular reflection simulator"
+        description="Standalone beam/sample/detector specular diffraction simulator"
     )
     parser.add_argument("--rays", type=int, default=BeamConfig.ray_count, help="Number of incident rays")
     parser.add_argument("--seed", type=int, default=BeamConfig.seed, help="Random seed for ray sampling")
@@ -1603,6 +2336,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pixel-v", type=float, default=DetectorConfig.pixel_v, help="Detector pixel size along v")
     parser.add_argument("--i0", type=float, default=DetectorConfig.i0, help="Detector beam-center pixel i0")
     parser.add_argument("--j0", type=float, default=DetectorConfig.j0, help="Detector beam-center pixel j0")
+    parser.add_argument("--h-index", type=int, default=DiffractionConfig.H, help="Miller index H")
+    parser.add_argument("--k-index", type=int, default=DiffractionConfig.K, help="Miller index K")
+    parser.add_argument("--l-index", type=int, default=DiffractionConfig.L, help="Miller index L")
+    parser.add_argument("--sigma-deg", type=float, default=DiffractionConfig.sigma_deg, help="Gaussian mosaic width σ in degrees")
+    parser.add_argument(
+        "--mosaic-gamma-deg",
+        type=float,
+        default=DiffractionConfig.mosaic_gamma_deg,
+        help="Lorentzian mosaic width Γ in degrees",
+    )
+    parser.add_argument("--eta", type=float, default=DiffractionConfig.eta, help="Pseudo-Voigt mixing factor η")
     parser.add_argument(
         "--output-html",
         type=str,
@@ -1617,10 +2361,10 @@ def parse_args() -> argparse.Namespace:
 
 def configs_from_args(
     args: argparse.Namespace,
-) -> tuple[BeamConfig, SampleConfig, DetectorConfig]:
+) -> tuple[BeamConfig, SampleConfig, DetectorConfig, DiffractionConfig]:
     """Build strongly typed configs from CLI arguments."""
 
-    beam, sample, detector = configs_from_values(
+    beam, sample, detector, diffraction = configs_from_values(
         rays=args.rays,
         seed=args.seed,
         display_rays=args.display_rays,
@@ -1647,25 +2391,60 @@ def configs_from_args(
         pixel_v=args.pixel_v,
         i0=args.i0,
         j0=args.j0,
+        h_index=args.h_index,
+        k_index=args.k_index,
+        l_index=args.l_index,
+        sigma_deg=args.sigma_deg,
+        mosaic_gamma_deg=args.mosaic_gamma_deg,
+        eta=args.eta,
     )
-    return beam, sample, detector
+    return beam, sample, detector, diffraction
 
 
 def main() -> None:
     """Run the standalone specular simulation GUI."""
 
+    reporter = TerminalProgressReporter()
+    reporter.emit("Parsing CLI arguments")
     args = parse_args()
-    beam_config, sample_config, detector_config = configs_from_args(args)
-    figure, summary = build_specular_outputs(beam_config, sample_config, detector_config)
+    reporter.emit("Normalizing beam, sample, detector, and HKL inputs")
+    beam_config, sample_config, detector_config, diffraction_config = configs_from_args(args)
+    reporter.emit(
+        (
+            "Preparing initial diffraction trace for "
+            f"HKL=({diffraction_config.H}, {diffraction_config.K}, {diffraction_config.L})"
+        )
+    )
+    figure, companion_figure, summary = build_specular_dashboard_outputs(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        progress=reporter.emit,
+    )
     if args.output_html is not None:
+        reporter.emit(f"Exporting initial figure HTML to {args.output_html}")
         output_path = write_figure_html(figure, args.output_html)
-        print(f"Initial figure HTML exported to: {output_path}")
-    print(summary)
+        reporter.emit(f"Initial figure HTML exported to: {output_path}")
+    print(summary, flush=True)
 
-    app = build_specular_app(beam_config, sample_config, detector_config)
+    reporter.emit("Building Dash app layout")
+    app = build_specular_app(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        initial_figure=figure,
+        initial_companion_figure=companion_figure,
+        initial_summary=summary,
+    )
     url = f"http://{args.host}:{args.port}"
     if not args.no_browser:
+        reporter.emit(f"Opening browser at {url}")
         threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()
+    else:
+        reporter.emit(f"Browser launch disabled; Dash app available at {url}")
+    reporter.emit(f"Starting Dash server on {args.host}:{args.port}")
     app.run(debug=False, host=args.host, port=args.port)
 
 

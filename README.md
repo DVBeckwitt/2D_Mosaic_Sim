@@ -59,10 +59,12 @@ Run scripts from the project root:
 
 ```bash
 python mosaic_simulator.py                                          # unified GUI for the supported simulations
+python mosaic_simulator.py --mode specular-view                     # open the unified GUI directly in Specular Diffraction mode
 python single_crystal_powder_cylinder_viewer.py                # single-crystal / 3D powder / 2D powder / cylinder views
 python single_crystal_powder_cylinder_viewer.py --full-quality # higher quality render profile
 python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # launches the detector Dash UI with live HKL/mosaic controls
 python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # fibrous Bragg/Ewald/cylinder GUI with live HKL/mosaic controls
+python specular_reflection_sim.py                                  # standalone specular diffraction GUI with lab geometry plus reciprocal-space / integrated-response companion panels
 ```
 
 The unified GUI includes these switchable modes in one Dash app:
@@ -70,6 +72,14 @@ The unified GUI includes these switchable modes in one Dash app:
 - `Powder Views`
 - `Mosaic View`
 - `Ewald Cylinder`
+- `Specular Diffraction`
+
+### Specular Diffraction notes
+
+- Default specular HKL is `(1, 1, 1)`.
+- Default specular detector size is `1000 x 1000`.
+- The specular UI shows a lab-geometry figure together with a companion reciprocal-space and centered-integration figure.
+- In the lab geometry, outgoing diffraction rays are rendered with transparent red traces and outward arrowheads.
 
 Installed console entry points:
 

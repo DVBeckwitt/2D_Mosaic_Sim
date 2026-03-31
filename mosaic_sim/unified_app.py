@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from functools import lru_cache
 import math
+from pathlib import Path
 import threading
 import webbrowser
 from dataclasses import dataclass
@@ -17,10 +18,13 @@ from dash.exceptions import PreventUpdate
 from specular_reflection_sim import (
     BeamConfig as SpecularBeamConfig,
     CONTROL_SECTIONS as SPECULAR_CONTROL_SECTIONS,
+    DiffractionConfig as SpecularDiffractionConfig,
     DetectorConfig as SpecularDetectorConfig,
+    MathLabel as SpecularMathLabel,
     SampleConfig as SpecularSampleConfig,
+    build_specular_companion_error_figure,
+    build_specular_dashboard_outputs as build_specular_dashboard_views,
     build_specular_error_figure,
-    build_specular_outputs,
     configs_from_values as specular_configs_from_values,
 )
 
@@ -502,31 +506,14 @@ POWDER_QR_CLIENTSIDE_CALLBACK = """
 
             const updateFigure = (visibleArray) =>
                 Plotly.update(graph, {visible: visibleArray}, layoutUpdate)
-                    .then(() => {
-                        if (!camera) {
-                            return null;
-                        }
-                        return Plotly.relayout(graph, {"scene.camera": camera});
-                    })
                     .catch((error) => console.error(error));
 
             const relayoutFigure = () =>
                 Plotly.relayout(graph, layoutUpdate)
-                    .then(() => {
-                        if (!camera) {
-                            return null;
-                        }
-                        return Plotly.relayout(graph, {"scene.camera": camera});
-                    })
                     .catch((error) => console.error(error));
 
-            if (
-                arraysEqual(currentVis, oldSingleVis) ||
-                arraysEqual(currentVis, oldSphereVis) ||
-                arraysEqual(currentVis, oldRingVis) ||
-                arraysEqual(currentVis, oldCylinderVis)
-            ) {
-                updateFigure(targetVis);
+            if (arraysEqual(currentVis, targetVis)) {
+                relayoutFigure();
             } else {
                 updateFigure(targetVis);
             }
@@ -545,7 +532,7 @@ POWDER_QR_CLIENTSIDE_CALLBACK = """
 @dataclass(frozen=True)
 class ControlSpec:
     key: str
-    label: str
+    label: Any
     component: str
     default: Any
     step: float | int | None = None
@@ -639,6 +626,7 @@ def _specular_control_sections() -> tuple[tuple[str, tuple[ControlSpec, ...]], .
         "beam": SpecularBeamConfig(),
         "sample": SpecularSampleConfig(),
         "detector": SpecularDetectorConfig(),
+        "diffraction": SpecularDiffractionConfig(),
     }
     sections: list[tuple[str, tuple[ControlSpec, ...]]] = []
     for title, controls in SPECULAR_CONTROL_SECTIONS:
@@ -652,7 +640,7 @@ def _specular_control_sections() -> tuple[tuple[str, tuple[ControlSpec, ...]], .
                 min=control.min_value,
                 max=control.max_value,
                 input_step=control.step,
-                updatemode="drag",
+                updatemode=control.updatemode,
             )
             for control in controls
         )
@@ -688,6 +676,48 @@ def _merged_mode_state(mode: str, state: dict[str, Any] | None = None) -> dict[s
     if state:
         merged.update({key: value for key, value in state.items() if key in merged})
     return merged
+
+
+def _updated_mode_state(
+    mode_value: Any,
+    values: list[Any],
+    hybrid_values: list[Any],
+    control_ids: list[dict[str, Any]],
+    hybrid_ids: list[dict[str, Any]],
+    state_value: dict[str, Any] | None,
+    triggered_id: Any,
+) -> dict[str, dict[str, Any]] | None:
+    mode_key = _resolve_mode(mode_value)
+    current_state = dict(state_value or {})
+    previous_mode_state = _merged_mode_state(mode_key, current_state.get(mode_key))
+    mode_state = dict(previous_mode_state)
+
+    if isinstance(triggered_id, dict):
+        pairs: list[tuple[dict[str, Any], Any]]
+        if triggered_id.get("type") == "simulation-control":
+            pairs = list(zip(control_ids, values, strict=True))
+        elif triggered_id.get("type") == "simulation-hybrid-input":
+            pairs = list(zip(hybrid_ids, hybrid_values, strict=True))
+        else:
+            pairs = []
+        for control_id, value in pairs:
+            if control_id["key"] == triggered_id.get("key"):
+                mode_state[control_id["key"]] = value
+                break
+    else:
+        for control_id, value in zip(control_ids, values, strict=True):
+            mode_state[control_id["key"]] = value
+        for control_id, value in zip(hybrid_ids, hybrid_values, strict=True):
+            mode_state[control_id["key"]] = value
+
+    if mode_state == previous_mode_state:
+        return None
+
+    next_state = dict(current_state)
+    next_state[mode_key] = mode_state
+    if next_state == current_state:
+        return None
+    return next_state
 
 
 def _normalize_hkl_mosaic_values(values: dict[str, Any]) -> tuple[int, int, int, float, float, float]:
@@ -753,13 +783,14 @@ def _build_fibrous_adapter(values: dict[str, Any]) -> go.Figure:
     return build_cylinder_figure(*params)
 
 
-def _build_specular_adapter(
+def _build_specular_dashboard_adapter(
     values: dict[str, Any],
     *,
     camera: dict[str, Any] | None = None,
-) -> tuple[go.Figure, str]:
+    companion_camera: dict[str, Any] | None = None,
+) -> tuple[go.Figure, go.Figure, str]:
     try:
-        beam_config, sample_config, detector_config = specular_configs_from_values(
+        beam_config, sample_config, detector_config, diffraction_config = specular_configs_from_values(
             rays=values.get("rays"),
             seed=values.get("seed"),
             display_rays=values.get("display_rays"),
@@ -786,25 +817,44 @@ def _build_specular_adapter(
             pixel_v=values.get("pixel_v"),
             i0=values.get("i0"),
             j0=values.get("j0"),
+            h_index=values.get("H"),
+            k_index=values.get("K"),
+            l_index=values.get("L"),
+            sigma_deg=values.get("sigma_deg"),
+            mosaic_gamma_deg=values.get("mosaic_gamma_deg"),
+            eta=values.get("eta"),
             default_beam=SpecularBeamConfig(),
             default_sample=SpecularSampleConfig(),
             default_detector=SpecularDetectorConfig(),
+            default_diffraction=SpecularDiffractionConfig(),
         )
     except ValueError as exc:
         summary = f"Error: {exc}"
         figure = build_specular_error_figure(str(exc))
         figure.update_layout(meta={"simulation_summary": summary})
-        return figure, summary
+        companion_figure = build_specular_companion_error_figure(str(exc))
+        return figure, companion_figure, summary
 
-    figure, summary = build_specular_outputs(
+    figure, companion_figure, summary = build_specular_dashboard_views(
         beam_config,
         sample_config,
         detector_config,
+        diffraction_config,
         camera=camera,
+        companion_camera=companion_camera,
     )
     meta = dict(figure.layout.meta) if isinstance(figure.layout.meta, dict) else {}
     meta["simulation_summary"] = summary
     figure.update_layout(meta=meta)
+    return figure, companion_figure, summary
+
+
+def _build_specular_adapter(
+    values: dict[str, Any],
+    *,
+    camera: dict[str, Any] | None = None,
+) -> tuple[go.Figure, str]:
+    figure, _, summary = _build_specular_dashboard_adapter(values, camera=camera)
     return figure, summary
 
 
@@ -846,7 +896,6 @@ def _summary_style(mode: str, summary: str = "") -> dict[str, Any]:
         "border": "1px solid #e2e8f0",
         "borderRadius": "10px",
         "padding": "0.85rem",
-        "marginTop": "0.9rem",
         "fontFamily": "Consolas, Monaco, monospace",
         "fontSize": "0.92rem",
     }
@@ -855,18 +904,40 @@ def _summary_style(mode: str, summary: str = "") -> dict[str, Any]:
     return style
 
 
+def _specular_companion_style(mode: str) -> dict[str, Any]:
+    style = {"display": "grid", "gap": "0.75rem", "minHeight": "0"}
+    if mode != SPECULAR_MODE:
+        style["display"] = "none"
+    return style
+
+
+def _specular_companion_camera_key(mode: str) -> str:
+    return f"{mode}:companion"
+
+
+def _shell_class_names(mode: str) -> tuple[str, str]:
+    shell_class = "simulation-shell"
+    sidebar_class = "simulation-sidebar"
+    if mode == SPECULAR_MODE:
+        shell_class += " simulation-shell--specular"
+        sidebar_class += " simulation-sidebar--specular"
+    return shell_class, sidebar_class
+
+
 def _build_specular_control_sections(values: dict[str, Any]) -> list[html.Div]:
     sections: list[html.Div] = []
     for title, controls in _specular_control_sections():
         sections.append(
             html.Div(
                 [
-                    html.H3(title, style={"margin": "0", "fontSize": "1rem"}),
+                    html.H3(title, style={"margin": "0", "fontSize": "1rem"}, className="specular-section-title"),
                     html.Div(
                         [_build_control(control, values[control.key]) for control in controls],
                         style={"display": "grid", "gap": "0.9rem"},
+                        className="specular-section-grid",
                     ),
                 ],
+                className="specular-section-card",
                 style={
                     "display": "flex",
                     "flexDirection": "column",
@@ -981,6 +1052,29 @@ def _resolved_powder_selection_state(state: dict[str, Any] | None = None) -> dic
             catalog["cylinder_default"],
         ),
     }
+
+
+def _updated_powder_view(value: Any, current_value: Any) -> str | None:
+    resolved_current = _resolved_powder_view(current_value)
+    resolved_value = _resolved_powder_view(value if value is not None else current_value)
+    if resolved_value == resolved_current:
+        return None
+    return resolved_value
+
+
+def _updated_powder_selection_state(
+    values: list[Any],
+    control_ids: list[dict[str, Any]],
+    state_value: dict[str, Any] | None,
+) -> dict[str, list[int]] | None:
+    current_state = _resolved_powder_selection_state(state_value)
+    selection_state = dict(current_state)
+    for control_id, value in zip(control_ids, values, strict=True):
+        selection_state[control_id["key"]] = value
+    resolved_state = _resolved_powder_selection_state(selection_state)
+    if resolved_state == current_state:
+        return None
+    return resolved_state
 
 
 def _build_powder_view_control(active_view: Any = None) -> html.Div:
@@ -1172,11 +1266,11 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
     ),
     SPECULAR_MODE: SimulationSpec(
         key=SPECULAR_MODE,
-        label="Specular Reflection",
+        label="Specular Diffraction",
         description=(
-            "Beam -> sample -> detector specular geometry with live beam, sample, "
-            "detector, and detector-pixel controls. The summary panel below the figure "
-            "tracks hit counts and nominal 2θ."
+            "Beam -> sample -> detector diffraction geometry with live beam, sample, "
+            "detector, and HKL/mosaic controls. The summary panel below the figure "
+            "tracks HKL, |G|, and diffraction hit counts."
         ),
         controls=_specular_controls(),
         build_figure=lambda values: _build_specular_adapter(values)[0],
@@ -1186,6 +1280,17 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
 
 def _build_control(control: ControlSpec, value: Any) -> html.Div:
     control_id = {"type": "simulation-control", "key": control.key}
+    label_content: Any
+    if isinstance(control.label, SpecularMathLabel):
+        label_content = html.Span(
+            [
+                control.label.symbol,
+                html.Sub(control.label.subscript) if control.label.subscript is not None else None,
+                control.label.suffix,
+            ]
+        )
+    else:
+        label_content = control.label
 
     if control.component == "dropdown":
         component = dcc.Dropdown(
@@ -1212,7 +1317,10 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
     elif control.component == "slider_input":
         slider_id = {"type": "simulation-hybrid-slider", "key": control.key}
         input_id = {"type": "simulation-hybrid-input", "key": control.key}
-        midpoint = 0.5 * (float(control.min) + float(control.max))
+        marks = {
+            float(control.min): f"{control.min:g}",
+            float(control.max): f"{control.max:g}",
+        }
         component = html.Div(
             [
                 html.Div(
@@ -1223,11 +1331,7 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
                         step=control.step,
                         value=value,
                         updatemode=control.updatemode or "mouseup",
-                        marks={
-                            float(control.min): f"{control.min:g}",
-                            midpoint: f"{midpoint:g}",
-                            float(control.max): f"{control.max:g}",
-                        },
+                        marks=marks,
                         tooltip={"placement": "bottom", "always_visible": False},
                     ),
                     style={"flex": "1 1 auto"},
@@ -1240,9 +1344,10 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
                     min=control.min,
                     max=control.max,
                     debounce=True,
-                    style={"width": "88px"},
+                    style={"width": "88px", "minWidth": "88px"},
                 ),
             ],
+            className="simulation-control-pair",
             style={
                 "display": "flex",
                 "alignItems": "center",
@@ -1277,9 +1382,10 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
 
     return html.Div(
         [
-            html.Label(control.label, style={"fontWeight": "600"}),
+            html.Label(label_content, style={"fontWeight": "600"}),
             component,
         ],
+        className="simulation-control",
         style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
     )
 
@@ -1317,9 +1423,17 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
     powder_view_state = DEFAULT_POWDER_VIEW
     initial_values = _merged_mode_state(mode, state.get(mode))
     initial_spec = SIMULATION_SPECS[mode]
-    initial_figure, initial_summary = _build_simulation_outputs(mode, initial_values)
+    if mode == SPECULAR_MODE:
+        initial_figure, initial_companion_figure, initial_summary = _build_specular_dashboard_adapter(
+            initial_values
+        )
+    else:
+        initial_figure, initial_summary = _build_simulation_outputs(mode, initial_values)
+        initial_companion_figure = go.Figure()
+    shell_class_name, sidebar_class_name = _shell_class_names(mode)
 
-    app = Dash(__name__, suppress_callback_exceptions=True)
+    assets_folder = Path(__file__).resolve().parent.parent / "assets"
+    app = Dash(__name__, suppress_callback_exceptions=True, assets_folder=str(assets_folder))
     app.title = "Unified Mosaic Simulator"
     app.layout = html.Div(
         [
@@ -1334,7 +1448,7 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                         [
                             html.H1("Unified Mosaic Simulator", style={"margin": "0"}),
                             html.Div(
-                                "One GUI for Powder Views, Mosaic View, Ewald Cylinder, and Specular Reflection, backed by the same package-level builders.",
+                                "One GUI for Powder Views, Mosaic View, Ewald Cylinder, and Specular Diffraction, backed by the same package-level builders.",
                                 style={"color": "#4b5563", "lineHeight": "1.5"},
                             ),
                             html.Div(
@@ -1357,6 +1471,12 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                                 id="simulation-description",
                                 style={"color": "#374151", "lineHeight": "1.5"},
                             ),
+                            html.Pre(
+                                id="simulation-summary",
+                                children=initial_summary,
+                                className="specular-summary-card",
+                                style=_summary_style(mode, initial_summary),
+                            ),
                             html.Div(
                                 _build_controls_for_mode(
                                     mode,
@@ -1365,13 +1485,13 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                                     powder_view_state,
                                 ),
                                 id="simulation-controls",
+                                className="simulation-controls",
                                 style={"display": "grid", "gap": "0.9rem"},
                             ),
                         ],
                         id="simulation-sidebar",
+                        className=sidebar_class_name,
                         style={
-                            "width": "320px",
-                            "minWidth": "320px",
                             "display": "flex",
                             "flexDirection": "column",
                             "gap": "1rem",
@@ -1413,28 +1533,57 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                                     "gap": "1rem",
                                 },
                             ),
-                            dcc.Graph(
-                                id="simulation-figure",
-                                figure=initial_figure,
-                                style={"height": "90vh"},
-                                config={"responsive": True, "displaylogo": False},
+                            html.Div(
+                                [
+                                    dcc.Graph(
+                                        id="simulation-figure",
+                                        figure=initial_figure,
+                                        style={"height": "100%", "minHeight": "0"},
+                                        config={"responsive": True, "displaylogo": False},
+                                    ),
+                                ],
+                                className="simulation-graph-frame simulation-graph-frame--primary",
                             ),
-                            html.Pre(
-                                id="simulation-summary",
-                                children=initial_summary,
-                                style=_summary_style(mode, initial_summary),
+                            html.Section(
+                                [
+                                    html.Div(
+                                        [
+                                            html.H3(
+                                                "Reciprocal Space and Integrated Response",
+                                                style={"margin": "0"},
+                                            ),
+                                            html.Div(
+                                                "The synchronized mosaic reciprocal-space and centered-integration panels for the current specular HKL and θᵢ.",
+                                                style={"color": "#475569", "lineHeight": "1.5"},
+                                            ),
+                                        ],
+                                        className="simulation-visual-header",
+                                        style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
+                                    ),
+                                    html.Div(
+                                        [
+                                            dcc.Graph(
+                                                id="simulation-specular-companion-figure",
+                                                figure=initial_companion_figure,
+                                                style={"height": "100%", "minHeight": "0"},
+                                                config={"responsive": True, "displaylogo": False},
+                                            ),
+                                        ],
+                                        className="simulation-graph-frame simulation-graph-frame--secondary",
+                                    ),
+                                ],
+                                id="simulation-specular-companion-card",
+                                className="simulation-visual-card",
+                                style=_specular_companion_style(mode),
                             ),
                         ],
                         id="simulation-main",
-                        style={"flex": "1 1 auto", "padding": "1rem"},
+                        className="simulation-main",
+                        style={"flex": "1 1 auto", "padding": "1rem", "minWidth": "0"},
                     ),
                 ],
                 id="simulation-shell",
-                style={
-                    "display": "flex",
-                    "minHeight": "100vh",
-                    "background": "linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)",
-                },
+                className=shell_class_name,
             ),
         ]
     )
@@ -1457,29 +1606,18 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
         hybrid_ids,
         state_value,
     ):  # pragma: no cover - UI callback
-        mode_key = _resolve_mode(mode_value)
-        merged_state = dict(state_value or {})
-        mode_state = _merged_mode_state(mode_key, merged_state.get(mode_key))
-        triggered_id = ctx.triggered_id
-        if isinstance(triggered_id, dict):
-            pairs: list[tuple[dict[str, Any], Any]]
-            if triggered_id.get("type") == "simulation-control":
-                pairs = list(zip(control_ids, values, strict=True))
-            elif triggered_id.get("type") == "simulation-hybrid-input":
-                pairs = list(zip(hybrid_ids, hybrid_values, strict=True))
-            else:
-                pairs = []
-            for control_id, value in pairs:
-                if control_id["key"] == triggered_id["key"]:
-                    mode_state[control_id["key"]] = value
-                    break
-        else:
-            for control_id, value in zip(control_ids, values, strict=True):
-                mode_state[control_id["key"]] = value
-            for control_id, value in zip(hybrid_ids, hybrid_values, strict=True):
-                mode_state[control_id["key"]] = value
-        merged_state[mode_key] = mode_state
-        return merged_state
+        updated_state = _updated_mode_state(
+            mode_value,
+            values,
+            hybrid_values,
+            control_ids,
+            hybrid_ids,
+            state_value,
+            ctx.triggered_id,
+        )
+        if updated_state is None:
+            raise PreventUpdate
+        return updated_state
 
     @app.callback(
         Output({"type": "simulation-hybrid-slider", "key": MATCH}, "value"),
@@ -1512,7 +1650,10 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
         prevent_initial_call=True,
     )
     def cache_powder_view_value(value, current_value):  # pragma: no cover - UI callback
-        return _resolved_powder_view(value if value is not None else current_value)
+        updated_view = _updated_powder_view(value, current_value)
+        if updated_view is None:
+            raise PreventUpdate
+        return updated_view
 
     @app.callback(
         Output("powder-selection-state", "data"),
@@ -1522,10 +1663,10 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
         prevent_initial_call=True,
     )
     def cache_powder_selection_values(values, control_ids, state_value):  # pragma: no cover - UI callback
-        selection_state = dict(_resolved_powder_selection_state(state_value))
-        for control_id, value in zip(control_ids, values, strict=True):
-            selection_state[control_id["key"]] = value
-        return _resolved_powder_selection_state(selection_state)
+        updated_state = _updated_powder_selection_state(values, control_ids, state_value)
+        if updated_state is None:
+            raise PreventUpdate
+        return updated_state
 
     @app.callback(
         Output("simulation-description", "children"),
@@ -1534,6 +1675,7 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
         Input("powder-view-state", "data"),
         State("simulation-state", "data"),
         State("powder-selection-state", "data"),
+        prevent_initial_call=True,
     )
     def render_mode_controls(
         mode_value,
@@ -1552,46 +1694,102 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
         )
 
     @app.callback(
+        Output("simulation-shell", "className"),
+        Output("simulation-sidebar", "className"),
+        Input("simulation-mode", "value"),
+        prevent_initial_call=True,
+    )
+    def render_shell_classes(mode_value):  # pragma: no cover - UI callback
+        return _shell_class_names(_resolve_mode(mode_value))
+
+    @app.callback(
+        Output("simulation-specular-companion-card", "style"),
+        Input("simulation-mode", "value"),
+        prevent_initial_call=True,
+    )
+    def render_specular_companion_card(mode_value):  # pragma: no cover - UI callback
+        return _specular_companion_style(_resolve_mode(mode_value))
+
+    @app.callback(
         Output("simulation-camera-state", "data"),
         Input("simulation-figure", "relayoutData"),
+        Input("simulation-specular-companion-figure", "relayoutData"),
         State("simulation-mode", "value"),
         State("simulation-camera-state", "data"),
         prevent_initial_call=True,
     )
-    def cache_camera_state(relayout_data, mode_value, camera_state_value):  # pragma: no cover - UI callback
+    def cache_camera_state(
+        relayout_data,
+        companion_relayout_data,
+        mode_value,
+        camera_state_value,
+    ):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
-        if mode_key not in SCENE_CAMERA_MODES:
-            return camera_state_value or {}
-
-        camera = extract_scene_camera(relayout_data)
-        if not camera:
-            return camera_state_value or {}
-
         camera_state = dict(camera_state_value or {})
-        camera_state[mode_key] = camera
-        return camera_state
+        updated_state = dict(camera_state)
+        changed = False
+
+        if mode_key in SCENE_CAMERA_MODES:
+            camera = extract_scene_camera(relayout_data)
+            if camera and camera_state.get(mode_key) != camera:
+                updated_state[mode_key] = camera
+                changed = True
+
+        if mode_key == SPECULAR_MODE:
+            companion_key = _specular_companion_camera_key(mode_key)
+            companion_camera = extract_scene_camera(companion_relayout_data)
+            if companion_camera and camera_state.get(companion_key) != companion_camera:
+                updated_state[companion_key] = companion_camera
+                changed = True
+
+        if not changed:
+            raise PreventUpdate
+        return updated_state
 
     @app.callback(
         Output("simulation-figure", "figure"),
+        Output("simulation-specular-companion-figure", "figure"),
         Input("simulation-mode", "value"),
         Input("simulation-state", "data"),
         State("simulation-camera-state", "data"),
         State("simulation-figure", "relayoutData"),
+        State("simulation-specular-companion-figure", "relayoutData"),
+        prevent_initial_call=True,
     )
-    def render_figure(mode_value, state_value, camera_state_value, relayout_data):  # pragma: no cover - UI callback
+    def render_figure(
+        mode_value,
+        state_value,
+        camera_state_value,
+        relayout_data,
+        companion_relayout_data,
+    ):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
         values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
+        camera_state = dict(camera_state_value or {})
         camera = None
         if mode_key in SCENE_CAMERA_MODES:
-            camera_state = dict(camera_state_value or {})
             camera = camera_state.get(mode_key) or extract_scene_camera(relayout_data)
-        return _build_simulation_outputs(mode_key, values, camera=camera)[0]
+
+        if mode_key == SPECULAR_MODE:
+            companion_camera = (
+                camera_state.get(_specular_companion_camera_key(mode_key))
+                or extract_scene_camera(companion_relayout_data)
+            )
+            figure, companion_figure, _ = _build_specular_dashboard_adapter(
+                values,
+                camera=camera,
+                companion_camera=companion_camera,
+            )
+            return figure, companion_figure
+
+        return _build_simulation_outputs(mode_key, values, camera=camera)[0], go.Figure()
 
     @app.callback(
         Output("simulation-summary", "children"),
         Output("simulation-summary", "style"),
         Input("simulation-mode", "value"),
         Input("simulation-figure", "figure"),
+        prevent_initial_call=True,
     )
     def render_summary(mode_value, figure_value):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
@@ -1652,18 +1850,29 @@ def parse_args() -> argparse.Namespace:
 def main(
     mode: str | None = None,
     *,
-    host: str = DEFAULT_HOST,
-    port: int = DEFAULT_PORT,
-    open_browser: bool = True,
+    host: str | None = None,
+    port: int | None = None,
+    open_browser: bool | None = None,
 ) -> None:
     """Launch the unified simulator app."""
 
-    resolved_mode = _resolve_mode(mode)
+    if mode is None and host is None and port is None and open_browser is None:
+        args = parse_args()
+        resolved_mode = _resolve_mode(args.mode)
+        resolved_host = str(args.host)
+        resolved_port = int(args.port)
+        resolved_open_browser = not args.no_browser
+    else:
+        resolved_mode = _resolve_mode(mode)
+        resolved_host = DEFAULT_HOST if host is None else str(host)
+        resolved_port = DEFAULT_PORT if port is None else int(port)
+        resolved_open_browser = True if open_browser is None else bool(open_browser)
+
     app = build_unified_app(initial_mode=resolved_mode)
-    url = f"http://{host}:{port}"
-    if open_browser:
+    url = f"http://{resolved_host}:{resolved_port}"
+    if resolved_open_browser:
         threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()
-    app.run(debug=False, host=host, port=port)
+    app.run(debug=False, host=resolved_host, port=resolved_port)
 
 
 if __name__ == "__main__":
