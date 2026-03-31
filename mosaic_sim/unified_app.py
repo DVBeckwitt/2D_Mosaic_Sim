@@ -22,10 +22,21 @@ from specular_reflection_sim import (
     DetectorConfig as SpecularDetectorConfig,
     MathLabel as SpecularMathLabel,
     SampleConfig as SpecularSampleConfig,
+    SPECULAR_COMPANION_CONTROL_NAMES,
+    SPECULAR_COMPANION_SIGNATURE_META,
+    SPECULAR_CONTROL_NAMES,
+    SPECULAR_MAIN_SIGNATURE_META,
     build_specular_companion_error_figure,
+    build_specular_companion_figure,
     build_specular_dashboard_outputs as build_specular_dashboard_views,
     build_specular_error_figure,
+    build_specular_outputs,
+    build_specular_summary_output,
     configs_from_values as specular_configs_from_values,
+    extract_figure_meta_value,
+    extract_scene_camera_from_figure_value,
+    set_figure_meta_value,
+    specular_signature_from_values,
 )
 
 from .cylinder import build_cylinder_figure, normalize_cylinder_params
@@ -783,6 +794,49 @@ def _build_fibrous_adapter(values: dict[str, Any]) -> go.Figure:
     return build_cylinder_figure(*params)
 
 
+def _resolve_specular_configs(
+    values: dict[str, Any],
+) -> tuple[SpecularBeamConfig, SpecularSampleConfig, SpecularDetectorConfig, SpecularDiffractionConfig]:
+    return specular_configs_from_values(
+        rays=values.get("rays"),
+        seed=values.get("seed"),
+        display_rays=values.get("display_rays"),
+        source_y=values.get("source_y"),
+        beam_width_x=values.get("beam_width_x"),
+        beam_width_z=values.get("beam_width_z"),
+        divergence_x=values.get("divergence_x"),
+        divergence_z=values.get("divergence_z"),
+        z_beam=values.get("z_beam"),
+        sample_width=values.get("sample_width"),
+        sample_height=values.get("sample_height"),
+        theta_i=values.get("theta_i"),
+        delta=values.get("delta"),
+        alpha=values.get("alpha"),
+        psi=values.get("psi"),
+        z_sample=values.get("z_sample"),
+        distance=values.get("distance"),
+        detector_width=values.get("detector_width"),
+        detector_height=values.get("detector_height"),
+        beta=values.get("beta"),
+        gamma=values.get("gamma"),
+        chi=values.get("chi"),
+        pixel_u=values.get("pixel_u"),
+        pixel_v=values.get("pixel_v"),
+        i0=values.get("i0"),
+        j0=values.get("j0"),
+        h_index=values.get("H"),
+        k_index=values.get("K"),
+        l_index=values.get("L"),
+        sigma_deg=values.get("sigma_deg"),
+        mosaic_gamma_deg=values.get("mosaic_gamma_deg"),
+        eta=values.get("eta"),
+        default_beam=SpecularBeamConfig(),
+        default_sample=SpecularSampleConfig(),
+        default_detector=SpecularDetectorConfig(),
+        default_diffraction=SpecularDiffractionConfig(),
+    )
+
+
 def _build_specular_dashboard_adapter(
     values: dict[str, Any],
     *,
@@ -790,44 +844,7 @@ def _build_specular_dashboard_adapter(
     companion_camera: dict[str, Any] | None = None,
 ) -> tuple[go.Figure, go.Figure, str]:
     try:
-        beam_config, sample_config, detector_config, diffraction_config = specular_configs_from_values(
-            rays=values.get("rays"),
-            seed=values.get("seed"),
-            display_rays=values.get("display_rays"),
-            source_y=values.get("source_y"),
-            beam_width_x=values.get("beam_width_x"),
-            beam_width_z=values.get("beam_width_z"),
-            divergence_x=values.get("divergence_x"),
-            divergence_z=values.get("divergence_z"),
-            z_beam=values.get("z_beam"),
-            sample_width=values.get("sample_width"),
-            sample_height=values.get("sample_height"),
-            theta_i=values.get("theta_i"),
-            delta=values.get("delta"),
-            alpha=values.get("alpha"),
-            psi=values.get("psi"),
-            z_sample=values.get("z_sample"),
-            distance=values.get("distance"),
-            detector_width=values.get("detector_width"),
-            detector_height=values.get("detector_height"),
-            beta=values.get("beta"),
-            gamma=values.get("gamma"),
-            chi=values.get("chi"),
-            pixel_u=values.get("pixel_u"),
-            pixel_v=values.get("pixel_v"),
-            i0=values.get("i0"),
-            j0=values.get("j0"),
-            h_index=values.get("H"),
-            k_index=values.get("K"),
-            l_index=values.get("L"),
-            sigma_deg=values.get("sigma_deg"),
-            mosaic_gamma_deg=values.get("mosaic_gamma_deg"),
-            eta=values.get("eta"),
-            default_beam=SpecularBeamConfig(),
-            default_sample=SpecularSampleConfig(),
-            default_detector=SpecularDetectorConfig(),
-            default_diffraction=SpecularDiffractionConfig(),
-        )
+        beam_config, sample_config, detector_config, diffraction_config = _resolve_specular_configs(values)
     except ValueError as exc:
         summary = f"Error: {exc}"
         figure = build_specular_error_figure(str(exc))
@@ -849,13 +866,57 @@ def _build_specular_dashboard_adapter(
     return figure, companion_figure, summary
 
 
-def _build_specular_adapter(
+def _build_specular_main_adapter(
     values: dict[str, Any],
     *,
     camera: dict[str, Any] | None = None,
 ) -> tuple[go.Figure, str]:
-    figure, _, summary = _build_specular_dashboard_adapter(values, camera=camera)
+    try:
+        beam_config, sample_config, detector_config, diffraction_config = _resolve_specular_configs(values)
+    except ValueError as exc:
+        summary = f"Error: {exc}"
+        figure = build_specular_error_figure(str(exc))
+        figure.update_layout(meta={"simulation_summary": summary})
+        return figure, summary
+
+    figure, summary = build_specular_outputs(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        camera=camera,
+    )
+    figure = set_figure_meta_value(figure, "simulation_summary", summary)
     return figure, summary
+
+
+def _build_specular_companion_adapter(
+    values: dict[str, Any],
+    *,
+    camera: dict[str, Any] | None = None,
+) -> go.Figure:
+    try:
+        _, sample_config, _, diffraction_config = _resolve_specular_configs(values)
+    except ValueError as exc:
+        return build_specular_companion_error_figure(str(exc))
+    return build_specular_companion_figure(
+        sample_config,
+        diffraction_config,
+        camera=camera,
+    )
+
+
+def _build_specular_summary_adapter(values: dict[str, Any]) -> str:
+    try:
+        beam_config, sample_config, detector_config, diffraction_config = _resolve_specular_configs(values)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    return build_specular_summary_output(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+    )
 
 
 def _build_simulation_outputs(
@@ -865,28 +926,13 @@ def _build_simulation_outputs(
     camera: dict[str, Any] | None = None,
 ) -> tuple[go.Figure, str]:
     if mode == SPECULAR_MODE:
-        return _build_specular_adapter(values, camera=camera)
+        return _build_specular_main_adapter(values, camera=camera)
 
     spec = SIMULATION_SPECS[mode]
     figure = spec.build_figure(values)
     if camera and mode in SCENE_CAMERA_MODES:
         figure.update_layout(scene_camera=camera)
     return figure, ""
-
-
-def _extract_summary_from_figure_value(figure_value: Any) -> str:
-    if isinstance(figure_value, go.Figure):
-        meta = figure_value.layout.meta
-    elif isinstance(figure_value, dict):
-        meta = (figure_value.get("layout") or {}).get("meta")
-    else:
-        meta = None
-
-    if not isinstance(meta, dict):
-        return ""
-
-    summary = meta.get("simulation_summary")
-    return summary if isinstance(summary, str) else ""
 
 
 def _summary_style(mode: str, summary: str = "") -> dict[str, Any]:
@@ -1430,6 +1476,18 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
     else:
         initial_figure, initial_summary = _build_simulation_outputs(mode, initial_values)
         initial_companion_figure = go.Figure()
+    if mode == SPECULAR_MODE:
+        initial_figure = set_figure_meta_value(
+            initial_figure,
+            SPECULAR_MAIN_SIGNATURE_META,
+            specular_signature_from_values(initial_values, SPECULAR_CONTROL_NAMES),
+        )
+        initial_figure = set_figure_meta_value(initial_figure, "simulation_summary", initial_summary)
+        initial_companion_figure = set_figure_meta_value(
+            initial_companion_figure,
+            SPECULAR_COMPANION_SIGNATURE_META,
+            specular_signature_from_values(initial_values, SPECULAR_COMPANION_CONTROL_NAMES),
+        )
     shell_class_name, sidebar_class_name = _shell_class_names(mode)
 
     assets_folder = Path(__file__).resolve().parent.parent / "assets"
@@ -1748,20 +1806,19 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
 
     @app.callback(
         Output("simulation-figure", "figure"),
-        Output("simulation-specular-companion-figure", "figure"),
         Input("simulation-mode", "value"),
         Input("simulation-state", "data"),
         State("simulation-camera-state", "data"),
         State("simulation-figure", "relayoutData"),
-        State("simulation-specular-companion-figure", "relayoutData"),
+        State("simulation-figure", "figure"),
         prevent_initial_call=True,
     )
-    def render_figure(
+    def render_main_figure(
         mode_value,
         state_value,
         camera_state_value,
         relayout_data,
-        companion_relayout_data,
+        current_figure,
     ):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
         values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
@@ -1771,29 +1828,82 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
             camera = camera_state.get(mode_key) or extract_scene_camera(relayout_data)
 
         if mode_key == SPECULAR_MODE:
-            companion_camera = (
-                camera_state.get(_specular_companion_camera_key(mode_key))
-                or extract_scene_camera(companion_relayout_data)
-            )
-            figure, companion_figure, _ = _build_specular_dashboard_adapter(
+            signature = specular_signature_from_values(values, SPECULAR_CONTROL_NAMES)
+            if (
+                extract_figure_meta_value(current_figure, SPECULAR_MAIN_SIGNATURE_META) == signature
+                and extract_scene_camera_from_figure_value(current_figure) == camera
+            ):
+                raise PreventUpdate
+            figure, summary = _build_specular_main_adapter(
                 values,
                 camera=camera,
-                companion_camera=companion_camera,
             )
-            return figure, companion_figure
+            figure = set_figure_meta_value(
+                figure,
+                SPECULAR_MAIN_SIGNATURE_META,
+                signature,
+            )
+            return set_figure_meta_value(figure, "simulation_summary", summary)
 
-        return _build_simulation_outputs(mode_key, values, camera=camera)[0], go.Figure()
+        return _build_simulation_outputs(mode_key, values, camera=camera)[0]
+
+    @app.callback(
+        Output("simulation-specular-companion-figure", "figure"),
+        Input("simulation-mode", "value"),
+        Input("simulation-state", "data"),
+        State("simulation-camera-state", "data"),
+        State("simulation-specular-companion-figure", "relayoutData"),
+        State("simulation-specular-companion-figure", "figure"),
+        prevent_initial_call=True,
+    )
+    def render_specular_companion_figure(
+        mode_value,
+        state_value,
+        camera_state_value,
+        companion_relayout_data,
+        current_figure,
+    ):  # pragma: no cover - UI callback
+        mode_key = _resolve_mode(mode_value)
+        if mode_key != SPECULAR_MODE:
+            return go.Figure()
+
+        values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
+        signature = specular_signature_from_values(values, SPECULAR_COMPANION_CONTROL_NAMES)
+        camera_state = dict(camera_state_value or {})
+        companion_camera = (
+            camera_state.get(_specular_companion_camera_key(mode_key))
+            or extract_scene_camera(companion_relayout_data)
+        )
+        if (
+            extract_figure_meta_value(current_figure, SPECULAR_COMPANION_SIGNATURE_META) == signature
+            and extract_scene_camera_from_figure_value(current_figure) == companion_camera
+        ):
+            raise PreventUpdate
+
+        figure = _build_specular_companion_adapter(values, camera=companion_camera)
+        return set_figure_meta_value(
+            figure,
+            SPECULAR_COMPANION_SIGNATURE_META,
+            signature,
+        )
 
     @app.callback(
         Output("simulation-summary", "children"),
         Output("simulation-summary", "style"),
         Input("simulation-mode", "value"),
-        Input("simulation-figure", "figure"),
+        Input("simulation-state", "data"),
+        State("simulation-summary", "children"),
         prevent_initial_call=True,
     )
-    def render_summary(mode_value, figure_value):  # pragma: no cover - UI callback
+    def render_summary(mode_value, state_value, current_summary):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
-        summary = _extract_summary_from_figure_value(figure_value) if mode_key == SPECULAR_MODE else ""
+        if mode_key != SPECULAR_MODE:
+            return "", _summary_style(mode_key, "")
+
+        values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
+        summary = _build_specular_summary_adapter(values)
+        if current_summary == summary:
+            raise PreventUpdate
         return summary, _summary_style(mode_key, summary)
 
     app.clientside_callback(

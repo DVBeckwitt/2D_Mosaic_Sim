@@ -7,6 +7,8 @@ integration profile corresponding to the currently selected rocking angle.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+from functools import lru_cache
 import math
 import threading
 import webbrowser
@@ -15,7 +17,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .common import build_error_figure, normalize_peak_params
+from .common import build_error_figure, compact_figure_numeric_payload, normalize_peak_params
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import sphere, rot_x, intersection_circle
 from .intensity import mosaic_intensity
@@ -45,6 +47,55 @@ K_VECTOR_CONE_SIZE = 0.28
 K_VECTOR_LABEL_SCALE = 1.1
 K_VECTOR_LABEL_SIZE = 24
 THETA_LABEL_SIZE = 24
+
+
+@dataclass(frozen=True)
+class DetectorStaticContext:
+    """Cached diffraction state shared across detector companion renders."""
+
+    H: int
+    K: int
+    L: int
+    sigma: float
+    Gamma: float
+    eta: float
+    title: str
+    bragg_x: np.ndarray
+    bragg_y: np.ndarray
+    bragg_z: np.ndarray
+    bragg_surface_intensity: np.ndarray
+    ewald_base_x: np.ndarray
+    ewald_base_y: np.ndarray
+    ewald_base_z: np.ndarray
+    ring_x_full: np.ndarray
+    ring_y_full: np.ndarray
+    ring_z_full: np.ndarray
+    ring_phi: np.ndarray
+    centered_log_range: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class DetectorThetaState:
+    """Detector traces for one rocking angle."""
+
+    theta_i: float
+    Ew_x: np.ndarray
+    Ew_y: np.ndarray
+    Ew_z: np.ndarray
+    ring_x: np.ndarray
+    ring_y: np.ndarray
+    ring_z: np.ndarray
+    detector_x: np.ndarray
+    detector_z: np.ndarray
+    detector_intensity: np.ndarray
+    k_head: np.ndarray
+    arc_x: np.ndarray
+    arc_y: np.ndarray
+    arc_z: np.ndarray
+    theta_label_y: np.ndarray
+    theta_label_z: np.ndarray
+    dphi: np.ndarray
+    centered_intensity: np.ndarray
 
 
 def _resolve_Gamma(
@@ -154,6 +205,345 @@ def _center_ring_profile(phi: np.ndarray, intensity: np.ndarray) -> tuple[np.nda
     dphi = (phi - phi_peak + math.pi) % (2.0 * math.pi) - math.pi
     order = np.argsort(dphi)
     return dphi[order], intensity[order]
+
+
+def _freeze_array(array: np.ndarray) -> np.ndarray:
+    frozen = np.asarray(array, dtype=float).copy()
+    frozen.setflags(write=False)
+    return frozen
+
+
+@lru_cache(maxsize=32)
+def _cached_detector_static_context(
+    H: int,
+    K: int,
+    L: int,
+    sigma: float,
+    Gamma: float,
+    eta: float,
+) -> DetectorStaticContext:
+    d_hkl = d_hex(H, K, L, a_hex, c_hex)
+    g_mag = 2.0 * math.pi / d_hkl
+
+    phi, theta = np.meshgrid(
+        np.linspace(0.0, math.pi, 100),
+        np.linspace(0.0, 2.0 * math.pi, 200),
+    )
+    ewald_base_x, ewald_base_y, ewald_base_z = sphere(K_MAG, phi, theta, (0.0, K_MAG, 0.0))
+    bragg_x, bragg_y, bragg_z = sphere(g_mag, phi, theta)
+    bragg_surface_intensity = mosaic_intensity(bragg_x, bragg_y, bragg_z, H, K, L, sigma, Gamma, eta)
+
+    ring_x_full, ring_y_full, ring_z_full = intersection_circle(g_mag, K_MAG, K_MAG)
+    ring_phi = np.linspace(0.0, 2.0 * math.pi, max(ring_x_full.size - 1, 1), endpoint=False)
+
+    centered_positive_min = 1.0
+    theta_all = np.linspace(np.deg2rad(THETA_MIN_DEG), np.deg2rad(THETA_MAX_DEG), 60)
+    for theta_i in theta_all:
+        rx_full, ry_full, rz_full = rot_x(ring_x_full, ring_y_full, ring_z_full, theta_i)
+        rx = rx_full[:-1]
+        ry = ry_full[:-1]
+        rz = rz_full[:-1]
+        if rx.size == 0:
+            continue
+        ring_intensity = mosaic_intensity(rx, ry, rz, H, K, L, sigma, Gamma, eta)
+        positive = ring_intensity[ring_intensity > 0.0]
+        if positive.size:
+            centered_positive_min = min(centered_positive_min, float(np.min(positive)))
+
+    centered_positive_min = max(centered_positive_min, 1e-12)
+    centered_log_range = (math.log10(centered_positive_min), 0.0)
+    return DetectorStaticContext(
+        H=H,
+        K=K,
+        L=L,
+        sigma=sigma,
+        Gamma=Gamma,
+        eta=eta,
+        title=_detector_title(H, K, L, sigma, Gamma, eta),
+        bragg_x=_freeze_array(bragg_x),
+        bragg_y=_freeze_array(bragg_y),
+        bragg_z=_freeze_array(bragg_z),
+        bragg_surface_intensity=_freeze_array(bragg_surface_intensity),
+        ewald_base_x=_freeze_array(ewald_base_x),
+        ewald_base_y=_freeze_array(ewald_base_y),
+        ewald_base_z=_freeze_array(ewald_base_z),
+        ring_x_full=_freeze_array(ring_x_full),
+        ring_y_full=_freeze_array(ring_y_full),
+        ring_z_full=_freeze_array(ring_z_full),
+        ring_phi=_freeze_array(ring_phi),
+        centered_log_range=centered_log_range,
+    )
+
+
+def _detector_state_for_theta(
+    static_context: DetectorStaticContext,
+    theta_i: float,
+) -> DetectorThetaState:
+    ewald_x, ewald_y, ewald_z = rot_x(
+        static_context.ewald_base_x,
+        static_context.ewald_base_y,
+        static_context.ewald_base_z,
+        theta_i,
+    )
+    ring_x_full, ring_y_full, ring_z_full = rot_x(
+        static_context.ring_x_full,
+        static_context.ring_y_full,
+        static_context.ring_z_full,
+        theta_i,
+    )
+    ring_x = ring_x_full[:-1]
+    ring_y = ring_y_full[:-1]
+    ring_z = ring_z_full[:-1]
+    ring_intensity = mosaic_intensity(
+        ring_x,
+        ring_y,
+        ring_z,
+        static_context.H,
+        static_context.K,
+        static_context.L,
+        static_context.sigma,
+        static_context.Gamma,
+        static_context.eta,
+    )
+    centered_dphi, centered_intensity = _center_ring_profile(static_context.ring_phi, ring_intensity)
+
+    k_head_x, k_head_y, k_head_z = rot_x(
+        np.array([0.0]),
+        np.array([K_MAG]),
+        np.array([0.0]),
+        theta_i,
+    )
+    k_head = np.array([k_head_x[0], k_head_y[0], k_head_z[0]], dtype=float)
+    arc_thetas = np.linspace(0.0, theta_i, 50)
+    r_arc = 0.3 * K_MAG
+    arc_x = np.zeros_like(arc_thetas)
+    arc_y = r_arc * np.cos(arc_thetas)
+    arc_z = r_arc * np.sin(arc_thetas)
+
+    return DetectorThetaState(
+        theta_i=theta_i,
+        Ew_x=ewald_x,
+        Ew_y=ewald_y,
+        Ew_z=ewald_z,
+        ring_x=ring_x_full,
+        ring_y=ring_y_full,
+        ring_z=ring_z_full,
+        detector_x=static_context.ring_x_full,
+        detector_z=static_context.ring_z_full,
+        detector_intensity=np.concatenate([ring_intensity, ring_intensity[:1]]),
+        k_head=k_head,
+        arc_x=arc_x,
+        arc_y=arc_y,
+        arc_z=arc_z,
+        theta_label_y=np.array([r_arc * np.cos(theta_i / 2.0)]),
+        theta_label_z=np.array([r_arc * np.sin(theta_i / 2.0)]),
+        dphi=centered_dphi,
+        centered_intensity=centered_intensity,
+    )
+
+
+def build_detector_companion_figure(
+    H: int = DEFAULT_H,
+    K: int = DEFAULT_K,
+    L: int = DEFAULT_L,
+    sigma: float = np.deg2rad(DEFAULT_SIGMA_DEG),
+    Gamma: float | None = None,
+    eta: float = DEFAULT_ETA,
+    *,
+    gamma: float | None = None,
+    theta_i: float = np.deg2rad(DEFAULT_THETA_DEG),
+    camera: dict[str, Any] | None = None,
+) -> go.Figure:
+    """Return the 2-panel reciprocal-space/integration figure used by specular mode."""
+
+    Gamma = _resolve_Gamma(
+        Gamma,
+        gamma,
+        default=float(np.deg2rad(DEFAULT_GAMMA_DEG)),
+    )
+    static_context = _cached_detector_static_context(H, K, L, sigma, Gamma, eta)
+    theta_state = _detector_state_for_theta(static_context, float(theta_i))
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        specs=[[{"type": "scene"}, {"type": "xy"}]],
+        column_widths=[0.7, 0.3],
+        subplot_titles=("Reciprocal space", "Centered integration"),
+    )
+
+    fig.add_trace(
+        go.Surface(
+            x=static_context.bragg_x,
+            y=static_context.bragg_y,
+            z=static_context.bragg_z,
+            surfacecolor=static_context.bragg_surface_intensity,
+            colorscale=[[0, "rgba(128,128,128,0.25)"], [1, "rgba(255,0,0,1)"]],
+            showscale=True,
+            colorbar=dict(title="Mosaic<br>Intensity"),
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Surface(
+            x=theta_state.Ew_x,
+            y=theta_state.Ew_y,
+            z=theta_state.Ew_z,
+            opacity=0.3,
+            colorscale="Blues",
+            showscale=False,
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=theta_state.ring_x,
+            y=theta_state.ring_y,
+            z=theta_state.ring_z,
+            mode="lines",
+            line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+        ),
+        1,
+        1,
+    )
+
+    k_head = theta_state.k_head
+    fig.add_trace(
+        go.Scatter3d(
+            x=[k_head[0], 0.0],
+            y=[k_head[1], 0.0],
+            z=[k_head[2], 0.0],
+            mode="lines",
+            line=dict(color="black", width=K_VECTOR_LINE_WIDTH),
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Cone(
+            x=[0.0],
+            y=[0.0],
+            z=[0.0],
+            u=[-k_head[0]],
+            v=[-k_head[1]],
+            w=[-k_head[2]],
+            anchor="tip",
+            sizemode="absolute",
+            sizeref=K_VECTOR_CONE_SIZE,
+            colorscale=[[0, "black"], [1, "black"]],
+            showscale=False,
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=[k_head[0] * K_VECTOR_LABEL_SCALE],
+            y=[k_head[1] * K_VECTOR_LABEL_SCALE],
+            z=[k_head[2] * K_VECTOR_LABEL_SCALE],
+            mode="text",
+            text=["kᵢ"],
+            textfont=dict(size=K_VECTOR_LABEL_SIZE),
+            showlegend=False,
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=theta_state.arc_x,
+            y=theta_state.arc_y,
+            z=theta_state.arc_z,
+            mode="lines",
+            line=dict(color="magenta", width=3, dash="dot"),
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=[0.0],
+            y=theta_state.theta_label_y,
+            z=theta_state.theta_label_z,
+            mode="text",
+            text=["θᵢ"],
+            textfont=dict(size=THETA_LABEL_SIZE),
+            showlegend=False,
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Cone(
+            x=[k_head[0]],
+            y=[k_head[1]],
+            z=[k_head[2]],
+            u=[-0.08 * k_head[0]],
+            v=[-0.08 * k_head[1]],
+            w=[-0.08 * k_head[2]],
+            anchor="tail",
+            sizemode="raw",
+            sizeref=1.0,
+            colorscale=[[0.0, "black"], [1.0, "black"]],
+            showscale=False,
+            hoverinfo="skip",
+            showlegend=False,
+        ),
+        1,
+        1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=theta_state.dphi,
+            y=theta_state.centered_intensity,
+            mode="lines",
+            line=dict(color="crimson", width=2),
+            showlegend=False,
+        ),
+        1,
+        2,
+    )
+
+    fig.update_scenes(
+        dict(
+            xaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
+            zaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
+            bgcolor="rgba(0,0,0,0)",
+            uirevision=DETECTOR_CAMERA_UIREVISION,
+        ),
+        row=1,
+        col=1,
+    )
+    fig.update_xaxes(title="Δφ (rad, peak = 0)", range=[-math.pi, math.pi], row=1, col=2)
+    fig.update_yaxes(
+        title="Intensity",
+        type="log",
+        range=list(static_context.centered_log_range),
+        row=1,
+        col=2,
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        uirevision=DETECTOR_CAMERA_UIREVISION,
+        margin=dict(l=0, r=0, b=0, t=110),
+        title=dict(
+            text=static_context.title,
+            x=0.5,
+            y=0.98,
+            xanchor="center",
+        ),
+    )
+
+    if camera:
+        fig.update_layout(scene_camera=camera)
+
+    compact_figure_numeric_payload(fig)
+    return fig
 
 
 def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,

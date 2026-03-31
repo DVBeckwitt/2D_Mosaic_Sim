@@ -41,7 +41,6 @@ in-plane rotation inside the detector plane.
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
 from functools import lru_cache
 import math
 import tempfile
@@ -183,8 +182,8 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
                 "sample",
                 "theta_i_deg",
                 0.1,
-                -89.0,
-                89.0,
+                0.0,
+                90.0,
                 updatemode="drag",
             ),
             ControlSpec("delta", "δ (deg)", "sample", "delta_deg", 0.05, -45.0, 45.0),
@@ -251,6 +250,26 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
     ),
 )
 
+SPECULAR_CONTROL_NAMES = tuple(
+    control.name
+    for _, controls in CONTROL_SECTIONS
+    for control in controls
+)
+SPECULAR_COMPANION_CONTROL_NAMES = (
+    "theta_i",
+    "H",
+    "K",
+    "L",
+    "sigma_deg",
+    "mosaic_gamma_deg",
+    "eta",
+)
+SPECULAR_SUMMARY_CONTROL_NAMES = tuple(
+    name for name in SPECULAR_CONTROL_NAMES if name != "display_rays"
+)
+SPECULAR_MAIN_SIGNATURE_META = "specular_main_signature"
+SPECULAR_COMPANION_SIGNATURE_META = "specular_companion_signature"
+
 
 @dataclass(frozen=True)
 class Frame3D:
@@ -268,6 +287,104 @@ class RayBundle:
 
     origins: np.ndarray
     directions: np.ndarray
+
+
+@dataclass(frozen=True)
+class SummaryStats:
+    """Precomputed weighted sums for textual summaries."""
+
+    plane_weight_sum: float
+    plane_weighted_uv_sum: np.ndarray
+    detector_weight_sum: float
+    detector_weighted_uv_sum: np.ndarray
+    detector_weighted_pixel_sum: np.ndarray
+
+
+@dataclass(frozen=True)
+class BeamGeometryKey:
+    """Beam cache key excluding display-only controls."""
+
+    ray_count: int
+    source_y: float
+    width_x: float
+    width_z: float
+    divergence_x_deg: float
+    divergence_z_deg: float
+    z_offset: float
+    seed: int
+
+
+@dataclass(frozen=True)
+class DetectorGeometryKey:
+    """Detector geometry cache key excluding calibration-only fields."""
+
+    distance: float
+    width: float
+    height: float
+    beta_deg: float
+    gamma_deg: float
+    chi_deg: float
+
+
+@dataclass(frozen=True)
+class DetectorCalibrationKey:
+    """Detector calibration key for pixel remapping."""
+
+    pixel_u: float
+    pixel_v: float
+    i0: float
+    j0: float
+
+
+@dataclass(frozen=True)
+class SampleTraceContext:
+    """Beam/sample intersection stage reused across detector and diffraction changes."""
+
+    beam: RayBundle
+    sample: Frame3D
+    sample_hit_indices: np.ndarray
+    hit_points: np.ndarray
+    sample_uv: np.ndarray
+    sample_basis: np.ndarray
+    incident_dirs_local: np.ndarray
+
+
+@dataclass(frozen=True)
+class ProjectionTraceContext:
+    """Cached diffraction expansion and detector-plane projection stage."""
+
+    beam: RayBundle
+    sample: Frame3D
+    detector: Frame3D
+    sample_hit_indices: np.ndarray
+    hit_points: np.ndarray
+    sample_uv: np.ndarray
+    exit_parent_indices: np.ndarray
+    exit_dirs: np.ndarray
+    exit_weights: np.ndarray
+    plane_hit_indices: np.ndarray
+    plane_points: np.ndarray
+    plane_uv: np.ndarray
+    plane_parent_indices: np.ndarray
+    plane_weights: np.ndarray
+    direct_beam_point: np.ndarray | None
+    direct_beam_uv: np.ndarray | None
+
+
+@dataclass(frozen=True)
+class CalibratedProjectionContext:
+    """Detector-calibration stage derived from the cached projection context."""
+
+    plane_pixels: np.ndarray
+    active_detector_mask: np.ndarray
+    detector_indices: np.ndarray
+    detector_points: np.ndarray
+    detector_parent_indices: np.ndarray
+    detector_uv: np.ndarray
+    detector_pixels: np.ndarray
+    detector_weights: np.ndarray
+    direct_beam_pixels: np.ndarray | None
+    summary_stats: SummaryStats
 
 
 @dataclass(frozen=True)
@@ -291,6 +408,15 @@ class SimulationResult:
     direct_beam_point: np.ndarray | None
     direct_beam_uv: np.ndarray | None
     direct_beam_pixels: np.ndarray | None
+    _plane_parent_indices: np.ndarray
+    _plane_weights: np.ndarray
+    _detector_indices: np.ndarray
+    _detector_points: np.ndarray
+    _detector_parent_indices: np.ndarray
+    _detector_uv: np.ndarray
+    _detector_pixels: np.ndarray
+    _detector_weights: np.ndarray
+    summary_stats: SummaryStats
 
     @property
     def sample_hit_count(self) -> int:
@@ -306,35 +432,35 @@ class SimulationResult:
 
     @property
     def detector_hit_count(self) -> int:
-        return int(np.count_nonzero(self.active_detector_mask))
+        return int(self._detector_indices.size)
 
     @property
     def detector_points(self) -> np.ndarray:
-        return self.plane_points[self.active_detector_mask]
+        return self._detector_points
 
     @property
     def plane_parent_indices(self) -> np.ndarray:
-        return self.exit_parent_indices[self.plane_hit_indices]
+        return self._plane_parent_indices
 
     @property
     def detector_parent_indices(self) -> np.ndarray:
-        return self.plane_parent_indices[self.active_detector_mask]
+        return self._detector_parent_indices
 
     @property
     def detector_uv(self) -> np.ndarray:
-        return self.plane_uv[self.active_detector_mask]
+        return self._detector_uv
 
     @property
     def detector_pixels(self) -> np.ndarray:
-        return self.plane_pixels[self.active_detector_mask]
+        return self._detector_pixels
 
     @property
     def plane_weights(self) -> np.ndarray:
-        return self.exit_weights[self.plane_hit_indices]
+        return self._plane_weights
 
     @property
     def detector_weights(self) -> np.ndarray:
-        return self.plane_weights[self.active_detector_mask]
+        return self._detector_weights
 
 
 def normalize_vector(vector: np.ndarray) -> np.ndarray:
@@ -357,6 +483,117 @@ def normalize_rows(array: np.ndarray) -> np.ndarray:
     if np.any(norms <= EPSILON):
         raise ValueError("Cannot normalize one or more zero-length rows")
     return arr / norms
+
+
+def normalize_last_axis(array: np.ndarray) -> np.ndarray:
+    """Normalize vectors stored along the last axis."""
+
+    arr = np.asarray(array, dtype=float)
+    norms = np.linalg.norm(arr, axis=-1, keepdims=True)
+    if np.any(norms <= EPSILON):
+        raise ValueError("Cannot normalize one or more zero-length vectors")
+    return arr / norms
+
+
+def compact_figure_numeric_payload(fig: go.Figure) -> None:
+    """Reduce figure payload size by casting numeric arrays to float32."""
+
+    keys = ("x", "y", "z", "u", "v", "w", "surfacecolor", "customdata")
+
+    def _cast_trace(trace: object) -> None:
+        for key in keys:
+            if not hasattr(trace, key):
+                continue
+            value = getattr(trace, key)
+            if value is None:
+                continue
+            try:
+                arr = np.asarray(value)
+            except Exception:
+                continue
+            if arr.dtype.kind not in ("f", "i", "u"):
+                continue
+            if key == "customdata" and arr.dtype.kind != "f":
+                arr = arr.astype(np.float64)
+            try:
+                setattr(trace, key, arr.astype(np.float32))
+            except Exception:
+                continue
+        marker = getattr(trace, "marker", None)
+        if marker is not None and hasattr(marker, "color"):
+            try:
+                color = np.asarray(marker.color)
+            except Exception:
+                color = None
+            if color is not None and color.dtype.kind in ("f", "i", "u"):
+                try:
+                    marker.color = color.astype(np.float32)
+                except Exception:
+                    pass
+
+    for trace in fig.data:
+        _cast_trace(trace)
+    for frame in fig.frames:
+        for trace in frame.data:
+            _cast_trace(trace)
+
+
+def _freeze_array(array: np.ndarray, *, dtype: np.dtype | type = float) -> np.ndarray:
+    frozen = np.asarray(array, dtype=dtype).copy()
+    frozen.setflags(write=False)
+    return frozen
+
+
+def _freeze_optional_array(
+    array: np.ndarray | None,
+    *,
+    dtype: np.dtype | type = float,
+) -> np.ndarray | None:
+    if array is None:
+        return None
+    return _freeze_array(array, dtype=dtype)
+
+
+def _beam_geometry_key(config: BeamConfig) -> BeamGeometryKey:
+    return BeamGeometryKey(
+        ray_count=config.ray_count,
+        source_y=config.source_y,
+        width_x=config.width_x,
+        width_z=config.width_z,
+        divergence_x_deg=config.divergence_x_deg,
+        divergence_z_deg=config.divergence_z_deg,
+        z_offset=config.z_offset,
+        seed=config.seed,
+    )
+
+
+def _detector_geometry_key(config: DetectorConfig) -> DetectorGeometryKey:
+    return DetectorGeometryKey(
+        distance=config.distance,
+        width=config.width,
+        height=config.height,
+        beta_deg=config.beta_deg,
+        gamma_deg=config.gamma_deg,
+        chi_deg=config.chi_deg,
+    )
+
+
+def _detector_calibration_key(config: DetectorConfig) -> DetectorCalibrationKey:
+    return DetectorCalibrationKey(
+        pixel_u=config.pixel_u,
+        pixel_v=config.pixel_v,
+        i0=config.i0,
+        j0=config.j0,
+    )
+
+
+def _freeze_frame(frame: Frame3D) -> Frame3D:
+    return Frame3D(
+        origin=_freeze_array(frame.origin),
+        axis_u=_freeze_array(frame.axis_u),
+        axis_v=_freeze_array(frame.axis_v),
+        normal=_freeze_array(frame.normal),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -490,6 +727,8 @@ def validate_configs(
         raise ValueError("beam.display_rays must be at least 1")
     if sample.width <= 0.0 or sample.height <= 0.0:
         raise ValueError("sample.width and sample.height must be positive")
+    if sample.theta_i_deg < 0.0 or sample.theta_i_deg > 90.0:
+        raise ValueError("sample.theta_i_deg must be between 0 and 90 degrees")
     if detector.distance <= 0.0:
         raise ValueError("detector.distance must be positive")
     if detector.width <= 0.0 or detector.height <= 0.0:
@@ -728,7 +967,7 @@ def generate_beam_rays(config: BeamConfig) -> RayBundle:
     eps_x = rng.normal(0.0, math.radians(config.divergence_x_deg), config.ray_count)
     eps_z = rng.normal(0.0, math.radians(config.divergence_z_deg), config.ray_count)
     directions = normalize_rows(np.column_stack([eps_x, np.ones(config.ray_count), eps_z]))
-    return RayBundle(origins=origins, directions=directions)
+    return RayBundle(origins=_freeze_array(origins), directions=_freeze_array(directions))
 
 
 def point_plane_coordinates(point: np.ndarray, frame: Frame3D) -> np.ndarray:
@@ -749,6 +988,20 @@ def detector_pixels_from_uv(uv: np.ndarray, detector: DetectorConfig) -> np.ndar
     return np.array(
         [detector.i0 + u / detector.pixel_u, detector.j0 - v / detector.pixel_v],
         dtype=float,
+    )
+
+
+def _detector_pixels_from_uv_array(
+    uv: np.ndarray,
+    calibration: DetectorCalibrationKey,
+) -> np.ndarray:
+    if uv.size == 0:
+        return np.empty((0, 2), dtype=float)
+    return np.column_stack(
+        [
+            calibration.i0 + uv[:, 0] / calibration.pixel_u,
+            calibration.j0 - uv[:, 1] / calibration.pixel_v,
+        ]
     )
 
 
@@ -784,6 +1037,20 @@ def project_ray_to_detector(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Project a single ray onto the detector plane."""
 
+    point_uv = _project_ray_to_detector_uv(origin, direction, detector_frame)
+    if point_uv is None:
+        return None
+
+    point, uv = point_uv
+    pixels = detector_pixels_from_uv(uv, detector_config)
+    return point, uv, pixels
+
+
+def _project_ray_to_detector_uv(
+    origin: np.ndarray,
+    direction: np.ndarray,
+    detector_frame: Frame3D,
+) -> tuple[np.ndarray, np.ndarray] | None:
     point = intersect_ray_with_plane(
         origin,
         direction,
@@ -792,10 +1059,7 @@ def project_ray_to_detector(
     )
     if point is None:
         return None
-
-    uv = point_plane_coordinates(point, detector_frame)
-    pixels = detector_pixels_from_uv(uv, detector_config)
-    return point, uv, pixels
+    return point, point_plane_coordinates(point, detector_frame)
 
 
 def project_rays_to_detector(
@@ -806,15 +1070,34 @@ def project_rays_to_detector(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Project many rays onto the detector plane."""
 
+    mask, points, uv = _project_rays_to_detector_uv(
+        origins,
+        directions,
+        detector_frame,
+    )
+    pixels = _detector_pixels_from_uv_array(uv, _detector_calibration_key(detector_config))
+    return mask, points, uv, pixels
+
+
+def _project_rays_to_detector_uv(
+    origins: np.ndarray,
+    directions: np.ndarray,
+    detector_frame: Frame3D,
+    *,
+    directions_normalized: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Project many rays to detector-plane coordinates without pixel calibration."""
+
     if origins.size == 0 or directions.size == 0:
         empty_points = np.empty((0, 3), dtype=float)
         empty_uv = np.empty((0, 2), dtype=float)
-        empty_pixels = np.empty((0, 2), dtype=float)
-        return np.zeros(0, dtype=bool), empty_points, empty_uv, empty_pixels
+        return np.zeros(0, dtype=bool), empty_points, empty_uv
 
     origin_arr = np.asarray(origins, dtype=float)
-    direction_arr = normalize_rows(np.asarray(directions, dtype=float))
-    plane_normal = normalize_vector(detector_frame.normal)
+    direction_arr = np.asarray(directions, dtype=float)
+    if not directions_normalized:
+        direction_arr = normalize_rows(direction_arr)
+    plane_normal = detector_frame.normal
     denominator = direction_arr @ plane_normal
     mask = np.abs(denominator) > EPSILON
 
@@ -827,21 +1110,349 @@ def project_rays_to_detector(
     if not np.any(mask):
         empty_points = np.empty((0, 3), dtype=float)
         empty_uv = np.empty((0, 2), dtype=float)
-        empty_pixels = np.empty((0, 2), dtype=float)
-        return mask, empty_points, empty_uv, empty_pixels
+        return mask, empty_points, empty_uv
 
     points = origin_arr[mask] + distances[mask, None] * direction_arr[mask]
     rel = points - detector_frame.origin
-    u = rel @ detector_frame.axis_u
-    v = rel @ detector_frame.axis_v
-    uv = np.column_stack([u, v])
-    pixels = np.column_stack(
-        [
-            detector_config.i0 + u / detector_config.pixel_u,
-            detector_config.j0 - v / detector_config.pixel_v,
-        ]
+    uv = np.column_stack([rel @ detector_frame.axis_u, rel @ detector_frame.axis_v])
+    return mask, points, uv
+
+
+def _summary_stats_from_arrays(
+    plane_uv: np.ndarray,
+    plane_weights: np.ndarray,
+    detector_uv: np.ndarray,
+    detector_pixels: np.ndarray,
+    detector_weights: np.ndarray,
+) -> SummaryStats:
+    plane_weight_sum = float(np.sum(plane_weights))
+    if plane_weight_sum > 0.0:
+        plane_weighted_uv_sum = np.sum(plane_uv * plane_weights[:, None], axis=0)
+    else:
+        plane_weighted_uv_sum = np.zeros(2, dtype=float)
+
+    detector_weight_sum = float(np.sum(detector_weights))
+    if detector_weight_sum > 0.0:
+        detector_weighted_uv_sum = np.sum(detector_uv * detector_weights[:, None], axis=0)
+        detector_weighted_pixel_sum = np.sum(
+            detector_pixels * detector_weights[:, None],
+            axis=0,
+        )
+    else:
+        detector_weighted_uv_sum = np.zeros(2, dtype=float)
+        detector_weighted_pixel_sum = np.zeros(2, dtype=float)
+
+    return SummaryStats(
+        plane_weight_sum=plane_weight_sum,
+        plane_weighted_uv_sum=_freeze_array(plane_weighted_uv_sum),
+        detector_weight_sum=detector_weight_sum,
+        detector_weighted_uv_sum=_freeze_array(detector_weighted_uv_sum),
+        detector_weighted_pixel_sum=_freeze_array(detector_weighted_pixel_sum),
     )
-    return mask, points, uv, pixels
+
+
+def _vectorized_rotation_matrices_from_lab_y(targets: np.ndarray) -> np.ndarray:
+    """Return rotation matrices mapping ``LAB_Y`` to each target vector."""
+
+    target_arr = normalize_rows(np.asarray(targets, dtype=float))
+    count = target_arr.shape[0]
+    rotations = np.broadcast_to(np.eye(3, dtype=float), (count, 3, 3)).copy()
+    cross = np.cross(np.broadcast_to(LAB_Y, target_arr.shape), target_arr)
+    sin_angle = np.linalg.norm(cross, axis=1)
+    cos_angle = np.clip(target_arr[:, 1], -1.0, 1.0)
+
+    antiparallel_mask = (sin_angle <= EPSILON) & (cos_angle <= 0.0)
+    if np.any(antiparallel_mask):
+        rotations[antiparallel_mask] = np.array(
+            [[-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=float,
+        )
+
+    general_mask = sin_angle > EPSILON
+    if np.any(general_mask):
+        axis = cross[general_mask] / sin_angle[general_mask, None]
+        skew = np.zeros((axis.shape[0], 3, 3), dtype=float)
+        skew[:, 0, 1] = -axis[:, 2]
+        skew[:, 0, 2] = axis[:, 1]
+        skew[:, 1, 0] = axis[:, 2]
+        skew[:, 1, 2] = -axis[:, 0]
+        skew[:, 2, 0] = -axis[:, 1]
+        skew[:, 2, 1] = axis[:, 0]
+        rotations[general_mask] = (
+            np.eye(3, dtype=float)[None, :, :]
+            + sin_angle[general_mask, None, None] * skew
+            + (1.0 - cos_angle[general_mask])[:, None, None] * np.matmul(skew, skew)
+        )
+
+    return rotations
+
+
+def _batch_mosaic_intensity(
+    q_local: np.ndarray,
+    H: int,
+    K: int,
+    L: int,
+    sigma: float,
+    Gamma: float,
+    eta: float,
+) -> np.ndarray:
+    """Return row-normalized mosaic intensities for ``q_local``."""
+
+    if q_local.size == 0:
+        return np.empty(q_local.shape[:-1], dtype=float)
+
+    q_mag = np.linalg.norm(q_local, axis=2)
+    safe_q_mag = np.where(q_mag > EPSILON, q_mag, 1e-14)
+    nu_p = np.arccos(np.clip(q_local[:, :, 2] / safe_q_mag, -1.0, 1.0))
+    if H == 0 and K == 0:
+        raw = (1.0 - eta) * np.exp(-(nu_p ** 2) / (2.0 * sigma * sigma)) + eta / (
+            1.0 + (nu_p / Gamma) ** 2
+        )
+    else:
+        g_mag = math.sqrt(float(H * H + K * K + L * L))
+        nu_c = math.acos(max(-1.0, min(1.0, L / g_mag)))
+        dnu = np.abs(nu_p - nu_c)
+        raw = (1.0 - eta) * np.exp(-(dnu ** 2) / (2.0 * sigma * sigma)) + eta / (
+            1.0 + (dnu / Gamma) ** 2
+        )
+
+    row_max = np.maximum(np.max(raw, axis=1, keepdims=True), EPSILON)
+    return raw / row_max
+
+
+@lru_cache(maxsize=8)
+def _cached_beam_bundle(beam_key: BeamGeometryKey) -> RayBundle:
+    return generate_beam_rays(
+        BeamConfig(
+            ray_count=beam_key.ray_count,
+            source_y=beam_key.source_y,
+            width_x=beam_key.width_x,
+            width_z=beam_key.width_z,
+            divergence_x_deg=beam_key.divergence_x_deg,
+            divergence_z_deg=beam_key.divergence_z_deg,
+            z_offset=beam_key.z_offset,
+            seed=beam_key.seed,
+            display_rays=1,
+        )
+    )
+
+
+@lru_cache(maxsize=8)
+def _cached_sample_trace_context(
+    beam_key: BeamGeometryKey,
+    sample_config: SampleConfig,
+) -> SampleTraceContext:
+    beam = _cached_beam_bundle(beam_key)
+    sample_frame = _freeze_frame(build_sample_frame(sample_config))
+    sample_basis = _freeze_array(
+        np.vstack([sample_frame.axis_u, sample_frame.axis_v, sample_frame.normal])
+    )
+
+    sample_denominator = beam.directions @ sample_frame.normal
+    sample_numerator = (sample_frame.origin - beam.origins) @ sample_frame.normal
+    sample_intersection_mask = np.abs(sample_denominator) > EPSILON
+
+    sample_distance = np.empty_like(sample_denominator)
+    sample_distance.fill(np.nan)
+    sample_distance[sample_intersection_mask] = (
+        sample_numerator[sample_intersection_mask]
+        / sample_denominator[sample_intersection_mask]
+    )
+    sample_intersection_mask &= sample_distance > 0.0
+
+    candidate_indices = np.flatnonzero(sample_intersection_mask)
+    candidate_points = (
+        beam.origins[candidate_indices]
+        + sample_distance[candidate_indices, None] * beam.directions[candidate_indices]
+    )
+    rel_sample = candidate_points - sample_frame.origin
+    sample_u = rel_sample @ sample_frame.axis_u
+    sample_v = rel_sample @ sample_frame.axis_v
+    inside_sample = (
+        (np.abs(sample_u) <= 0.5 * sample_config.width)
+        & (np.abs(sample_v) <= 0.5 * sample_config.height)
+    )
+
+    sample_hit_indices = candidate_indices[inside_sample]
+    hit_points = candidate_points[inside_sample]
+    sample_uv = np.column_stack([sample_u[inside_sample], sample_v[inside_sample]])
+    incident_dirs_local = beam.directions[sample_hit_indices] @ sample_basis.T
+
+    return SampleTraceContext(
+        beam=beam,
+        sample=sample_frame,
+        sample_hit_indices=_freeze_array(sample_hit_indices, dtype=int),
+        hit_points=_freeze_array(hit_points),
+        sample_uv=_freeze_array(sample_uv),
+        sample_basis=sample_basis,
+        incident_dirs_local=_freeze_array(incident_dirs_local),
+    )
+
+
+@lru_cache(maxsize=4)
+def _cached_projection_trace_context(
+    beam_key: BeamGeometryKey,
+    sample_config: SampleConfig,
+    detector_geometry_key: DetectorGeometryKey,
+    diffraction_config: DiffractionConfig,
+) -> ProjectionTraceContext:
+    sample_context = _cached_sample_trace_context(beam_key, sample_config)
+    detector_frame = _freeze_frame(
+        build_detector_frame(
+            DetectorConfig(
+                distance=detector_geometry_key.distance,
+                width=detector_geometry_key.width,
+                height=detector_geometry_key.height,
+                beta_deg=detector_geometry_key.beta_deg,
+                gamma_deg=detector_geometry_key.gamma_deg,
+                chi_deg=detector_geometry_key.chi_deg,
+            )
+        )
+    )
+
+    (
+        H,
+        K,
+        L,
+        sigma,
+        Gamma,
+        eta,
+    ) = normalized_diffraction_params(diffraction_config)
+    _, reciprocal_k_mag, d_hex, intersection_circle, _ = _hkl_engine()
+    g_mag = 2.0 * math.pi / d_hex(H, K, L)
+    ring_x, ring_y, ring_z = intersection_circle(
+        g_mag,
+        reciprocal_k_mag,
+        reciprocal_k_mag,
+        npts=DIFFRACTION_SAMPLES,
+    )
+
+    exit_parent_indices = np.empty(0, dtype=int)
+    exit_dirs = np.empty((0, 3), dtype=float)
+    exit_weights = np.empty(0, dtype=float)
+    plane_hit_indices = np.empty(0, dtype=int)
+    plane_points = np.empty((0, 3), dtype=float)
+    plane_uv = np.empty((0, 2), dtype=float)
+    plane_parent_indices = np.empty(0, dtype=int)
+    plane_weights = np.empty(0, dtype=float)
+
+    if sample_context.sample_hit_indices.size and ring_x.size:
+        canonical_q = np.column_stack([ring_x, ring_y, ring_z])
+        incident_dirs_local = sample_context.incident_dirs_local
+        rotations = _vectorized_rotation_matrices_from_lab_y(-incident_dirs_local)
+        q_local = np.einsum("mj,nkj->nmk", canonical_q, rotations)
+        exit_dirs_local = normalize_last_axis(
+            q_local + reciprocal_k_mag * incident_dirs_local[:, None, :]
+        )
+        exit_parent_indices = np.repeat(
+            np.arange(incident_dirs_local.shape[0], dtype=int),
+            canonical_q.shape[0],
+        )
+        exit_dirs = exit_dirs_local.reshape(-1, 3) @ sample_context.sample_basis
+        exit_weights = _batch_mosaic_intensity(
+            q_local,
+            H,
+            K,
+            L,
+            sigma,
+            Gamma,
+            eta,
+        ).reshape(-1)
+        exit_origins = sample_context.hit_points[exit_parent_indices]
+        projection_mask, plane_points, plane_uv = _project_rays_to_detector_uv(
+            exit_origins,
+            exit_dirs,
+            detector_frame,
+            directions_normalized=True,
+        )
+        plane_hit_indices = np.flatnonzero(projection_mask)
+        plane_parent_indices = exit_parent_indices[plane_hit_indices]
+        plane_weights = exit_weights[plane_hit_indices]
+
+    direct_beam_projection = _project_ray_to_detector_uv(
+        np.zeros(3, dtype=float),
+        LAB_Y,
+        detector_frame,
+    )
+    if direct_beam_projection is None:
+        direct_beam_point = None
+        direct_beam_uv = None
+    else:
+        direct_beam_point, direct_beam_uv = direct_beam_projection
+
+    return ProjectionTraceContext(
+        beam=sample_context.beam,
+        sample=sample_context.sample,
+        detector=detector_frame,
+        sample_hit_indices=sample_context.sample_hit_indices,
+        hit_points=sample_context.hit_points,
+        sample_uv=sample_context.sample_uv,
+        exit_parent_indices=_freeze_array(exit_parent_indices, dtype=int),
+        exit_dirs=_freeze_array(exit_dirs),
+        exit_weights=_freeze_array(exit_weights),
+        plane_hit_indices=_freeze_array(plane_hit_indices, dtype=int),
+        plane_points=_freeze_array(plane_points),
+        plane_uv=_freeze_array(plane_uv),
+        plane_parent_indices=_freeze_array(plane_parent_indices, dtype=int),
+        plane_weights=_freeze_array(plane_weights),
+        direct_beam_point=_freeze_optional_array(direct_beam_point),
+        direct_beam_uv=_freeze_optional_array(direct_beam_uv),
+    )
+
+
+@lru_cache(maxsize=4)
+def _cached_calibrated_projection_context(
+    beam_key: BeamGeometryKey,
+    sample_config: SampleConfig,
+    detector_geometry_key: DetectorGeometryKey,
+    diffraction_config: DiffractionConfig,
+    detector_calibration_key: DetectorCalibrationKey,
+) -> CalibratedProjectionContext:
+    projection_context = _cached_projection_trace_context(
+        beam_key,
+        sample_config,
+        detector_geometry_key,
+        diffraction_config,
+    )
+    plane_pixels = _detector_pixels_from_uv_array(
+        projection_context.plane_uv,
+        detector_calibration_key,
+    )
+    active_detector_mask = (
+        (np.abs(projection_context.plane_uv[:, 0]) <= 0.5 * detector_geometry_key.width)
+        & (np.abs(projection_context.plane_uv[:, 1]) <= 0.5 * detector_geometry_key.height)
+    )
+    detector_indices = np.flatnonzero(active_detector_mask)
+    detector_points = projection_context.plane_points[active_detector_mask]
+    detector_parent_indices = projection_context.plane_parent_indices[active_detector_mask]
+    detector_uv = projection_context.plane_uv[active_detector_mask]
+    detector_pixels = plane_pixels[active_detector_mask]
+    detector_weights = projection_context.plane_weights[active_detector_mask]
+    direct_beam_pixels = None
+    if projection_context.direct_beam_uv is not None:
+        direct_beam_pixels = _detector_pixels_from_uv_array(
+            projection_context.direct_beam_uv[None, :],
+            detector_calibration_key,
+        )[0]
+
+    return CalibratedProjectionContext(
+        plane_pixels=_freeze_array(plane_pixels),
+        active_detector_mask=_freeze_array(active_detector_mask, dtype=bool),
+        detector_indices=_freeze_array(detector_indices, dtype=int),
+        detector_points=_freeze_array(detector_points),
+        detector_parent_indices=_freeze_array(detector_parent_indices, dtype=int),
+        detector_uv=_freeze_array(detector_uv),
+        detector_pixels=_freeze_array(detector_pixels),
+        detector_weights=_freeze_array(detector_weights),
+        direct_beam_pixels=_freeze_optional_array(direct_beam_pixels),
+        summary_stats=_summary_stats_from_arrays(
+            projection_context.plane_uv,
+            projection_context.plane_weights,
+            detector_uv,
+            detector_pixels,
+            detector_weights,
+        ),
+    )
 
 
 def reflect_directions(directions: np.ndarray, normal: np.ndarray) -> np.ndarray:
@@ -877,46 +1488,30 @@ def trace_specular_simulation(
     validate_configs(beam, sample, detector, diffraction)
 
     _emit_progress(progress, f"Generating {beam.ray_count} incident beam rays")
-    rays = generate_beam_rays(beam)
+    beam_key = _beam_geometry_key(beam)
+    detector_geometry_key = _detector_geometry_key(detector)
+    detector_calibration_key = _detector_calibration_key(detector)
+
     _emit_progress(progress, "Building sample and detector frames")
-    sample_frame = build_sample_frame(sample)
-    detector_frame = build_detector_frame(detector)
-    sample_basis = np.vstack(
-        [sample_frame.axis_u, sample_frame.axis_v, sample_frame.normal]
+    sample_context = _cached_sample_trace_context(beam_key, sample)
+    projection_context = _cached_projection_trace_context(
+        beam_key,
+        sample,
+        detector_geometry_key,
+        diffraction,
+    )
+    calibrated_context = _cached_calibrated_projection_context(
+        beam_key,
+        sample,
+        detector_geometry_key,
+        diffraction,
+        detector_calibration_key,
     )
 
     _emit_progress(progress, "Intersecting incident rays with the sample plane")
-    sample_denominator = rays.directions @ sample_frame.normal
-    sample_numerator = (sample_frame.origin - rays.origins) @ sample_frame.normal
-    sample_intersection_mask = np.abs(sample_denominator) > EPSILON
-
-    sample_distance = np.empty_like(sample_denominator)
-    sample_distance.fill(np.nan)
-    sample_distance[sample_intersection_mask] = (
-        sample_numerator[sample_intersection_mask]
-        / sample_denominator[sample_intersection_mask]
-    )
-    sample_intersection_mask &= sample_distance > 0.0
-
-    candidate_indices = np.flatnonzero(sample_intersection_mask)
-    candidate_points = (
-        rays.origins[candidate_indices]
-        + sample_distance[candidate_indices, None] * rays.directions[candidate_indices]
-    )
-    rel_sample = candidate_points - sample_frame.origin
-    sample_u = rel_sample @ sample_frame.axis_u
-    sample_v = rel_sample @ sample_frame.axis_v
-    inside_sample = (
-        (np.abs(sample_u) <= 0.5 * sample.width)
-        & (np.abs(sample_v) <= 0.5 * sample.height)
-    )
-
-    sample_hit_indices = candidate_indices[inside_sample]
-    hit_points = candidate_points[inside_sample]
-    sample_uv = np.column_stack([sample_u[inside_sample], sample_v[inside_sample]])
     _emit_progress(
         progress,
-        f"Sample hits on finite sample: {sample_hit_indices.size}/{beam.ray_count}",
+        f"Sample hits on finite sample: {sample_context.sample_hit_indices.size}/{beam.ray_count}",
     )
     (
         H,
@@ -935,98 +1530,43 @@ def trace_specular_simulation(
             f"({H}, {K}, {L}) with {DIFFRACTION_SAMPLES} azimuthal samples"
         ),
     )
-    ring_x, ring_y, ring_z = intersection_circle(
+    ring_x, _, _ = intersection_circle(
         g_mag,
         reciprocal_k_mag,
         reciprocal_k_mag,
         npts=DIFFRACTION_SAMPLES,
     )
 
-    exit_parent_indices = np.empty(0, dtype=int)
-    exit_dirs = np.empty((0, 3), dtype=float)
-    exit_weights = np.empty(0, dtype=float)
-    plane_hit_indices = np.empty(0, dtype=int)
-    plane_points = np.empty((0, 3), dtype=float)
-    plane_uv = np.empty((0, 2), dtype=float)
-    plane_pixels = np.empty((0, 2), dtype=float)
-    active_detector_mask = np.zeros(0, dtype=bool)
-
-    if sample_hit_indices.size and ring_x.size:
-        canonical_q = np.column_stack([ring_x, ring_y, ring_z])
-        incident_dirs_local = rays.directions[sample_hit_indices] @ sample_basis.T
-        exit_parent_parts: list[np.ndarray] = []
-        exit_dir_parts: list[np.ndarray] = []
-        exit_weight_parts: list[np.ndarray] = []
-        total_hits = incident_dirs_local.shape[0]
-        progress_interval = max(1, total_hits // 5)
-
-        for parent_index, incident_dir_local in enumerate(incident_dirs_local):
-            rotation = rotation_between_vectors(LAB_Y, -incident_dir_local)
-            q_local = canonical_q @ rotation.T
-            k_i_local = reciprocal_k_mag * incident_dir_local
-            exit_dirs_local = normalize_rows(q_local + k_i_local[None, :])
-            exit_parent_parts.append(
-                np.full(exit_dirs_local.shape[0], parent_index, dtype=int)
-            )
-            exit_dir_parts.append(exit_dirs_local @ sample_basis)
-            exit_weight_parts.append(
-                np.asarray(
-                    mosaic_intensity(
-                        q_local[:, 0],
-                        q_local[:, 1],
-                        q_local[:, 2],
-                        H,
-                        K,
-                        L,
-                        sigma,
-                        Gamma,
-                        eta,
-                    ),
-                    dtype=float,
-                )
-            )
-            processed_hits = parent_index + 1
-            if processed_hits == 1 or processed_hits == total_hits or processed_hits % progress_interval == 0:
-                _emit_progress(
-                    progress,
-                    f"Expanding diffraction families from sample hits: {processed_hits}/{total_hits}",
-                )
-
-        exit_parent_indices = np.concatenate(exit_parent_parts)
-        exit_dirs = np.vstack(exit_dir_parts)
-        exit_weights = np.concatenate(exit_weight_parts)
+    if sample_context.sample_hit_indices.size and ring_x.size:
         _emit_progress(
             progress,
             (
-                f"Generated {exit_parent_indices.size} diffraction rays from "
-                f"{sample_hit_indices.size} sample hits"
+                "Expanding diffraction families from sample hits: "
+                f"{sample_context.sample_hit_indices.size}/{sample_context.sample_hit_indices.size}"
             ),
-        )
-
-        exit_origins = hit_points[exit_parent_indices]
-        _emit_progress(
-            progress,
-            f"Projecting {exit_dirs.shape[0]} diffraction rays onto detector plane",
-        )
-        projection_mask, plane_points, plane_uv, plane_pixels = project_rays_to_detector(
-            exit_origins,
-            exit_dirs,
-            detector_frame,
-            detector,
-        )
-        plane_hit_indices = np.flatnonzero(projection_mask)
-        active_detector_mask = (
-            (np.abs(plane_uv[:, 0]) <= 0.5 * detector.width)
-            & (np.abs(plane_uv[:, 1]) <= 0.5 * detector.height)
         )
         _emit_progress(
             progress,
             (
-                f"Detector-plane intersections: {plane_hit_indices.size}; "
-                f"active detector hits: {int(np.count_nonzero(active_detector_mask))}"
+                f"Generated {projection_context.exit_parent_indices.size} diffraction rays from "
+                f"{sample_context.sample_hit_indices.size} sample hits"
             ),
         )
-    elif not sample_hit_indices.size:
+        _emit_progress(
+            progress,
+            (
+                f"Projecting {projection_context.exit_dirs.shape[0]} diffraction rays "
+                "onto detector plane"
+            ),
+        )
+        _emit_progress(
+            progress,
+            (
+                f"Detector-plane intersections: {projection_context.plane_hit_indices.size}; "
+                f"active detector hits: {calibrated_context.detector_indices.size}"
+            ),
+        )
+    elif not sample_context.sample_hit_indices.size:
         _emit_progress(
             progress,
             "No incident rays hit the sample; skipping diffraction-family expansion",
@@ -1038,38 +1578,35 @@ def trace_specular_simulation(
         )
 
     _emit_progress(progress, "Tracing direct-beam reference to the detector")
-    direct_beam_projection = project_ray_to_detector(
-        np.zeros(3, dtype=float),
-        LAB_Y,
-        detector_frame,
-        detector,
-    )
-    if direct_beam_projection is None:
-        direct_beam_point = None
-        direct_beam_uv = None
-        direct_beam_pixels = None
-    else:
-        direct_beam_point, direct_beam_uv, direct_beam_pixels = direct_beam_projection
     _emit_progress(progress, "Trace complete")
 
     return SimulationResult(
-        beam=rays,
-        sample=sample_frame,
-        detector=detector_frame,
-        sample_hit_indices=sample_hit_indices,
-        hit_points=hit_points,
-        exit_parent_indices=exit_parent_indices,
-        exit_dirs=exit_dirs,
-        exit_weights=exit_weights,
-        sample_uv=sample_uv,
-        plane_hit_indices=plane_hit_indices,
-        plane_points=plane_points,
-        plane_uv=plane_uv,
-        plane_pixels=plane_pixels,
-        active_detector_mask=active_detector_mask,
-        direct_beam_point=direct_beam_point,
-        direct_beam_uv=direct_beam_uv,
-        direct_beam_pixels=direct_beam_pixels,
+        beam=projection_context.beam,
+        sample=projection_context.sample,
+        detector=projection_context.detector,
+        sample_hit_indices=projection_context.sample_hit_indices,
+        hit_points=projection_context.hit_points,
+        exit_parent_indices=projection_context.exit_parent_indices,
+        exit_dirs=projection_context.exit_dirs,
+        exit_weights=projection_context.exit_weights,
+        sample_uv=projection_context.sample_uv,
+        plane_hit_indices=projection_context.plane_hit_indices,
+        plane_points=projection_context.plane_points,
+        plane_uv=projection_context.plane_uv,
+        plane_pixels=calibrated_context.plane_pixels,
+        active_detector_mask=calibrated_context.active_detector_mask,
+        direct_beam_point=projection_context.direct_beam_point,
+        direct_beam_uv=projection_context.direct_beam_uv,
+        direct_beam_pixels=calibrated_context.direct_beam_pixels,
+        _plane_parent_indices=projection_context.plane_parent_indices,
+        _plane_weights=projection_context.plane_weights,
+        _detector_indices=calibrated_context.detector_indices,
+        _detector_points=calibrated_context.detector_points,
+        _detector_parent_indices=calibrated_context.detector_parent_indices,
+        _detector_uv=calibrated_context.detector_uv,
+        _detector_pixels=calibrated_context.detector_pixels,
+        _detector_weights=calibrated_context.detector_weights,
+        summary_stats=calibrated_context.summary_stats,
     )
 
 
@@ -1444,7 +1981,7 @@ def build_specular_figure(
 
     if result.detector_hit_count:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=result.detector_uv[:, 0],
                 y=result.detector_uv[:, 1],
                 mode="markers",
@@ -1618,6 +2155,7 @@ def build_specular_figure(
     if camera:
         fig.update_layout(scene_camera=camera)
 
+    compact_figure_numeric_payload(fig)
     return fig
 
 
@@ -1653,15 +2191,13 @@ def simulation_summary(
     g_mag = diffraction_magnitude_angstrom(diffraction_config)
 
     if result.detector_hit_count:
-        detector_centroid = np.average(
-            result.detector_uv,
-            axis=0,
-            weights=result.detector_weights,
+        detector_centroid = (
+            result.summary_stats.detector_weighted_uv_sum
+            / result.summary_stats.detector_weight_sum
         )
-        pixel_centroid = np.average(
-            result.detector_pixels,
-            axis=0,
-            weights=result.detector_weights,
+        pixel_centroid = (
+            result.summary_stats.detector_weighted_pixel_sum
+            / result.summary_stats.detector_weight_sum
         )
         centroid_text = (
             f"weighted detector centroid (u, v) = ({detector_centroid[0]:.4f}, "
@@ -1673,11 +2209,10 @@ def simulation_summary(
         centroid_text = "weighted detector centroid unavailable (no active detector hits)"
 
     plane_centroid_text = "weighted detector-plane centroid unavailable"
-    if result.detector_plane_hit_count:
-        plane_centroid = np.average(
-            result.plane_uv,
-            axis=0,
-            weights=result.plane_weights,
+    if result.detector_plane_hit_count and result.summary_stats.plane_weight_sum > 0.0:
+        plane_centroid = (
+            result.summary_stats.plane_weighted_uv_sum
+            / result.summary_stats.plane_weight_sum
         )
         plane_centroid_text = (
             f"weighted detector-plane centroid (u, v) = "
@@ -1721,9 +2256,9 @@ def build_specular_companion_figure(
 ) -> go.Figure:
     """Return the companion reciprocal-space/integration view for specular mode."""
 
-    from mosaic_sim.detector import build_detector_figure
+    from mosaic_sim.detector import build_detector_companion_figure
 
-    base_figure = build_detector_figure(
+    return build_detector_companion_figure(
         diffraction_config.H,
         diffraction_config.K,
         diffraction_config.L,
@@ -1733,91 +2268,6 @@ def build_specular_companion_figure(
         theta_i=math.radians(sample_config.theta_i_deg),
         camera=camera,
     )
-    companion_figure = make_subplots(
-        rows=1,
-        cols=2,
-        specs=[[{"type": "scene"}, {"type": "xy"}]],
-        column_widths=[0.7, 0.3],
-        subplot_titles=("Reciprocal space", "Centered integration"),
-    )
-
-    ki_tip: np.ndarray | None = None
-    for trace in base_figure.data:
-        if (
-            ki_tip is None
-            and isinstance(trace, go.Scatter3d)
-            and getattr(trace, "scene", None) == "scene"
-            and getattr(trace, "mode", None) == "lines"
-        ):
-            x = np.asarray(trace.x, dtype=float)
-            y = np.asarray(trace.y, dtype=float)
-            z = np.asarray(trace.z, dtype=float)
-            if (
-                x.size == 2
-                and y.size == 2
-                and z.size == 2
-                and np.allclose([x[1], y[1], z[1]], np.zeros(3))
-            ):
-                ki_tip = np.array([x[0], y[0], z[0]], dtype=float)
-        if getattr(trace, "scene", None) == "scene":
-            companion_figure.add_trace(deepcopy(trace), row=1, col=1)
-        elif getattr(trace, "xaxis", None) == "x2" and getattr(trace, "yaxis", None) == "y2":
-            centered_trace = deepcopy(trace)
-            if hasattr(centered_trace, "xaxis"):
-                centered_trace.xaxis = None
-            if hasattr(centered_trace, "yaxis"):
-                centered_trace.yaxis = None
-            companion_figure.add_trace(centered_trace, row=1, col=2)
-
-    if ki_tip is not None:
-        companion_figure.add_trace(
-            go.Cone(
-                x=[ki_tip[0]],
-                y=[ki_tip[1]],
-                z=[ki_tip[2]],
-                u=[-0.08 * ki_tip[0]],
-                v=[-0.08 * ki_tip[1]],
-                w=[-0.08 * ki_tip[2]],
-                anchor="tail",
-                sizemode="raw",
-                sizeref=1.0,
-                colorscale=[[0.0, "#111111"], [1.0, "#111111"]],
-                showscale=False,
-                hoverinfo="skip",
-                showlegend=False,
-            ),
-            row=1,
-            col=1,
-        )
-
-    scene_layout = (
-        deepcopy(base_figure.layout.scene.to_plotly_json())
-        if base_figure.layout.scene is not None
-        else {}
-    )
-    centered_xaxis_layout = (
-        deepcopy(base_figure.layout.xaxis2.to_plotly_json())
-        if getattr(base_figure.layout, "xaxis2", None) is not None
-        else {}
-    )
-    centered_yaxis_layout = (
-        deepcopy(base_figure.layout.yaxis2.to_plotly_json())
-        if getattr(base_figure.layout, "yaxis2", None) is not None
-        else {}
-    )
-
-    companion_figure.update_layout(
-        paper_bgcolor=base_figure.layout.paper_bgcolor,
-        plot_bgcolor=base_figure.layout.plot_bgcolor,
-        showlegend=False,
-        uirevision=base_figure.layout.uirevision,
-        margin=dict(l=0, r=0, b=0, t=110),
-        title=deepcopy(base_figure.layout.title.to_plotly_json()),
-    )
-    companion_figure.update_scenes(row=1, col=1, **scene_layout)
-    companion_figure.update_xaxes(row=1, col=2, **centered_xaxis_layout)
-    companion_figure.update_yaxes(row=1, col=2, **centered_yaxis_layout)
-    return companion_figure
 
 
 def build_specular_companion_error_figure(message: str) -> go.Figure:
@@ -1836,18 +2286,15 @@ def build_specular_companion_error_figure(message: str) -> go.Figure:
     return figure
 
 
-def build_specular_dashboard_outputs(
+def _build_specular_main_outputs(
     beam_config: BeamConfig,
     sample_config: SampleConfig,
     detector_config: DetectorConfig,
     diffraction_config: DiffractionConfig,
     *,
     camera: dict[str, Any] | None = None,
-    companion_camera: dict[str, Any] | None = None,
     progress: ProgressCallback | None = None,
-) -> tuple[go.Figure, go.Figure, str]:
-    """Return the main specular figure, companion figure, and textual summary."""
-
+) -> tuple[go.Figure, str]:
     result = trace_specular_simulation(
         beam_config,
         sample_config,
@@ -1864,18 +2311,41 @@ def build_specular_dashboard_outputs(
         diffraction_config,
         camera=camera,
     )
-    _emit_progress(progress, "Building reciprocal-space and integrated-response companion figure")
-    companion_figure = build_specular_companion_figure(
-        sample_config,
-        diffraction_config,
-        camera=companion_camera,
-    )
     _emit_progress(progress, "Formatting textual summary")
     summary = simulation_summary(
         result,
         sample_config,
         detector_config,
         diffraction_config,
+    )
+    return figure, summary
+
+
+def build_specular_dashboard_outputs(
+    beam_config: BeamConfig,
+    sample_config: SampleConfig,
+    detector_config: DetectorConfig,
+    diffraction_config: DiffractionConfig,
+    *,
+    camera: dict[str, Any] | None = None,
+    companion_camera: dict[str, Any] | None = None,
+    progress: ProgressCallback | None = None,
+) -> tuple[go.Figure, go.Figure, str]:
+    """Return the main specular figure, companion figure, and textual summary."""
+
+    figure, summary = _build_specular_main_outputs(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        camera=camera,
+        progress=progress,
+    )
+    _emit_progress(progress, "Building reciprocal-space and integrated-response companion figure")
+    companion_figure = build_specular_companion_figure(
+        sample_config,
+        diffraction_config,
+        camera=companion_camera,
     )
     _emit_progress(progress, "Initial outputs ready")
     return figure, companion_figure, summary
@@ -1893,16 +2363,108 @@ def build_specular_outputs(
 ) -> tuple[go.Figure, str]:
     """Return the live figure and summary text for the current configs."""
 
-    figure, _, summary = build_specular_dashboard_outputs(
+    figure, summary = _build_specular_main_outputs(
         beam_config,
         sample_config,
         detector_config,
         diffraction_config,
         camera=camera,
-        companion_camera=companion_camera,
         progress=progress,
     )
     return figure, summary
+
+
+def build_specular_summary_output(
+    beam_config: BeamConfig,
+    sample_config: SampleConfig,
+    detector_config: DetectorConfig,
+    diffraction_config: DiffractionConfig,
+    *,
+    progress: ProgressCallback | None = None,
+) -> str:
+    """Return only the textual summary for the current configs."""
+
+    result = trace_specular_simulation(
+        beam_config,
+        sample_config,
+        detector_config,
+        diffraction_config,
+        progress=progress,
+    )
+    return simulation_summary(
+        result,
+        sample_config,
+        detector_config,
+        diffraction_config,
+    )
+
+
+def control_values_from_ids(
+    control_ids: list[dict[str, Any]],
+    control_values: list[Any],
+) -> dict[str, Any]:
+    """Return a name->value mapping for Dash pattern-matched controls."""
+
+    return {
+        control_id["name"]: control_value
+        for control_id, control_value in zip(control_ids, control_values, strict=True)
+    }
+
+
+def specular_signature_from_values(
+    values: dict[str, Any],
+    keys: tuple[str, ...],
+) -> str:
+    """Return a stable string signature for the selected control subset."""
+
+    return "|".join(f"{key}={values.get(key)!r}" for key in keys)
+
+
+def set_figure_meta_value(fig: go.Figure, key: str, value: Any) -> go.Figure:
+    """Attach a metadata entry to ``fig`` and return the same figure."""
+
+    meta = dict(fig.layout.meta) if isinstance(fig.layout.meta, dict) else {}
+    meta[key] = value
+    fig.update_layout(meta=meta)
+    return fig
+
+
+def extract_figure_meta_value(figure_value: Any, key: str) -> Any:
+    """Read a metadata entry from a Plotly figure or serialized figure dict."""
+
+    if isinstance(figure_value, go.Figure):
+        meta = figure_value.layout.meta
+    elif isinstance(figure_value, dict):
+        meta = (figure_value.get("layout") or {}).get("meta")
+    else:
+        meta = None
+    if not isinstance(meta, dict):
+        return None
+    return meta.get(key)
+
+
+def extract_scene_camera_from_figure_value(
+    figure_value: Any,
+    *,
+    scene_key: str = "scene",
+) -> dict[str, Any] | None:
+    """Return a serialized scene camera from a figure or serialized figure dict."""
+
+    if isinstance(figure_value, go.Figure):
+        scene = getattr(figure_value.layout, scene_key, None)
+        camera = getattr(scene, "camera", None) if scene is not None else None
+        if camera is None:
+            return None
+        camera_dict = camera.to_plotly_json() if hasattr(camera, "to_plotly_json") else dict(camera)
+        return camera_dict or None
+
+    if isinstance(figure_value, dict):
+        scene = (figure_value.get("layout") or {}).get(scene_key)
+        if isinstance(scene, dict) and isinstance(scene.get("camera"), dict):
+            camera_dict = dict(scene["camera"])
+            return camera_dict or None
+
+    return None
 
 
 def build_number_control(
@@ -2032,6 +2594,62 @@ def build_specular_app(
         "detector": detector_defaults,
         "diffraction": diffraction_defaults,
     }
+    initial_value_by_name = {
+        spec.name: getattr(config_by_group[spec.config_group], spec.attr_name)
+        for _, specs in CONTROL_SECTIONS
+        for spec in specs
+    }
+    initial_figure = set_figure_meta_value(
+        initial_figure,
+        SPECULAR_MAIN_SIGNATURE_META,
+        specular_signature_from_values(initial_value_by_name, SPECULAR_CONTROL_NAMES),
+    )
+    initial_figure = set_figure_meta_value(initial_figure, "simulation_summary", initial_summary)
+    initial_companion_figure = set_figure_meta_value(
+        initial_companion_figure,
+        SPECULAR_COMPANION_SIGNATURE_META,
+        specular_signature_from_values(initial_value_by_name, SPECULAR_COMPANION_CONTROL_NAMES),
+    )
+
+    def resolve_configs(value_by_name: dict[str, Any]):
+        return configs_from_values(
+            rays=value_by_name.get("rays"),
+            seed=value_by_name.get("seed"),
+            display_rays=value_by_name.get("display_rays"),
+            source_y=value_by_name.get("source_y"),
+            beam_width_x=value_by_name.get("beam_width_x"),
+            beam_width_z=value_by_name.get("beam_width_z"),
+            divergence_x=value_by_name.get("divergence_x"),
+            divergence_z=value_by_name.get("divergence_z"),
+            z_beam=value_by_name.get("z_beam"),
+            sample_width=value_by_name.get("sample_width"),
+            sample_height=value_by_name.get("sample_height"),
+            theta_i=value_by_name.get("theta_i"),
+            delta=value_by_name.get("delta"),
+            alpha=value_by_name.get("alpha"),
+            psi=value_by_name.get("psi"),
+            z_sample=value_by_name.get("z_sample"),
+            distance=value_by_name.get("distance"),
+            detector_width=value_by_name.get("detector_width"),
+            detector_height=value_by_name.get("detector_height"),
+            beta=value_by_name.get("beta"),
+            gamma=value_by_name.get("gamma"),
+            chi=value_by_name.get("chi"),
+            pixel_u=value_by_name.get("pixel_u"),
+            pixel_v=value_by_name.get("pixel_v"),
+            i0=value_by_name.get("i0"),
+            j0=value_by_name.get("j0"),
+            h_index=value_by_name.get("H"),
+            k_index=value_by_name.get("K"),
+            l_index=value_by_name.get("L"),
+            sigma_deg=value_by_name.get("sigma_deg"),
+            mosaic_gamma_deg=value_by_name.get("mosaic_gamma_deg"),
+            eta=value_by_name.get("eta"),
+            default_beam=beam_defaults,
+            default_sample=sample_defaults,
+            default_detector=detector_defaults,
+            default_diffraction=diffraction_defaults,
+        )
 
     def section(title: str, children: list[Any]):
         return html.Div(
@@ -2205,78 +2823,113 @@ def build_specular_app(
 
     @app.callback(
         Output("specular-fig", "figure"),
-        Output("specular-companion-fig", "figure"),
-        Output("specular-summary", "children"),
         Input({"type": "specular-slider", "name": ALL}, "value"),
         State({"type": "specular-slider", "name": ALL}, "id"),
         State("specular-fig", "relayoutData"),
-        State("specular-companion-fig", "relayoutData"),
+        State("specular-fig", "figure"),
     )
-    def update_specular_figure(
+    def update_specular_main_figure(
         slider_values,
         slider_ids,
         relayout_data,
-        companion_relayout_data,
+        current_figure,
     ):  # pragma: no cover - UI callback
-        value_by_name = {
-            control_id["name"]: control_value
-            for control_id, control_value in zip(slider_ids, slider_values, strict=True)
-        }
-        try:
-            beam_config, sample_config, detector_config, diffraction_config = configs_from_values(
-                rays=value_by_name.get("rays"),
-                seed=value_by_name.get("seed"),
-                display_rays=value_by_name.get("display_rays"),
-                source_y=value_by_name.get("source_y"),
-                beam_width_x=value_by_name.get("beam_width_x"),
-                beam_width_z=value_by_name.get("beam_width_z"),
-                divergence_x=value_by_name.get("divergence_x"),
-                divergence_z=value_by_name.get("divergence_z"),
-                z_beam=value_by_name.get("z_beam"),
-                sample_width=value_by_name.get("sample_width"),
-                sample_height=value_by_name.get("sample_height"),
-                theta_i=value_by_name.get("theta_i"),
-                delta=value_by_name.get("delta"),
-                alpha=value_by_name.get("alpha"),
-                psi=value_by_name.get("psi"),
-                z_sample=value_by_name.get("z_sample"),
-                distance=value_by_name.get("distance"),
-                detector_width=value_by_name.get("detector_width"),
-                detector_height=value_by_name.get("detector_height"),
-                beta=value_by_name.get("beta"),
-                gamma=value_by_name.get("gamma"),
-                chi=value_by_name.get("chi"),
-                pixel_u=value_by_name.get("pixel_u"),
-                pixel_v=value_by_name.get("pixel_v"),
-                i0=value_by_name.get("i0"),
-                j0=value_by_name.get("j0"),
-                h_index=value_by_name.get("H"),
-                k_index=value_by_name.get("K"),
-                l_index=value_by_name.get("L"),
-                sigma_deg=value_by_name.get("sigma_deg"),
-                mosaic_gamma_deg=value_by_name.get("mosaic_gamma_deg"),
-                eta=value_by_name.get("eta"),
-                default_beam=beam_defaults,
-                default_sample=sample_defaults,
-                default_detector=detector_defaults,
-                default_diffraction=diffraction_defaults,
-            )
-        except ValueError as exc:
-            message = f"Error: {exc}"
-            return (
-                build_specular_error_figure(str(exc)),
-                build_specular_companion_error_figure(str(exc)),
-                message,
-            )
+        value_by_name = control_values_from_ids(slider_ids, slider_values)
+        signature = specular_signature_from_values(value_by_name, SPECULAR_CONTROL_NAMES)
+        camera = extract_scene_camera(relayout_data)
+        if (
+            extract_figure_meta_value(current_figure, SPECULAR_MAIN_SIGNATURE_META) == signature
+            and extract_scene_camera_from_figure_value(current_figure) == camera
+        ):
+            raise PreventUpdate
 
-        return build_specular_dashboard_outputs(
+        try:
+            beam_config, sample_config, detector_config, diffraction_config = resolve_configs(value_by_name)
+        except ValueError as exc:
+            figure = set_figure_meta_value(
+                build_specular_error_figure(str(exc)),
+                SPECULAR_MAIN_SIGNATURE_META,
+                signature,
+            )
+            return set_figure_meta_value(figure, "simulation_summary", f"Error: {exc}")
+
+        figure, summary = build_specular_outputs(
             beam_config,
             sample_config,
             detector_config,
             diffraction_config,
-            camera=extract_scene_camera(relayout_data),
-            companion_camera=extract_scene_camera(companion_relayout_data),
+            camera=camera,
         )
+        figure = set_figure_meta_value(figure, SPECULAR_MAIN_SIGNATURE_META, signature)
+        return set_figure_meta_value(figure, "simulation_summary", summary)
+
+    @app.callback(
+        Output("specular-companion-fig", "figure"),
+        Input({"type": "specular-slider", "name": ALL}, "value"),
+        State({"type": "specular-slider", "name": ALL}, "id"),
+        State("specular-companion-fig", "relayoutData"),
+        State("specular-companion-fig", "figure"),
+    )
+    def update_specular_companion(
+        slider_values,
+        slider_ids,
+        companion_relayout_data,
+        current_figure,
+    ):  # pragma: no cover - UI callback
+        value_by_name = control_values_from_ids(slider_ids, slider_values)
+        signature = specular_signature_from_values(value_by_name, SPECULAR_COMPANION_CONTROL_NAMES)
+        camera = extract_scene_camera(companion_relayout_data)
+        if (
+            extract_figure_meta_value(current_figure, SPECULAR_COMPANION_SIGNATURE_META) == signature
+            and extract_scene_camera_from_figure_value(current_figure) == camera
+        ):
+            raise PreventUpdate
+
+        try:
+            _, sample_config, _, diffraction_config = resolve_configs(value_by_name)
+        except ValueError as exc:
+            return set_figure_meta_value(
+                build_specular_companion_error_figure(str(exc)),
+                SPECULAR_COMPANION_SIGNATURE_META,
+                signature,
+            )
+
+        figure = build_specular_companion_figure(
+            sample_config,
+            diffraction_config,
+            camera=camera,
+        )
+        return set_figure_meta_value(figure, SPECULAR_COMPANION_SIGNATURE_META, signature)
+
+    @app.callback(
+        Output("specular-summary", "children"),
+        Input({"type": "specular-slider", "name": ALL}, "value"),
+        State({"type": "specular-slider", "name": ALL}, "id"),
+        State("specular-summary", "children"),
+    )
+    def update_specular_summary(
+        slider_values,
+        slider_ids,
+        current_summary,
+    ):  # pragma: no cover - UI callback
+        value_by_name = control_values_from_ids(slider_ids, slider_values)
+        try:
+            beam_config, sample_config, detector_config, diffraction_config = resolve_configs(value_by_name)
+        except ValueError as exc:
+            message = f"Error: {exc}"
+            if current_summary == message:
+                raise PreventUpdate
+            return message
+
+        summary = build_specular_summary_output(
+            beam_config,
+            sample_config,
+            detector_config,
+            diffraction_config,
+        )
+        if current_summary == summary:
+            raise PreventUpdate
+        return summary
 
     return app
 

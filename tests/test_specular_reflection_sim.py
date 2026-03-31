@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import pytest
 from dash import dcc, html
+from dash.exceptions import PreventUpdate
 
 import specular_reflection_sim as specular
 from specular_reflection_sim import (
@@ -74,6 +75,10 @@ def render_component_text(component) -> str:
     if isinstance(component, html.Sub):
         return f"<sub>{render_component_text(component.children)}</sub>"
     return render_component_text(getattr(component, "children", None))
+
+
+def callback_by_output(app, output_key: str):
+    return app.callback_map[output_key]["callback"].__wrapped__
 
 
 def test_sample_frame_matches_nominal_incidence_rotation():
@@ -219,6 +224,17 @@ def test_trace_specular_simulation_reports_progress_messages():
     assert any("Generated 180 diffraction rays from 1 sample hits" in message for message in messages)
     assert any("Detector-plane intersections:" in message for message in messages)
     assert messages[-1] == "Trace complete"
+
+
+def test_trace_specular_simulation_rejects_theta_i_outside_zero_to_ninety():
+    with pytest.raises(ValueError, match="sample.theta_i_deg"):
+        trace_specular_simulation(sample_config=SampleConfig(theta_i_deg=-0.1))
+
+    with pytest.raises(ValueError, match="sample.theta_i_deg"):
+        trace_specular_simulation(sample_config=SampleConfig(theta_i_deg=90.1))
+
+    result = trace_specular_simulation(sample_config=SampleConfig(theta_i_deg=90.0))
+    assert result.sample_hit_count >= 0
 
 
 def test_build_specular_figure_uses_hkl_diffraction_titles_and_summary():
@@ -371,6 +387,20 @@ def test_theta_i_changes_live_specular_summary_even_without_active_detector_hits
     assert summary_low != summary_high
 
 
+def test_build_specular_figure_compacts_numeric_payload():
+    beam = BeamConfig(ray_count=4, display_rays=2)
+    sample = SampleConfig()
+    detector = DetectorConfig()
+    diffraction = DiffractionConfig(H=0, K=0, L=12)
+    result = trace_specular_simulation(beam, sample, detector, diffraction)
+
+    fig = build_specular_figure(result, beam, sample, detector, diffraction)
+
+    detector_trace = next(trace for trace in fig.data if getattr(trace, "name", "") == "Detector intersections")
+    assert np.asarray(detector_trace.x).dtype == np.float32
+    assert np.asarray(detector_trace.marker.color).dtype == np.float32
+
+
 def test_configs_from_values_falls_back_to_defaults_for_none_gui_values():
     default_beam = BeamConfig(ray_count=40, seed=9, display_rays=12)
     default_sample = SampleConfig(theta_i_deg=14.0, width=25.0)
@@ -480,6 +510,8 @@ def test_build_specular_app_only_keeps_theta_i_live():
     beta_control = find_component_by_id(app.layout, control_id("beta", "slider"))
     sigma_control = find_component_by_id(app.layout, control_id("sigma_deg", "slider"))
 
+    assert theta_control.min == pytest.approx(0.0)
+    assert theta_control.max == pytest.approx(90.0)
     assert theta_control.updatemode == "drag"
     assert beta_control.updatemode == "mouseup"
     assert sigma_control.updatemode == "mouseup"
@@ -588,11 +620,12 @@ def test_build_specular_app_renders_math_style_control_labels():
 
 def test_build_specular_app_callback_preserves_camera_and_updates_summary():
     app = build_specular_app()
-    callback = next(
-        value["callback"].__wrapped__
-        for key, value in app.callback_map.items()
-        if "specular-fig.figure" in key and "specular-summary.children" in key
-    )
+    main_callback = callback_by_output(app, "specular-fig.figure")
+    companion_callback = callback_by_output(app, "specular-companion-fig.figure")
+    summary_callback = callback_by_output(app, "specular-summary.children")
+    graph = find_component_by_id(app.layout, "specular-fig")
+    companion_graph = find_component_by_id(app.layout, "specular-companion-fig")
+    summary_component = find_component_by_id(app.layout, "specular-summary")
 
     slider_ids = [
         control_id("rays", "slider"),
@@ -662,7 +695,7 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
         5.0,
         0.5,
     ]
-    fig, companion_fig, summary = callback(
+    fig = main_callback(
         slider_values,
         slider_ids,
         {
@@ -676,6 +709,11 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
             "scene.camera.center.y": 0.0,
             "scene.camera.center.z": 0.0,
         },
+        graph.figure,
+    )
+    companion_fig = companion_callback(
+        slider_values,
+        slider_ids,
         {
             "scene.camera.eye.x": 1.25,
             "scene.camera.eye.y": 0.95,
@@ -684,7 +722,9 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
             "scene.camera.up.y": 0.0,
             "scene.camera.up.z": 1.0,
         },
+        companion_graph.figure,
     )
+    summary = summary_callback(slider_values, slider_ids, summary_component.children)
 
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.6)
     assert fig.layout.scene.camera.eye.y == pytest.approx(1.2)
@@ -700,3 +740,115 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
     assert "diffraction rays" in summary
     assert "detector-plane intersections" in summary
     assert "nominal 2θ" not in summary
+
+
+def test_specular_companion_callback_skips_main_only_updates():
+    app = build_specular_app()
+    callback = callback_by_output(app, "specular-companion-fig.figure")
+    companion_graph = find_component_by_id(app.layout, "specular-companion-fig")
+
+    slider_ids = [control_id(name, "slider") for name in specular.SPECULAR_CONTROL_NAMES]
+    value_map = {
+        "rays": 600,
+        "seed": 7,
+        "display_rays": 80,
+        "source_y": -150.0,
+        "beam_width_x": 0.15,
+        "beam_width_z": 0.15,
+        "divergence_x": 0.03,
+        "divergence_z": 0.03,
+        "z_beam": 0.0,
+        "sample_width": 20.0,
+        "sample_height": 80.0,
+        "theta_i": 10.0,
+        "delta": 0.0,
+        "alpha": 0.0,
+        "psi": 0.0,
+        "z_sample": 0.0,
+        "distance": 200.0,
+        "detector_width": 1000.0,
+        "detector_height": 1000.0,
+        "beta": 3.5,
+        "gamma": 0.0,
+        "chi": 0.0,
+        "pixel_u": 0.1,
+        "pixel_v": 0.1,
+        "i0": 1024.0,
+        "j0": 1024.0,
+        "H": 1,
+        "K": 1,
+        "L": 1,
+        "sigma_deg": 0.8,
+        "mosaic_gamma_deg": 5.0,
+        "eta": 0.5,
+    }
+    slider_values = [value_map[control_id["name"]] for control_id in slider_ids]
+
+    with pytest.raises(PreventUpdate):
+        callback(slider_values, slider_ids, None, companion_graph.figure)
+
+
+def test_specular_summary_callback_skips_display_only_updates():
+    app = build_specular_app()
+    callback = callback_by_output(app, "specular-summary.children")
+    summary_component = find_component_by_id(app.layout, "specular-summary")
+
+    slider_ids = [control_id(name, "slider") for name in specular.SPECULAR_CONTROL_NAMES]
+    value_map = {
+        "rays": 600,
+        "seed": 7,
+        "display_rays": 120,
+        "source_y": -150.0,
+        "beam_width_x": 0.15,
+        "beam_width_z": 0.15,
+        "divergence_x": 0.03,
+        "divergence_z": 0.03,
+        "z_beam": 0.0,
+        "sample_width": 20.0,
+        "sample_height": 80.0,
+        "theta_i": 10.0,
+        "delta": 0.0,
+        "alpha": 0.0,
+        "psi": 0.0,
+        "z_sample": 0.0,
+        "distance": 200.0,
+        "detector_width": 1000.0,
+        "detector_height": 1000.0,
+        "beta": 0.0,
+        "gamma": 0.0,
+        "chi": 0.0,
+        "pixel_u": 0.1,
+        "pixel_v": 0.1,
+        "i0": 1024.0,
+        "j0": 1024.0,
+        "H": 1,
+        "K": 1,
+        "L": 1,
+        "sigma_deg": 0.8,
+        "mosaic_gamma_deg": 5.0,
+        "eta": 0.5,
+    }
+    slider_values = [value_map[control_id["name"]] for control_id in slider_ids]
+
+    with pytest.raises(PreventUpdate):
+        callback(slider_values, slider_ids, summary_component.children)
+
+
+def test_trace_specular_simulation_reuses_projection_cache_for_calibration_only_changes():
+    specular._cached_projection_trace_context.cache_clear()
+    specular._cached_calibrated_projection_context.cache_clear()
+
+    beam = BeamConfig(ray_count=32, display_rays=8)
+    sample = SampleConfig()
+    diffraction = DiffractionConfig(H=0, K=0, L=12)
+    base_detector = DetectorConfig(pixel_u=0.1, pixel_v=0.1, i0=1024.0, j0=1024.0)
+    updated_detector = DetectorConfig(pixel_u=0.2, pixel_v=0.3, i0=900.0, j0=875.0)
+
+    trace_specular_simulation(beam, sample, base_detector, diffraction)
+    before = specular._cached_projection_trace_context.cache_info()
+
+    trace_specular_simulation(beam, sample, updated_detector, diffraction)
+    after = specular._cached_projection_trace_context.cache_info()
+
+    assert after.hits >= before.hits + 1
+    assert after.misses == before.misses

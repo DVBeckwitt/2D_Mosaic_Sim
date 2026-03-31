@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
 import plotly.graph_objects as go
 
 PeakDefaults = tuple[int, int, int, float, float, float]
@@ -96,3 +97,46 @@ def build_error_figure(title: str, message: str) -> go.Figure:
         plot_bgcolor="white",
     )
     return fig
+
+
+def compact_figure_numeric_payload(fig: go.Figure) -> None:
+    """Reduce figure payload size by casting numeric trace arrays to float32."""
+
+    keys = ("x", "y", "z", "u", "v", "w", "surfacecolor", "customdata")
+
+    def _cast_trace(trace: object) -> None:
+        for key in keys:
+            if not hasattr(trace, key):
+                continue
+            value = getattr(trace, key)
+            if value is None:
+                continue
+            try:
+                arr = np.asarray(value)
+            except Exception:
+                continue
+            if arr.dtype.kind not in ("f", "i", "u"):
+                continue
+            if key == "customdata" and arr.ndim > 0 and arr.dtype.kind != "f":
+                arr = arr.astype(np.float64)
+            try:
+                setattr(trace, key, arr.astype(np.float32))
+            except Exception:
+                continue
+        marker = getattr(trace, "marker", None)
+        if marker is not None and hasattr(marker, "color"):
+            try:
+                color = np.asarray(marker.color)
+            except Exception:
+                color = None
+            if color is not None and color.dtype.kind in ("f", "i", "u"):
+                try:
+                    marker.color = color.astype(np.float32)
+                except Exception:
+                    pass
+
+    for trace in fig.data:
+        _cast_trace(trace)
+    for frame in fig.frames:
+        for trace in frame.data:
+            _cast_trace(trace)

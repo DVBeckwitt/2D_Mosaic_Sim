@@ -56,13 +56,16 @@ def _controls(app):
     return _sidebar(app).children[5].children
 
 
-def _figure_callback(app):
-    return next(
-        value["callback"].__wrapped__
-        for key, value in app.callback_map.items()
-        if "simulation-figure.figure" in key
-        and "simulation-specular-companion-figure.figure" in key
-    )
+def _callback_by_output(app, output_key: str):
+    return app.callback_map[output_key]["callback"].__wrapped__
+
+
+def _main_figure_callback(app):
+    return _callback_by_output(app, "simulation-figure.figure")
+
+
+def _companion_figure_callback(app):
+    return _callback_by_output(app, "simulation-specular-companion-figure.figure")
 
 
 def test_unified_registry_exposes_all_simulations():
@@ -401,10 +404,11 @@ def test_powder_qr_clientside_callback_updates_ring_and_cylinder_modes():
 
 def test_unified_reciprocal_space_callback_preserves_camera_from_relayout_data():
     app = build_unified_app(initial_mode="reciprocal-space")
-    callback = _figure_callback(app)
+    callback = _main_figure_callback(app)
     state = app.layout.children[0].data
+    graph = _graph(app)
 
-    fig, companion_fig = callback(
+    fig = callback(
         "reciprocal-space",
         state,
         {},
@@ -415,21 +419,21 @@ def test_unified_reciprocal_space_callback_preserves_camera_from_relayout_data()
                 "center": {"x": 0.0, "y": 0.0, "z": 0.0},
             }
         },
-        None,
+        graph.figure,
     )
 
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.6)
     assert fig.layout.scene.camera.eye.y == pytest.approx(1.1)
     assert fig.layout.scene.camera.eye.z == pytest.approx(0.9)
-    assert len(companion_fig.data) == 0
 
 
 def test_unified_detector_callback_preserves_camera_from_relayout_data():
     app = build_unified_app(initial_mode="detector-view")
-    callback = _figure_callback(app)
+    callback = _main_figure_callback(app)
     state = app.layout.children[0].data
+    graph = _graph(app)
 
-    fig, companion_fig = callback(
+    fig = callback(
         "detector-view",
         state,
         {},
@@ -440,21 +444,21 @@ def test_unified_detector_callback_preserves_camera_from_relayout_data():
                 "center": {"x": 0.0, "y": 0.0, "z": 0.0},
             }
         },
-        None,
+        graph.figure,
     )
 
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.8)
     assert fig.layout.scene.camera.eye.y == pytest.approx(1.0)
     assert fig.layout.scene.camera.eye.z == pytest.approx(0.6)
-    assert len(companion_fig.data) == 0
 
 
 def test_unified_fibrous_callback_preserves_camera_from_relayout_data():
     app = build_unified_app(initial_mode="fibrous-view")
-    callback = _figure_callback(app)
+    callback = _main_figure_callback(app)
     state = app.layout.children[0].data
+    graph = _graph(app)
 
-    fig, companion_fig = callback(
+    fig = callback(
         "fibrous-view",
         state,
         {},
@@ -465,21 +469,23 @@ def test_unified_fibrous_callback_preserves_camera_from_relayout_data():
                 "center": {"x": 0.0, "y": 0.0, "z": 0.0},
             }
         },
-        None,
+        graph.figure,
     )
 
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.7)
     assert fig.layout.scene.camera.eye.y == pytest.approx(0.9)
     assert fig.layout.scene.camera.eye.z == pytest.approx(0.7)
-    assert len(companion_fig.data) == 0
 
 
 def test_unified_specular_callback_preserves_camera_from_relayout_data():
     app = build_unified_app(initial_mode="specular-view")
-    callback = _figure_callback(app)
+    main_callback = _main_figure_callback(app)
+    companion_callback = _companion_figure_callback(app)
     state = app.layout.children[0].data
+    graph = _graph(app)
+    companion_graph = _specular_companion_graph(app)
 
-    fig, companion_fig = callback(
+    fig = main_callback(
         "specular-view",
         state,
         {},
@@ -490,6 +496,12 @@ def test_unified_specular_callback_preserves_camera_from_relayout_data():
                 "center": {"x": 0.0, "y": 0.0, "z": 0.0},
             }
         },
+        graph.figure,
+    )
+    companion_fig = companion_callback(
+        "specular-view",
+        state,
+        {},
         {
             "scene.camera": {
                 "eye": {"x": 1.2, "y": 0.9, "z": 0.7},
@@ -497,6 +509,7 @@ def test_unified_specular_callback_preserves_camera_from_relayout_data():
                 "center": {"x": 0.0, "y": 0.0, "z": 0.0},
             }
         },
+        companion_graph.figure,
     )
 
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.55)
@@ -509,6 +522,36 @@ def test_unified_specular_callback_preserves_camera_from_relayout_data():
     assert "HKL = (1, 1, 1)" in fig.layout.meta["simulation_summary"]
     assert "diffraction rays" in fig.layout.meta["simulation_summary"]
     assert "nominal 2θ" not in fig.layout.meta["simulation_summary"]
+
+
+def test_unified_specular_companion_callback_skips_main_only_changes():
+    app = build_unified_app(initial_mode="specular-view")
+    callback = _companion_figure_callback(app)
+    state = app.layout.children[0].data
+    companion_graph = _specular_companion_graph(app)
+
+    updated_state = dict(state)
+    updated_state["specular-view"] = dict(state["specular-view"])
+    updated_state["specular-view"]["beta"] = 4.0
+
+    with pytest.raises(PreventUpdate):
+        callback(
+            "specular-view",
+            updated_state,
+            {},
+            None,
+            companion_graph.figure,
+        )
+
+
+def test_unified_summary_callback_no_longer_reads_figure_payload():
+    app = build_unified_app(initial_mode="specular-view")
+    callback_entry = app.callback_map["..simulation-summary.children...simulation-summary.style.."]
+    inputs = {(item["id"], item["property"]) for item in callback_entry["inputs"]}
+
+    assert ("simulation-mode", "value") in inputs
+    assert ("simulation-state", "data") in inputs
+    assert ("simulation-figure", "figure") not in inputs
 
 
 def test_powder_selection_callback_caches_values():
