@@ -207,8 +207,6 @@ def test_unified_specular_mode_restores_all_parameter_sections_and_controls():
                 "chi",
                 "pixel_u",
                 "pixel_v",
-                "i0",
-                "j0",
             ],
         ),
         (

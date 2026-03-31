@@ -163,11 +163,15 @@ def test_hkl_diffraction_family_projects_from_sample_hit_point():
     )
 
     assert result.sample_hit_count == 1
-    assert result.diffraction_ray_count == 180
-    assert result.exit_dirs.shape == (180, 3)
-    assert result.exit_weights.shape == (180,)
+    assert 0 < result.diffraction_ray_count < 180
+    assert result.exit_dirs.shape == (result.diffraction_ray_count, 3)
+    assert result.exit_weights.shape == (result.diffraction_ray_count,)
     assert np.array_equal(np.unique(result.exit_parent_indices), np.array([0]))
-    np.testing.assert_allclose(np.linalg.norm(result.exit_dirs, axis=1), np.ones(180))
+    np.testing.assert_allclose(
+        np.linalg.norm(result.exit_dirs, axis=1),
+        np.ones(result.diffraction_ray_count),
+    )
+    assert np.all(result.exit_dirs @ result.sample.normal > 0.0)
     assert result.detector_plane_hit_count == result.plane_hit_indices.size
     assert result.detector_hit_count <= result.detector_plane_hit_count
     assert float(np.max(result.exit_weights)) > 0.0
@@ -221,7 +225,10 @@ def test_trace_specular_simulation_reports_progress_messages():
     assert any("Sample hits on finite sample: 1/1" in message for message in messages)
     assert any("Building HKL diffraction ring for (0, 0, 12)" in message for message in messages)
     assert any("Expanding diffraction families from sample hits: 1/1" in message for message in messages)
-    assert any("Generated 180 diffraction rays from 1 sample hits" in message for message in messages)
+    assert any(
+        f"Generated {result.diffraction_ray_count} diffraction rays from 1 sample hits" in message
+        for message in messages
+    )
     assert any("Detector-plane intersections:" in message for message in messages)
     assert messages[-1] == "Trace complete"
 
@@ -284,8 +291,9 @@ def test_build_specular_figure_uses_hkl_diffraction_titles_and_summary():
     assert fig.layout.yaxis.range == (-42.0, 42.0)
     sample_domain = fig.layout.xaxis.domain[1] - fig.layout.xaxis.domain[0]
     detector_domain = fig.layout.xaxis2.domain[1] - fig.layout.xaxis2.domain[0]
+    assert sample_domain > 0.18
     assert sample_domain < detector_domain
-    assert fig.layout.xaxis2.scaleanchor == "y"
+    assert fig.layout.xaxis2.scaleanchor == "y2"
     assert fig.layout.xaxis2.scaleratio == 1
     assert fig.layout.xaxis2.range == fig.layout.yaxis2.range
 
@@ -353,7 +361,7 @@ def test_build_specular_figure_hides_off_detector_intersections_in_detector_plan
     result = trace_specular_simulation(beam, sample, detector, diffraction)
     fig = build_specular_figure(result, beam, sample, detector, diffraction)
 
-    assert result.detector_plane_hit_count == 180
+    assert result.detector_plane_hit_count == result.diffraction_ray_count
     assert result.detector_hit_count == 0
     assert not any(getattr(trace, "name", "") == "Off-detector intersections" for trace in fig.data)
     assert not any(getattr(trace, "name", "") == "Detector hits" for trace in fig.data)
@@ -544,8 +552,6 @@ def test_build_specular_app_restores_all_parameter_slider_and_input_controls():
         "chi",
         "pixel_u",
         "pixel_v",
-        "i0",
-        "j0",
         "H",
         "K",
         "L",
@@ -557,6 +563,11 @@ def test_build_specular_app_restores_all_parameter_slider_and_input_controls():
     for name in expected_control_names:
         assert find_component_by_id(app.layout, control_id(name, "slider")) is not None
         assert find_component_by_id(app.layout, control_id(name, "input")) is not None
+
+    assert find_component_by_id(app.layout, control_id("i0", "slider")) is None
+    assert find_component_by_id(app.layout, control_id("j0", "slider")) is None
+    assert find_component_by_id(app.layout, control_id("i0", "input")) is None
+    assert find_component_by_id(app.layout, control_id("j0", "input")) is None
 
 
 def test_build_specular_app_uses_supplied_initial_outputs(monkeypatch):
@@ -594,7 +605,6 @@ def test_build_specular_app_renders_math_style_control_labels():
     beam_width_label = find_label_by_html_for(app.layout, str(control_id("beam_width_x", "slider")))
     divergence_label = find_label_by_html_for(app.layout, str(control_id("divergence_z", "slider")))
     theta_label = find_label_by_html_for(app.layout, str(control_id("theta_i", "slider")))
-    i0_label = find_label_by_html_for(app.layout, str(control_id("i0", "slider")))
     h_label = find_label_by_html_for(app.layout, str(control_id("H", "slider")))
     sigma_label = find_label_by_html_for(app.layout, str(control_id("sigma_deg", "slider")))
     gamma_label = find_label_by_html_for(app.layout, str(control_id("mosaic_gamma_deg", "slider")))
@@ -603,7 +613,6 @@ def test_build_specular_app_renders_math_style_control_labels():
     assert beam_width_label is not None
     assert divergence_label is not None
     assert theta_label is not None
-    assert i0_label is not None
     assert h_label is not None
     assert sigma_label is not None
     assert gamma_label is not None
@@ -611,7 +620,6 @@ def test_build_specular_app_renders_math_style_control_labels():
     assert render_component_text(beam_width_label.children) == "w<sub>x</sub>"
     assert render_component_text(divergence_label.children) == "Δθ<sub>z</sub> (deg)"
     assert render_component_text(theta_label.children) == "θ<sub>i</sub> (deg)"
-    assert render_component_text(i0_label.children) == "i<sub>0</sub>"
     assert render_component_text(h_label.children) == "H"
     assert render_component_text(sigma_label.children) == "σ (deg)"
     assert render_component_text(gamma_label.children) == "Γ (deg)"
@@ -652,8 +660,6 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
         control_id("chi", "slider"),
         control_id("pixel_u", "slider"),
         control_id("pixel_v", "slider"),
-        control_id("i0", "slider"),
-        control_id("j0", "slider"),
         control_id("H", "slider"),
         control_id("K", "slider"),
         control_id("L", "slider"),
@@ -686,8 +692,6 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
         0.0,
         0.1,
         0.1,
-        1024.0,
-        1024.0,
         0,
         0,
         12,

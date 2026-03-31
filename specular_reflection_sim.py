@@ -217,8 +217,6 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
             ControlSpec("chi", "χ (deg)", "detector", "chi_deg", 0.05, -180.0, 180.0),
             ControlSpec("pixel_u", MathLabel("p", "u"), "detector", "pixel_u", 0.01, 0.000001, 5.0),
             ControlSpec("pixel_v", MathLabel("p", "v"), "detector", "pixel_v", 0.01, 0.000001, 5.0),
-            ControlSpec("i0", MathLabel("i", "0"), "detector", "i0", 1.0, 0.0, 4096.0),
-            ControlSpec("j0", MathLabel("j", "0"), "detector", "j0", 1.0, 0.0, 4096.0),
         ),
     ),
     (
@@ -1358,6 +1356,12 @@ def _cached_projection_trace_context(
             Gamma,
             eta,
         ).reshape(-1)
+        # Rays that remain tangent to the sample plane or head into the sample
+        # are absorbed at the surface instead of propagating through to the detector.
+        escaping_mask = exit_dirs_local[:, :, 2].reshape(-1) > EPSILON
+        exit_parent_indices = exit_parent_indices[escaping_mask]
+        exit_dirs = exit_dirs[escaping_mask]
+        exit_weights = exit_weights[escaping_mask]
         exit_origins = sample_context.hit_points[exit_parent_indices]
         projection_mask, plane_points, plane_uv = _project_rays_to_detector_uv(
             exit_origins,
@@ -1700,7 +1704,7 @@ def build_specular_figure(
         rows=1,
         cols=3,
         specs=[[{"type": "scene"}, {"type": "xy"}, {"type": "xy"}]],
-        column_widths=[0.54, 0.16, 0.30],
+        column_widths=[0.46, 0.24, 0.30],
         subplot_titles=("Lab Geometry", "Sample Footprint", "Detector Plane"),
     )
 
@@ -2138,7 +2142,7 @@ def build_specular_figure(
     fig.update_xaxes(
         title="u",
         range=detector_axis_range,
-        scaleanchor="y",
+        scaleanchor="y2",
         scaleratio=1,
         constrain="domain",
         row=1,
