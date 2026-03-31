@@ -6,7 +6,7 @@ Interactive tools for visualizing how reciprocal-space features intersect the Ew
 
 All current PNG assets in `docs/images` are shown below so the README top matches what is in the repo right now.
 
-### `docs/images/mono_cylinder` (captured from `mono_simulator.py`)
+### `docs/images/mono_cylinder` (captured from `single_crystal_powder_cylinder_viewer.py`)
 
 | Single Crystal | 3D Powder |
 | --- | --- |
@@ -14,7 +14,7 @@ All current PNG assets in `docs/images` are shown below so the README top matche
 | 2D Powder | Cylinder |
 | ![2D powder reciprocal-space view](docs/images/mono_cylinder/mono_2d_powder.png) | ![Cylinder reciprocal-space view](docs/images/mono_cylinder/mono_cylinder.png) |
 
-### Mono/Cylinder mode explanations
+### Reciprocal-space mode explanations
 
 1. `Single Crystal`: Discrete reciprocal-lattice points. You only get scattering when a point lies on the Ewald sphere.
 2. `3D Powder`: Lattice points are azimuthally averaged into full spherical shells (`|G|` constant), producing full rings when intersected.
@@ -25,50 +25,25 @@ All current PNG assets in `docs/images` are shown below so the README top matche
 
 These are intentionally temporary images. Keep the same filenames when you replace them with real captures.
 
-### Detector Mapping (`simulate_detector.py`)
+### Detector Mosaic/Ewald View (`detector_mosaic_ewald_view.py`)
 
 ![Detector feature placeholder](docs/images/placeholders/detector_placeholder.png)
 
 - File: `docs/images/placeholders/detector_placeholder.png`
-- Purpose: 3-panel view linking reciprocal-space geometry to detector intensity and centered integration traces.
-- What to capture: Full figure with all three panels visible, including colorbar and integration subplot.
-- Run: `python simulate_detector.py`
+- Purpose: 3-panel browser UI linking reciprocal-space geometry to detector intensity and centered integration, with live `theta_i`, HKL, `σ`, `Γ`, and `η` controls in the GUI.
+- What to capture: Full figure with all three panels visible, including colorbar, integration subplot, and the `theta_i` control.
+- Run: `python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5`
+  The CLI values seed the initial browser state; you can then change HKL and the mosaic parameters directly in the GUI.
 
-### Rocking Animation (`simulate_mosaic.py`)
-
-![Rocking feature placeholder](docs/images/placeholders/rocking_placeholder.png)
-
-- File: `docs/images/placeholders/rocking_placeholder.png`
-- Purpose: Shows Bragg-sphere rotation over rocking angle `theta_i`, with mosaic-intensity coloring.
-- What to capture: A frame where ring intersection and angle annotation are both easy to see.
-- Run: `python simulate_mosaic.py`
-
-### Fibrous Cylinder (`fibrous_simulator.py`)
+### Fibrous Bragg/Ewald Intersections (`fibrous_bragg_ewald_intersections.py`)
 
 ![Fibrous feature placeholder](docs/images/placeholders/fibrous_placeholder.png)
 
 - File: `docs/images/placeholders/fibrous_placeholder.png`
-- Purpose: Static Bragg/Ewald/cylinder intersection view with Miller-index control from CLI arguments.
+- Purpose: Browser-based Bragg/Ewald/cylinder intersection view with live HKL / `σ` / `Γ` / `η` controls below the plot.
 - What to capture: A frame showing all three overlap curves clearly (`Ewald/Bragg`, `Cylinder/Ewald`, `Cylinder/Bragg`).
-- Run: `python fibrous_simulator.py 0 0 12`
-
-### Cylinder PDF Dash App (`simulate_cylinder_pdf.py`)
-
-![Cylinder PDF feature placeholder](docs/images/placeholders/pdf_placeholder.png)
-
-- File: `docs/images/placeholders/pdf_placeholder.png`
-- Purpose: Point-cloud probability/intensity distribution for tilted rods with interactive parameter controls.
-- What to capture: Graph and input controls (range slider + `x0`, `y0`, `sigma_I`, `sigma_phi`) in one view.
-- Run: `python simulate_cylinder_pdf.py`
-
-### Flat Detector Pattern (`simulate_screen.py`)
-
-![Screen feature placeholder](docs/images/placeholders/screen_placeholder.png)
-
-- File: `docs/images/placeholders/screen_placeholder.png`
-- Purpose: Projects reciprocal-space ring intersections onto a distant planar detector (`y = det_y`).
-- What to capture: Detector pattern with axes and intensity colorbar visible.
-- Run: `python simulate_screen.py`
+- Run: `python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5`
+  The CLI values seed the initial browser state; you can then change HKL and the mosaic parameters directly in the GUI.
 
 ## Installation
 
@@ -83,19 +58,22 @@ pip install -e .
 Run scripts from the project root:
 
 ```bash
-python mono_simulator.py                    # interactive mono + mode switcher
-python mono_simulator.py --full-quality     # higher quality render profile
-python simulate_detector.py                 # detector mapping view
-python simulate_mosaic.py                   # rocking animation
-python fibrous_simulator.py 0 0 12          # fibrous cylinder geometry
-python simulate_cylinder_pdf.py             # Dash cylinder PDF app
-python simulate_screen.py                   # flat detector projection
+python mosaic_simulator.py                                          # unified GUI for the supported simulations
+python single_crystal_powder_cylinder_viewer.py                # single-crystal / 3D powder / 2D powder / cylinder views
+python single_crystal_powder_cylinder_viewer.py --full-quality # higher quality render profile
+python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # launches the detector Dash UI with live HKL/mosaic controls
+python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # fibrous Bragg/Ewald/cylinder GUI with live HKL/mosaic controls
 ```
+
+The unified GUI includes these switchable modes in one Dash app:
+
+- `Powder Views`
+- `Mosaic View`
+- `Ewald Cylinder`
 
 Installed console entry points:
 
-- `mosaic-detector`
-- `mosaic-rocking`
-- `mosaic-cylinder`
-- `mosaic-cylinder-pdf`
-- `mosaic-screen`
+- `mosaic-simulator`
+- `mosaic-single-crystal-powder-cylinder-viewer`
+- `mosaic-detector-mosaic-ewald-view`
+- `mosaic-fibrous-bragg-ewald-intersections`

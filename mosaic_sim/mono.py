@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Command-line entry for a single Ewald-sphere visualisation.
+"""Command-line entry for single-crystal, powder, and cylinder views.
 
-This script exposes a minimal view that only shows the Ewald sphere and allows
-interactive control of the incident angle ``theta_i``.
+This viewer lets you switch between single-crystal, 3D powder, 2D powder, and
+cylindrical reciprocal-space intersections while stepping through ``theta_i``.
 """
 
 import argparse
@@ -14,7 +14,8 @@ import webbrowser
 import numpy as np
 import plotly.graph_objects as go
 from plotly.colors import qualitative
-from mosaic_sim.geometry import rot_x, sphere
+
+from .geometry import rot_x, sphere
 
 
 LAMBDA_CU_K_ALPHA = 1.5406  # Å
@@ -68,6 +69,8 @@ CYLINDER_RING_LINE_WIDTH = 12  # px
 LATTICE_HIT_TOLERANCE = 2e-3
 AXIS_RING_TOLERANCE = 1e-9
 EWALD_DEFAULT_OPACITY = 0.9
+DEFAULT_RENDER_PROFILE = "balanced"
+MONO_CAMERA_UIREVISION = "mono-camera"
 
 RENDER_PROFILE_SAMPLES: dict[str, dict[str, int]] = {
     "balanced": dict(
@@ -95,6 +98,70 @@ RENDER_PROFILE_SAMPLES: dict[str, dict[str, int]] = {
         circle_samples=200,
     ),
 }
+
+__all__ = [
+    "RENDER_PROFILE_SAMPLES",
+    "MONO_CAMERA_UIREVISION",
+    "normalize_mono_params",
+    "build_mono_figure",
+    "build_interactive_page",
+    "main",
+]
+
+
+def normalize_mono_params(
+    theta_min_deg: float | None = None,
+    theta_max_deg: float | None = None,
+    frames: int | None = None,
+    render_profile: str | None = None,
+    *,
+    defaults: tuple[float, float, int, str] = (
+        THETA_DEFAULT_MIN,
+        THETA_DEFAULT_MAX,
+        N_FRAMES_DEFAULT,
+        DEFAULT_RENDER_PROFILE,
+    ),
+) -> tuple[float, float, int, str]:
+    """Normalize and validate mono-view controls."""
+
+    (
+        default_theta_min_deg,
+        default_theta_max_deg,
+        default_frames,
+        default_render_profile,
+    ) = defaults
+
+    theta_min_val = (
+        default_theta_min_deg if theta_min_deg is None else float(theta_min_deg)
+    )
+    theta_max_val = (
+        default_theta_max_deg if theta_max_deg is None else float(theta_max_deg)
+    )
+    frames_val = default_frames if frames is None else int(frames)
+    render_profile_val = (
+        default_render_profile if render_profile is None else str(render_profile).lower()
+    )
+
+    if theta_min_val < 0.0:
+        raise ValueError("theta_min must be greater than or equal to 0 degrees")
+    if theta_max_val < theta_min_val:
+        raise ValueError("theta_max must be greater than or equal to theta_min")
+    if theta_max_val > 90.0:
+        raise ValueError("theta_max must be less than or equal to 90 degrees")
+    if frames_val < 2:
+        raise ValueError("frames must be at least 2")
+    if render_profile_val not in RENDER_PROFILE_SAMPLES:
+        options = ", ".join(sorted(RENDER_PROFILE_SAMPLES))
+        raise ValueError(
+            f"render_profile must be one of: {options}"
+        )
+
+    return (
+        math.radians(theta_min_val),
+        math.radians(theta_max_val),
+        frames_val,
+        render_profile_val,
+    )
 
 
 def _scaled_opacity(
@@ -1085,11 +1152,13 @@ def build_mono_figure(
             ),
             aspectmode="cube",
             bgcolor="rgba(0,0,0,0)",
+            uirevision=MONO_CAMERA_UIREVISION,
             camera=dict(eye=dict(x=CAMERA_EYE[0], y=CAMERA_EYE[1], z=CAMERA_EYE[2])),
         ),
         paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, b=0, t=0),
         showlegend=False,
+        uirevision=MONO_CAMERA_UIREVISION,
         sliders=sliders,
         updatemenus=[
             dict(
@@ -1223,7 +1292,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Mono simulator</title>
+  <title>Single-crystal, powder, and cylinder viewer</title>
   <style>
     html, body {{ height: 100%; width: 100%; margin: 0; padding: 0; }}
     body {{ font-family: Arial, sans-serif; }}
@@ -1242,6 +1311,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
       <div id="controls">
         <button id="open-selector">Open powder selector window</button>
         <button id="download-all" style="margin-left:8px;">Download all views</button>
+        <button id="toggle-controls" style="margin-left:8px;">Disable buttons</button>
         <label style="margin-left:12px;">Ewald opacity:
           <input id="ewald-opacity" type="range" min="0" max="1" step="0.05" value="{EWALD_DEFAULT_OPACITY:.2f}">
           <span id="ewald-opacity-value">{EWALD_DEFAULT_OPACITY:.2f}</span>
@@ -1265,6 +1335,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const cylinderSelectorHtml = `{cylinder_selector_controls}`;
         const selectorBtn = document.getElementById('open-selector');
         const downloadBtn = document.getElementById('download-all');
+        const toggleControlsBtn = document.getElementById('toggle-controls');
         const selectorStatus = document.getElementById('selector-status');
         const ewaldSlider = document.getElementById('ewald-opacity');
         const ewaldValue = document.getElementById('ewald-opacity-value');
@@ -1281,9 +1352,82 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
         const intersectionIndices = Array.isArray(meta.intersection_indices)
           ? meta.intersection_indices
           : [];
+        const basePlotMenus = figure.layout?.updatemenus
+          ? JSON.parse(JSON.stringify(figure.layout.updatemenus))
+          : [];
         let selectorMode = '3d';
         let selectorWin = null;
         let snappingSlider = false;
+        let controlsDisabled = false;
+        let downloadBusy = false;
+
+        function cloneSceneCamera() {{
+          const camera = figure.layout?.scene?.camera;
+          return camera ? JSON.parse(JSON.stringify(camera)) : null;
+        }}
+
+        function withCurrentCamera(layoutUpdate = {{}}) {{
+          const camera = cloneSceneCamera();
+          if (!camera) {{
+            return layoutUpdate;
+          }}
+          return {{ ...layoutUpdate, 'scene.camera': camera }};
+        }}
+
+        function updateFigure(dataUpdate, layoutUpdate = {{}}) {{
+          return Plotly.update(figure, dataUpdate, withCurrentCamera(layoutUpdate));
+        }}
+
+        function relayoutFigure(layoutUpdate = {{}}) {{
+          return Plotly.relayout(figure, withCurrentCamera(layoutUpdate));
+        }}
+
+        function setModebarVisibility(visible) {{
+          window.requestAnimationFrame(() => {{
+            figure.querySelectorAll('.modebar').forEach((bar) => {{
+              bar.style.display = visible ? '' : 'none';
+              bar.style.pointerEvents = visible ? '' : 'none';
+            }});
+          }});
+        }}
+
+        async function setPlotButtonsVisible(visible) {{
+          const menus = visible ? JSON.parse(JSON.stringify(basePlotMenus)) : [];
+          await relayoutFigure({{ updatemenus: menus }});
+          setModebarVisibility(visible);
+        }}
+
+        function setSelectorControlsDisabled(targetWin, disabled) {{
+          if (!targetWin || targetWin.closed) {{
+            return;
+          }}
+          targetWin.document.querySelectorAll('button, input').forEach((control) => {{
+            control.disabled = disabled;
+          }});
+        }}
+
+        function syncMainControlState() {{
+          if (selectorBtn) {{
+            selectorBtn.disabled = controlsDisabled;
+          }}
+          if (downloadBtn) {{
+            downloadBtn.disabled = controlsDisabled || downloadBusy;
+          }}
+          if (toggleControlsBtn) {{
+            toggleControlsBtn.textContent = controlsDisabled ? 'Enable buttons' : 'Disable buttons';
+            toggleControlsBtn.disabled = downloadBusy;
+          }}
+        }}
+
+        async function setControlsDisabled(disabled) {{
+          controlsDisabled = !!disabled;
+          syncMainControlState();
+          setSelectorControlsDisabled(selectorWin, controlsDisabled);
+          await setPlotButtonsVisible(!controlsDisabled);
+          selectorStatus.textContent = controlsDisabled
+            ? 'Buttons disabled. Click "Enable buttons" to restore them.'
+            : 'Buttons restored.';
+        }}
 
         function applyEwaldOpacity(alpha) {{
           const clamped = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : defaultEwaldAlpha));
@@ -1381,7 +1525,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             return;
           }}
 
-          downloadBtn.disabled = true;
+          downloadBusy = true;
+          syncMainControlState();
           selectorStatus.textContent = 'Preparing downloads...';
 
           const originalVis = traceVisibilitySnapshot();
@@ -1392,9 +1537,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             ? JSON.parse(JSON.stringify(figure.layout.updatemenus))
             : null;
           const hideControlsForExport = () =>
-            Plotly.relayout(figure, {{ sliders: [], updatemenus: [] }});
+            relayoutFigure({{ sliders: [], updatemenus: [] }});
           const restoreControls = () =>
-            Plotly.relayout(figure, {{
+            relayoutFigure({{
               sliders: sliderBackup || [],
               updatemenus: menuBackup || [],
             }});
@@ -1409,7 +1554,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             await hideControlsForExport();
             for (const mode of modes) {{
               const vis = Array.from(mode.vis, (v) => !!v);
-              await Plotly.update(figure, {{ visible: vis }});
+              await updateFigure({{ visible: vis }});
               const uri = await Plotly.toImage(figure, {{
                 format: 'png',
                 height: 1800,
@@ -1429,9 +1574,12 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             selectorStatus.textContent = 'Download failed. Please retry.';
             console.error(err);
           }} finally {{
-            await Plotly.update(figure, {{ visible: originalVis }});
+            await updateFigure({{ visible: originalVis }});
             await restoreControls();
-            downloadBtn.disabled = false;
+            downloadBusy = false;
+            syncMainControlState();
+            setSelectorControlsDisabled(selectorWin, controlsDisabled);
+            setModebarVisibility(!controlsDisabled);
           }}
         }}
 
@@ -1483,7 +1631,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
               traces.forEach((idx) => {{ vis[idx] = cb.checked; }});
             }});
             vis.forEach((val, i) => {{ state[i] = val; }});
-            Plotly.update(figure, {{visible: vis}});
+            updateFigure({{visible: vis}});
             syncCheckboxesFromState();
           }}
 
@@ -1504,6 +1652,8 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
               applySelection();
             }});
           }}
+
+          setSelectorControlsDisabled(targetWin, controlsDisabled);
 
           return applySelection;
         }}
@@ -1547,13 +1697,22 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
           }});
         }}
 
+        if (toggleControlsBtn) {{
+          toggleControlsBtn.addEventListener('click', async () => {{
+            await setControlsDisabled(!controlsDisabled);
+          }});
+        }}
+
+        syncMainControlState();
+        setModebarVisibility(true);
+
         figure.on('plotly_buttonclicked', (evt) => {{
           const label = evt.button && evt.button.label;
           if (label === 'Single crystal') {{
-            Plotly.update(figure, {{visible: latticeVis}});
+            updateFigure({{visible: latticeVis}});
           }} else if (label === '3D Powder') {{
             selectorMode = '3d';
-            Plotly.update(figure, {{visible: gSphereState}});
+            updateFigure({{visible: gSphereState}});
             const applyFn = openSelectorWindow(true, '3d');
             if (applyFn) {{
               applySelection = applyFn;
@@ -1561,7 +1720,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             }}
           }} else if (label === '2D Powder') {{
             selectorMode = '2d';
-            Plotly.update(figure, {{visible: gRingState}});
+            updateFigure({{visible: gRingState}});
             const applyFn = openSelectorWindow(true, '2d');
             if (applyFn) {{
               applySelection = applyFn;
@@ -1569,7 +1728,7 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
             }}
           }} else if (label === 'Cylinder') {{
             selectorMode = 'cyl';
-            Plotly.update(figure, {{visible: gCylinderState}});
+            updateFigure({{visible: gCylinderState}});
             const applyFn = openSelectorWindow(true, 'cyl');
             if (applyFn) {{
               applySelection = applyFn;
@@ -1585,7 +1744,9 @@ def build_interactive_page(fig: go.Figure, context: dict) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Single Ewald-sphere simulator")
+    parser = argparse.ArgumentParser(
+        description="Single-crystal, 3D powder, 2D powder, and cylinder reciprocal-space viewer"
+    )
     parser.add_argument(
         "--theta-min",
         type=float,
@@ -1628,18 +1789,22 @@ def main(
     *,
     full_quality: bool = False,
 ) -> None:
-    """Launch the mono simulator."""
+    """Launch the single-crystal, powder, and cylinder viewer."""
     import plotly.io as pio
 
     pio.renderers.default = "browser"
 
-    th_min = math.radians(theta_min if theta_min is not None else THETA_DEFAULT_MIN)
-    th_max = math.radians(theta_max if theta_max is not None else THETA_DEFAULT_MAX)
-
     # Keep --low as a compatibility alias for the balanced profile.
-    render_profile = "full" if full_quality else "balanced"
+    render_profile = "full" if full_quality else DEFAULT_RENDER_PROFILE
     if low_quality:
-        render_profile = "balanced"
+        render_profile = DEFAULT_RENDER_PROFILE
+
+    th_min, th_max, frames, render_profile = normalize_mono_params(
+        theta_min,
+        theta_max,
+        frames,
+        render_profile,
+    )
 
     fig, context = build_mono_figure(th_min, th_max, frames, render_profile=render_profile)
     html = build_interactive_page(fig, context)
