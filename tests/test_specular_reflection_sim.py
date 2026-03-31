@@ -224,11 +224,14 @@ def test_trace_specular_simulation_reports_progress_messages():
 def test_build_specular_figure_uses_hkl_diffraction_titles_and_summary():
     diffraction = DiffractionConfig(H=0, K=0, L=12)
     result = trace_specular_simulation(diffraction_config=diffraction)
+    beam = BeamConfig()
+    sample = SampleConfig()
+    detector = DetectorConfig()
     fig = build_specular_figure(
         result,
-        BeamConfig(),
-        SampleConfig(),
-        DetectorConfig(),
+        beam,
+        sample,
+        detector,
         diffraction,
     )
 
@@ -243,6 +246,22 @@ def test_build_specular_figure_uses_hkl_diffraction_titles_and_summary():
     diffraction_arrow_trace = next(trace for trace in fig.data if getattr(trace, "name", "") == "Diffraction direction")
     assert diffraction_ray_trace.line.color == "rgba(214, 40, 40, 0.16)"
     assert isinstance(diffraction_arrow_trace, go.Cone)
+    assert diffraction_arrow_trace.sizemode == "raw"
+    assert diffraction_arrow_trace.sizeref == pytest.approx(1.0)
+    arrow_norms = np.sqrt(
+        np.asarray(diffraction_arrow_trace.u) ** 2
+        + np.asarray(diffraction_arrow_trace.v) ** 2
+        + np.asarray(diffraction_arrow_trace.w) ** 2
+    )
+    expected_arrow_tip_length = 0.02 * max(
+        sample.width,
+        sample.height,
+        detector.width,
+        detector.height,
+        detector.distance,
+    )
+    assert arrow_norms.min() == pytest.approx(expected_arrow_tip_length)
+    assert arrow_norms.max() == pytest.approx(expected_arrow_tip_length)
     assert fig.layout.xaxis.scaleanchor == "y"
     assert fig.layout.xaxis.scaleratio == 1
     assert fig.layout.xaxis.range == (-10.5, 10.5)
@@ -269,6 +288,64 @@ def test_build_specular_companion_figure_removes_redundant_detector_panel():
         getattr(trace, "xaxis", None) == "x2" and getattr(trace, "yaxis", None) == "y2"
         for trace in fig.data
     )
+    ki_tip_arrow = next(
+        trace
+        for trace in fig.data
+        if isinstance(trace, go.Cone) and getattr(trace, "anchor", None) == "tail"
+    )
+    ki_tip = np.array([ki_tip_arrow.x[0], ki_tip_arrow.y[0], ki_tip_arrow.z[0]], dtype=float)
+    ki_arrow = np.array([ki_tip_arrow.u[0], ki_tip_arrow.v[0], ki_tip_arrow.w[0]], dtype=float)
+    assert ki_tip_arrow.sizemode == "raw"
+    assert ki_tip_arrow.sizeref == pytest.approx(1.0)
+    np.testing.assert_allclose(ki_arrow, -0.08 * ki_tip)
+
+
+def test_build_specular_figure_hides_off_detector_intersections_in_detector_plane():
+    beam = BeamConfig(
+        ray_count=1,
+        source_y=-150.0,
+        width_x=0.0,
+        width_z=0.0,
+        divergence_x_deg=0.0,
+        divergence_z_deg=0.0,
+        z_offset=0.0,
+        seed=1,
+        display_rays=1,
+    )
+    sample = SampleConfig(
+        width=50.0,
+        height=200.0,
+        theta_i_deg=10.0,
+        delta_deg=0.0,
+        alpha_deg=0.0,
+        psi_deg=0.0,
+        z_offset=0.0,
+    )
+    detector = DetectorConfig(
+        distance=200.0,
+        width=100.0,
+        height=100.0,
+        beta_deg=0.0,
+        gamma_deg=0.0,
+        chi_deg=0.0,
+        pixel_u=0.1,
+        pixel_v=0.1,
+        i0=1000.0,
+        j0=1000.0,
+    )
+    diffraction = DiffractionConfig(H=0, K=0, L=12, sigma_deg=0.8, mosaic_gamma_deg=5.0, eta=0.5)
+    result = trace_specular_simulation(beam, sample, detector, diffraction)
+    fig = build_specular_figure(result, beam, sample, detector, diffraction)
+
+    assert result.detector_plane_hit_count == 180
+    assert result.detector_hit_count == 0
+    assert not any(getattr(trace, "name", "") == "Off-detector intersections" for trace in fig.data)
+    assert not any(getattr(trace, "name", "") == "Detector hits" for trace in fig.data)
+    direct_beam_trace = next(trace for trace in fig.data if getattr(trace, "name", "") == "Direct beam center")
+    assert direct_beam_trace.x == (0.0,)
+    assert direct_beam_trace.y == (0.0,)
+    assert fig.layout.xaxis2.range == (-52.5, 52.5)
+    assert fig.layout.yaxis2.range == (-52.5, 52.5)
 
 
 def test_theta_i_changes_live_specular_summary_even_without_active_detector_hits():
@@ -389,8 +466,8 @@ def test_build_specular_app_uses_split_shell_with_sidebar_summary():
     assert "HKL = (1, 1, 1)" in graph.figure.layout.title.text
     assert "HKL = (1, 1, 1)" in companion_graph.figure.layout.title.text
     assert [section.children[0].children for section in control_sections] == [
-        "Beam",
         "Sample",
+        "Beam",
         "Detector",
         "Diffraction",
     ]

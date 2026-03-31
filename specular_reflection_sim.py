@@ -173,20 +173,6 @@ class ControlSpec:
 
 CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
     (
-        "Beam",
-        (
-            ControlSpec("rays", "Rays", "beam", "ray_count", 1, 1, 5000),
-            ControlSpec("seed", "Seed", "beam", "seed", 1, 0, 999999),
-            ControlSpec("display_rays", "Display rays", "beam", "display_rays", 1, 1, 400),
-            ControlSpec("source_y", MathLabel("y", "src"), "beam", "source_y", 1.0, -1000.0, 1000.0),
-            ControlSpec("beam_width_x", MathLabel("w", "x"), "beam", "width_x", 0.01, 0.0, 5.0),
-            ControlSpec("beam_width_z", MathLabel("w", "z"), "beam", "width_z", 0.01, 0.0, 5.0),
-            ControlSpec("divergence_x", MathLabel("Δθ", "x", " (deg)"), "beam", "divergence_x_deg", 0.01, 0.0, 5.0),
-            ControlSpec("divergence_z", MathLabel("Δθ", "z", " (deg)"), "beam", "divergence_z_deg", 0.01, 0.0, 5.0),
-            ControlSpec("z_beam", MathLabel("z", "B"), "beam", "z_offset", 0.01, -50.0, 50.0),
-        ),
-    ),
-    (
         "Sample",
         (
             ControlSpec("sample_width", "W", "sample", "width", 0.5, 0.001, 400.0),
@@ -205,6 +191,20 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
             ControlSpec("alpha", "α (deg)", "sample", "alpha_deg", 0.05, -45.0, 45.0),
             ControlSpec("psi", "ψ (deg)", "sample", "psi_deg", 0.05, -45.0, 45.0),
             ControlSpec("z_sample", MathLabel("z", "S"), "sample", "z_offset", 0.01, -50.0, 50.0),
+        ),
+    ),
+    (
+        "Beam",
+        (
+            ControlSpec("rays", "Rays", "beam", "ray_count", 1, 1, 5000),
+            ControlSpec("seed", "Seed", "beam", "seed", 1, 0, 999999),
+            ControlSpec("display_rays", "Display rays", "beam", "display_rays", 1, 1, 400),
+            ControlSpec("source_y", MathLabel("y", "src"), "beam", "source_y", 1.0, -1000.0, 1000.0),
+            ControlSpec("beam_width_x", MathLabel("w", "x"), "beam", "width_x", 0.01, 0.0, 5.0),
+            ControlSpec("beam_width_z", MathLabel("w", "z"), "beam", "width_z", 0.01, 0.0, 5.0),
+            ControlSpec("divergence_x", MathLabel("Δθ", "x", " (deg)"), "beam", "divergence_x_deg", 0.01, 0.0, 5.0),
+            ControlSpec("divergence_z", MathLabel("Δθ", "z", " (deg)"), "beam", "divergence_z_deg", 0.01, 0.0, 5.0),
+            ControlSpec("z_beam", MathLabel("z", "B"), "beam", "z_offset", 0.01, -50.0, 50.0),
         ),
     ),
     (
@@ -1290,8 +1290,8 @@ def build_specular_figure(
                 detector_config.height,
                 detector_config.distance,
             )
-            arrow_length = 0.06 * axis_scale
-            arrow_vectors = arrow_length * arrow_dirs
+            arrow_tip_length = 0.02 * axis_scale
+            arrow_vectors = arrow_tip_length * arrow_dirs
             fig.add_trace(
                 go.Cone(
                     x=arrow_tips[:, 0],
@@ -1301,8 +1301,8 @@ def build_specular_figure(
                     v=arrow_vectors[:, 1],
                     w=arrow_vectors[:, 2],
                     anchor="tip",
-                    sizemode="absolute",
-                    sizeref=max(arrow_length, EPSILON),
+                    sizemode="raw",
+                    sizeref=1.0,
                     colorscale=[[0.0, "#d62828"], [1.0, "#d62828"]],
                     showscale=False,
                     opacity=0.75,
@@ -1442,35 +1442,6 @@ def build_specular_figure(
         col=2,
     )
 
-    if result.detector_plane_hit_count:
-        inactive = ~result.active_detector_mask
-        if np.any(inactive):
-            fig.add_trace(
-                go.Scatter(
-                    x=result.plane_uv[inactive, 0],
-                    y=result.plane_uv[inactive, 1],
-                    mode="markers",
-                    marker=dict(
-                        size=6,
-                        color=result.plane_weights[inactive],
-                        colorscale="Viridis",
-                        cmin=0.0,
-                        cmax=1.0,
-                        opacity=0.35,
-                        showscale=False,
-                    ),
-                    name="Off-detector intersections",
-                    hovertemplate=(
-                        "u=%{x:.3f}<br>v=%{y:.3f}<br>i=%{customdata[0]:.2f}"
-                        "<br>j=%{customdata[1]:.2f}<br>w=%{marker.color:.3f}<extra></extra>"
-                    ),
-                    customdata=result.plane_pixels[inactive],
-                    showlegend=False,
-                ),
-                row=1,
-                col=3,
-            )
-
     if result.detector_hit_count:
         fig.add_trace(
             go.Scatter(
@@ -1532,7 +1503,12 @@ def build_specular_figure(
         col=3,
     )
 
-    if result.direct_beam_uv is not None:
+    direct_beam_on_detector = (
+        result.direct_beam_uv is not None
+        and abs(float(result.direct_beam_uv[0])) <= detector_half_u
+        and abs(float(result.direct_beam_uv[1])) <= detector_half_v
+    )
+    if direct_beam_on_detector and result.direct_beam_pixels is not None:
         fig.add_trace(
             go.Scatter(
                 x=[result.direct_beam_uv[0]],
@@ -1565,12 +1541,7 @@ def build_specular_figure(
         -(sample_half_v + sample_y_padding),
         sample_half_v + sample_y_padding,
     ]
-    detector_axis_extent = max(
-        detector_half_u,
-        detector_half_v,
-        float(np.max(np.abs(result.plane_uv))) if result.detector_plane_hit_count else 0.0,
-        float(np.max(np.abs(result.direct_beam_uv))) if result.direct_beam_uv is not None else 0.0,
-    )
+    detector_axis_extent = max(detector_half_u, detector_half_v)
     detector_axis_padding = max(0.05 * detector_axis_extent, 1e-6)
     detector_axis_range = [
         -(detector_axis_extent + detector_axis_padding),
@@ -1770,7 +1741,24 @@ def build_specular_companion_figure(
         subplot_titles=("Reciprocal space", "Centered integration"),
     )
 
+    ki_tip: np.ndarray | None = None
     for trace in base_figure.data:
+        if (
+            ki_tip is None
+            and isinstance(trace, go.Scatter3d)
+            and getattr(trace, "scene", None) == "scene"
+            and getattr(trace, "mode", None) == "lines"
+        ):
+            x = np.asarray(trace.x, dtype=float)
+            y = np.asarray(trace.y, dtype=float)
+            z = np.asarray(trace.z, dtype=float)
+            if (
+                x.size == 2
+                and y.size == 2
+                and z.size == 2
+                and np.allclose([x[1], y[1], z[1]], np.zeros(3))
+            ):
+                ki_tip = np.array([x[0], y[0], z[0]], dtype=float)
         if getattr(trace, "scene", None) == "scene":
             companion_figure.add_trace(deepcopy(trace), row=1, col=1)
         elif getattr(trace, "xaxis", None) == "x2" and getattr(trace, "yaxis", None) == "y2":
@@ -1780,6 +1768,27 @@ def build_specular_companion_figure(
             if hasattr(centered_trace, "yaxis"):
                 centered_trace.yaxis = None
             companion_figure.add_trace(centered_trace, row=1, col=2)
+
+    if ki_tip is not None:
+        companion_figure.add_trace(
+            go.Cone(
+                x=[ki_tip[0]],
+                y=[ki_tip[1]],
+                z=[ki_tip[2]],
+                u=[-0.08 * ki_tip[0]],
+                v=[-0.08 * ki_tip[1]],
+                w=[-0.08 * ki_tip[2]],
+                anchor="tail",
+                sizemode="raw",
+                sizeref=1.0,
+                colorscale=[[0.0, "#111111"], [1.0, "#111111"]],
+                showscale=False,
+                hoverinfo="skip",
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
 
     scene_layout = (
         deepcopy(base_figure.layout.scene.to_plotly_json())
@@ -2134,24 +2143,7 @@ def build_specular_app(
                         },
                     ),
                     html.Div(
-                        [
-                            section(
-                                "Beam",
-                                controls_for_section(CONTROL_SECTIONS[0][1]),
-                            ),
-                            section(
-                                "Sample",
-                                controls_for_section(CONTROL_SECTIONS[1][1]),
-                            ),
-                            section(
-                                "Detector",
-                                controls_for_section(CONTROL_SECTIONS[2][1]),
-                            ),
-                            section(
-                                "Diffraction",
-                                controls_for_section(CONTROL_SECTIONS[3][1]),
-                            ),
-                        ],
+                        [section(title, controls_for_section(controls)) for title, controls in CONTROL_SECTIONS],
                         className="specular-sections",
                         style={"display": "grid", "gap": "1rem"},
                     ),

@@ -128,8 +128,8 @@ def test_build_unified_app_seeds_specular_mode_selector_and_initial_figure():
     assert "nominal 2θ" not in summary.children
     assert summary.style.get("display") != "none"
     assert companion_card.style.get("display") != "none"
-    assert control_sections[0].children[0].children == "Beam"
-    assert control_sections[1].children[0].children == "Sample"
+    assert control_sections[0].children[0].children == "Sample"
+    assert control_sections[1].children[0].children == "Beam"
     assert control_sections[2].children[0].children == "Detector"
     assert control_sections[3].children[0].children == "Diffraction"
     diffraction_controls = control_sections[3].children[1].children
@@ -168,6 +168,18 @@ def test_unified_specular_mode_restores_all_parameter_sections_and_controls():
 
     expected_sections = (
         (
+            "Sample",
+            [
+                "sample_width",
+                "sample_height",
+                "theta_i",
+                "delta",
+                "alpha",
+                "psi",
+                "z_sample",
+            ],
+        ),
+        (
             "Beam",
             [
                 "rays",
@@ -179,18 +191,6 @@ def test_unified_specular_mode_restores_all_parameter_sections_and_controls():
                 "divergence_x",
                 "divergence_z",
                 "z_beam",
-            ],
-        ),
-        (
-            "Sample",
-            [
-                "sample_width",
-                "sample_height",
-                "theta_i",
-                "delta",
-                "alpha",
-                "psi",
-                "z_sample",
             ],
         ),
         (
@@ -279,7 +279,7 @@ def test_unified_specular_sliders_only_keep_theta_i_live():
     app = build_unified_app(initial_mode="specular-view")
 
     sections = _controls(app)
-    sample_controls = sections[1].children[1].children
+    sample_controls = sections[0].children[1].children
     detector_controls = sections[2].children[1].children
     diffraction_controls = sections[3].children[1].children
 
