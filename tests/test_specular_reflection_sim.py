@@ -78,7 +78,10 @@ def render_component_text(component) -> str:
 
 
 def callback_by_output(app, output_key: str):
-    return app.callback_map[output_key]["callback"].__wrapped__
+    for key, value in app.callback_map.items():
+        if key == output_key or output_key in key:
+            return value["callback"].__wrapped__
+    raise KeyError(output_key)
 
 
 def test_sample_frame_matches_nominal_incidence_rotation():
@@ -467,6 +470,7 @@ def test_build_specular_app_seeds_inputs_and_figure_from_initial_values():
     graph = find_component_by_id(app.layout, "specular-fig")
     companion_graph = find_component_by_id(app.layout, "specular-companion-fig")
     summary = find_component_by_id(app.layout, "specular-summary")
+    summary_text = render_component_text(summary)
 
     assert rays_control.value == 48
     assert rays_input.value == 48
@@ -482,33 +486,42 @@ def test_build_specular_app_seeds_inputs_and_figure_from_initial_values():
     assert "|G| =" in graph.figure.layout.title.text
     assert "diffraction rays" in graph.figure.layout.title.text
     assert "HKL = (0, 0, 12)" in companion_graph.figure.layout.title.text
-    assert "HKL = (0, 0, 12)" in summary.children
-    assert "diffraction rays" in summary.children
+    assert "(0, 0, 12)" in summary_text
+    assert "Diffraction rays" in summary_text
 
 
 def test_build_specular_app_uses_split_shell_with_sidebar_summary():
     app = build_specular_app()
 
-    sidebar = app.layout.children[0]
-    main = app.layout.children[1]
-    summary = sidebar.children[1]
+    sidebar = next(child for child in app.layout.children if getattr(child, "className", None) == "specular-sidebar")
+    main = next(child for child in app.layout.children if getattr(child, "className", None) == "specular-main")
+    summary = find_component_by_id(app.layout, "specular-summary")
+    basic_card = find_component_by_id(app.layout, "specular-basic-card")
+    advanced_sections = find_component_by_id(app.layout, "specular-advanced-sections")
     graph = find_component_by_id(app.layout, "specular-fig")
     companion_graph = find_component_by_id(app.layout, "specular-companion-fig")
-    control_sections = sidebar.children[2].children
 
     assert sidebar.className == "specular-sidebar"
     assert main.className == "specular-main"
     assert summary.id == "specular-summary"
+    assert basic_card.id == "specular-basic-card"
+    assert advanced_sections.id == "specular-advanced-sections"
     assert isinstance(graph, dcc.Graph)
     assert isinstance(companion_graph, dcc.Graph)
     assert "HKL = (1, 1, 1)" in graph.figure.layout.title.text
     assert "HKL = (1, 1, 1)" in companion_graph.figure.layout.title.text
-    assert [section.children[0].children for section in control_sections] == [
-        "Sample",
-        "Beam",
-        "Detector",
-        "Diffraction",
-    ]
+    assert "Start With the Reflection" in render_component_text(basic_card)
+    assert find_component_by_id(basic_card, control_id("theta_i", "slider")) is not None
+    assert find_component_by_id(basic_card, control_id("H", "slider")) is not None
+    assert find_component_by_id(basic_card, control_id("mosaic_gamma_deg", "slider")) is not None
+    for advanced_id in (
+        "specular-advanced-sample-geometry",
+        "specular-advanced-beam-model",
+        "specular-advanced-detector-geometry",
+    ):
+        section = find_component_by_id(app.layout, advanced_id)
+        assert section is not None
+        assert section.open is False
 
 
 def test_build_specular_app_only_keeps_theta_i_live():
@@ -527,6 +540,10 @@ def test_build_specular_app_only_keeps_theta_i_live():
 
 def test_build_specular_app_restores_all_parameter_slider_and_input_controls():
     app = build_specular_app()
+    basic_card = find_component_by_id(app.layout, "specular-basic-card")
+    sample_advanced = find_component_by_id(app.layout, "specular-advanced-sample-geometry")
+    beam_advanced = find_component_by_id(app.layout, "specular-advanced-beam-model")
+    detector_advanced = find_component_by_id(app.layout, "specular-advanced-detector-geometry")
     expected_control_names = (
         "rays",
         "seed",
@@ -568,6 +585,24 @@ def test_build_specular_app_restores_all_parameter_slider_and_input_controls():
     assert find_component_by_id(app.layout, control_id("j0", "slider")) is None
     assert find_component_by_id(app.layout, control_id("i0", "input")) is None
     assert find_component_by_id(app.layout, control_id("j0", "input")) is None
+    for name in specular.SPECULAR_BASIC_CONTROL_NAMES:
+        assert find_component_by_id(basic_card, control_id(name, "slider")) is not None
+    for name in ("sample_width", "sample_height", "delta", "alpha", "psi", "z_sample"):
+        assert find_component_by_id(sample_advanced, control_id(name, "slider")) is not None
+    for name in (
+        "rays",
+        "display_rays",
+        "seed",
+        "source_y",
+        "beam_width_x",
+        "beam_width_z",
+        "divergence_x",
+        "divergence_z",
+        "z_beam",
+    ):
+        assert find_component_by_id(beam_advanced, control_id(name, "slider")) is not None
+    for name in ("distance", "detector_width", "detector_height", "beta", "gamma", "chi", "pixel_u", "pixel_v"):
+        assert find_component_by_id(detector_advanced, control_id(name, "slider")) is not None
 
 
 def test_build_specular_app_uses_supplied_initial_outputs(monkeypatch):
@@ -596,7 +631,7 @@ def test_build_specular_app_uses_supplied_initial_outputs(monkeypatch):
 
     assert graph.figure.layout.title.text == "Precomputed figure"
     assert companion_graph.figure.layout.title.text == "Precomputed companion"
-    assert summary.children == "Precomputed summary"
+    assert "Precomputed summary" in render_component_text(summary)
 
 
 def test_build_specular_app_renders_math_style_control_labels():
@@ -633,7 +668,7 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
     summary_callback = callback_by_output(app, "specular-summary.children")
     graph = find_component_by_id(app.layout, "specular-fig")
     companion_graph = find_component_by_id(app.layout, "specular-companion-fig")
-    summary_component = find_component_by_id(app.layout, "specular-summary")
+    summary_store = find_component_by_id(app.layout, "specular-summary-text")
 
     slider_ids = [
         control_id("rays", "slider"),
@@ -728,7 +763,8 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
         },
         companion_graph.figure,
     )
-    summary = summary_callback(slider_values, slider_ids, summary_component.children)
+    summary_children, summary_text = summary_callback(slider_values, slider_ids, summary_store.data)
+    rendered_summary = render_component_text(summary_children)
 
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.6)
     assert fig.layout.scene.camera.eye.y == pytest.approx(1.2)
@@ -740,10 +776,11 @@ def test_build_specular_app_callback_preserves_camera_and_updates_summary():
     assert "diffraction rays" in fig.layout.title.text
     assert "detector hits" in fig.layout.title.text
     assert "HKL = (0, 0, 12)" in companion_fig.layout.title.text
-    assert "HKL = (0, 0, 12)" in summary
-    assert "diffraction rays" in summary
-    assert "detector-plane intersections" in summary
-    assert "nominal 2θ" not in summary
+    assert "(0, 0, 12)" in summary_text
+    assert "Diffraction rays" in rendered_summary
+    assert "Detector hits" in rendered_summary
+    assert "Plane hits" in rendered_summary
+    assert "nominal 2θ" not in summary_text
 
 
 def test_specular_companion_callback_skips_main_only_updates():
@@ -795,7 +832,7 @@ def test_specular_companion_callback_skips_main_only_updates():
 def test_specular_summary_callback_skips_display_only_updates():
     app = build_specular_app()
     callback = callback_by_output(app, "specular-summary.children")
-    summary_component = find_component_by_id(app.layout, "specular-summary")
+    summary_store = find_component_by_id(app.layout, "specular-summary-text")
 
     slider_ids = [control_id(name, "slider") for name in specular.SPECULAR_CONTROL_NAMES]
     value_map = {
@@ -835,7 +872,7 @@ def test_specular_summary_callback_skips_display_only_updates():
     slider_values = [value_map[control_id["name"]] for control_id in slider_ids]
 
     with pytest.raises(PreventUpdate):
-        callback(slider_values, slider_ids, summary_component.children)
+        callback(slider_values, slider_ids, summary_store.data)
 
 
 def test_trace_specular_simulation_reuses_projection_cache_for_calibration_only_changes():

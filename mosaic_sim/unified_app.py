@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from functools import lru_cache
+import json
 import math
 from pathlib import Path
 import threading
@@ -22,6 +23,8 @@ from specular_reflection_sim import (
     DetectorConfig as SpecularDetectorConfig,
     MathLabel as SpecularMathLabel,
     SampleConfig as SpecularSampleConfig,
+    SPECULAR_ADVANCED_CONTROL_SECTIONS,
+    SPECULAR_BASIC_CONTROL_NAMES,
     SPECULAR_COMPANION_CONTROL_NAMES,
     SPECULAR_COMPANION_SIGNATURE_META,
     SPECULAR_CONTROL_NAMES,
@@ -31,6 +34,7 @@ from specular_reflection_sim import (
     build_specular_dashboard_outputs as build_specular_dashboard_views,
     build_specular_error_figure,
     build_specular_outputs,
+    build_specular_summary_card,
     build_specular_summary_output,
     configs_from_values as specular_configs_from_values,
     extract_figure_meta_value,
@@ -675,6 +679,21 @@ def _default_state() -> dict[str, dict[str, Any]]:
     return {key: _mode_state_from_spec(spec) for key, spec in SIMULATION_SPECS.items()}
 
 
+def _seeded_state(
+    initial_state: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    state = _default_state()
+    if not isinstance(initial_state, dict):
+        return state
+    for mode_key, mode_state in initial_state.items():
+        if mode_key not in state or not isinstance(mode_state, dict):
+            continue
+        seeded = dict(state[mode_key])
+        seeded.update(mode_state)
+        state[mode_key] = seeded
+    return state
+
+
 def _resolve_mode(mode: str | None) -> str:
     if mode in SIMULATION_SPECS:
         return str(mode)
@@ -685,7 +704,7 @@ def _merged_mode_state(mode: str, state: dict[str, Any] | None = None) -> dict[s
     spec = SIMULATION_SPECS[mode]
     merged = _mode_state_from_spec(spec)
     if state:
-        merged.update({key: value for key, value in state.items() if key in merged})
+        merged.update(dict(state))
     return merged
 
 
@@ -830,6 +849,9 @@ def _resolve_specular_configs(
         sigma_deg=values.get("sigma_deg"),
         mosaic_gamma_deg=values.get("mosaic_gamma_deg"),
         eta=values.get("eta"),
+        wavelength_m=values.get("wavelength_m"),
+        lattice_a_m=values.get("lattice_a_m"),
+        lattice_c_m=values.get("lattice_c_m"),
         default_beam=SpecularBeamConfig(),
         default_sample=SpecularSampleConfig(),
         default_detector=SpecularDetectorConfig(),
@@ -936,18 +958,9 @@ def _build_simulation_outputs(
 
 
 def _summary_style(mode: str, summary: str = "") -> dict[str, Any]:
-    style = {
-        "whiteSpace": "pre-wrap",
-        "backgroundColor": "#f7fafc",
-        "border": "1px solid #e2e8f0",
-        "borderRadius": "10px",
-        "padding": "0.85rem",
-        "fontFamily": "Consolas, Monaco, monospace",
-        "fontSize": "0.92rem",
-    }
     if mode != SPECULAR_MODE or not summary:
-        style["display"] = "none"
-    return style
+        return {"display": "none"}
+    return {}
 
 
 def _specular_companion_style(mode: str) -> dict[str, Any]:
@@ -970,32 +983,114 @@ def _shell_class_names(mode: str) -> tuple[str, str]:
     return shell_class, sidebar_class
 
 
-def _build_specular_control_sections(values: dict[str, Any]) -> list[html.Div]:
-    sections: list[html.Div] = []
-    for title, controls in _specular_control_sections():
-        sections.append(
+def _main_visual_copy(mode: str) -> tuple[str, str]:
+    if mode == SPECULAR_MODE:
+        return (
+            "Specular Geometry",
+            "Lab-frame beam, sample footprint, and detector-hit geometry for the active specular configuration.",
+        )
+    if mode == "detector-view":
+        return (
+            "Mosaic Detector View",
+            "Reciprocal-space geometry, detector intensity, and centered integration for the current HKL and incidence angle.",
+        )
+    if mode == "fibrous-view":
+        return (
+            "Ewald Cylinder View",
+            "Bragg sphere, Ewald sphere, and reciprocal cylinder overlap for the active fibrous configuration.",
+        )
+    return (
+        "Reciprocal Space View",
+        "Single-crystal, powder, and cylinder reciprocal-space views with peak filtering and an in-figure incidence sweep.",
+    )
+
+
+@lru_cache(maxsize=1)
+def _specular_control_lookup() -> dict[str, ControlSpec]:
+    return {control.key: control for control in _specular_controls()}
+
+
+def _build_specular_control_sections(values: dict[str, Any]) -> list[Any]:
+    control_lookup = _specular_control_lookup()
+    advanced_descriptions = {
+        "Sample Geometry": "Finite sample size and extra substrate rotations beyond the main incidence sweep.",
+        "Beam Model": "Ray sampling, divergence, and beam footprint controls for the incident bundle.",
+        "Detector Geometry": "Distance, panel size, tilts, and pixel calibration for the receiving detector.",
+    }
+
+    def control_component(control_name: str):
+        control = control_lookup[control_name]
+        return _build_control(control, values[control.key])
+
+    def labeled_group(title: str, names: tuple[str, ...]) -> html.Div:
+        return html.Div(
+            [
+                html.Div(title, className="specular-control-group-label"),
+                html.Div(
+                    [control_component(name) for name in names],
+                    className="specular-basic-grid",
+                ),
+            ],
+            className="specular-control-group",
+        )
+
+    basic_card = html.Section(
+        [
             html.Div(
                 [
-                    html.H3(title, style={"margin": "0", "fontSize": "1rem"}, className="specular-section-title"),
+                    html.Div("Basic Controls", className="specular-card-eyebrow"),
+                    html.H3(
+                        "Start With the Reflection",
+                        className="specular-section-title",
+                        style={"margin": "0"},
+                    ),
                     html.Div(
-                        [_build_control(control, values[control.key]) for control in controls],
-                        style={"display": "grid", "gap": "0.9rem"},
-                        className="specular-section-grid",
+                        "Keep θi and the reflection family visible. Open Advanced only when you need beam, sample, or detector alignment controls.",
+                        className="specular-card-description",
                     ),
                 ],
-                className="specular-section-card",
-                style={
-                    "display": "flex",
-                    "flexDirection": "column",
-                    "gap": "0.85rem",
-                    "padding": "0.9rem",
-                    "backgroundColor": "#fbfcfd",
-                    "border": "1px solid #d8dee9",
-                    "borderRadius": "10px",
-                },
+                className="specular-control-card-header",
+            ),
+            html.Div(
+                [control_component("theta_i")],
+                className="specular-basic-grid specular-basic-grid--single",
+            ),
+            labeled_group("Reflection", ("H", "K", "L")),
+            labeled_group("Mosaic Envelope", ("sigma_deg", "mosaic_gamma_deg", "eta")),
+        ],
+        id="simulation-specular-basic-card",
+        className="specular-control-card specular-control-card--basic",
+    )
+
+    advanced_cards = html.Div(
+        [
+            html.Details(
+                [
+                    html.Summary(
+                        [
+                            html.Div(title, className="specular-advanced-title"),
+                            html.Div(
+                                advanced_descriptions[title],
+                                className="specular-advanced-description",
+                            ),
+                        ],
+                        className="specular-advanced-summary",
+                    ),
+                    html.Div(
+                        [control_component(name) for name in control_names],
+                        className="specular-advanced-grid",
+                    ),
+                ],
+                id=f"simulation-specular-advanced-{title.lower().replace(' ', '-')}",
+                className="specular-advanced-card",
+                open=False,
             )
-        )
-    return sections
+            for title, control_names in SPECULAR_ADVANCED_CONTROL_SECTIONS
+        ],
+        id="simulation-specular-advanced-sections",
+        className="specular-advanced-stack",
+    )
+    return [basic_card, advanced_cards]
 
 
 def _format_ring_selector_label(g_r_value: float, g_z_value: float) -> str:
@@ -1314,9 +1409,8 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
         key=SPECULAR_MODE,
         label="Specular Diffraction",
         description=(
-            "Beam -> sample -> detector diffraction geometry with live beam, sample, "
-            "detector, and HKL/mosaic controls. The summary panel below the figure "
-            "tracks HKL, |G|, and diffraction hit counts."
+            "Choose HKL, sweep θi, and then open Advanced if you need beam, sample, "
+            "or detector alignment controls."
         ),
         controls=_specular_controls(),
         build_figure=lambda values: _build_specular_adapter(values)[0],
@@ -1460,11 +1554,15 @@ def build_unified_figure(mode: str = DEFAULT_MODE, **values: Any) -> go.Figure:
     return _build_simulation_outputs(mode_key, merged_values)[0]
 
 
-def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
+def build_unified_app(
+    initial_mode: str = DEFAULT_MODE,
+    *,
+    initial_state: dict[str, dict[str, Any]] | None = None,
+) -> Dash:
     """Return a single Dash app that can switch between the supported views."""
 
     mode = _resolve_mode(initial_mode)
-    state = _default_state()
+    state = _seeded_state(initial_state)
     powder_selection_state = _default_powder_selection_state()
     powder_view_state = DEFAULT_POWDER_VIEW
     initial_values = _merged_mode_state(mode, state.get(mode))
@@ -1489,6 +1587,7 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
             specular_signature_from_values(initial_values, SPECULAR_COMPANION_CONTROL_NAMES),
         )
     shell_class_name, sidebar_class_name = _shell_class_names(mode)
+    main_title, main_caption = _main_visual_copy(mode)
 
     assets_folder = Path(__file__).resolve().parent.parent / "assets"
     app = Dash(__name__, suppress_callback_exceptions=True, assets_folder=str(assets_folder))
@@ -1499,6 +1598,7 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
             dcc.Store(id="powder-selection-state", data=powder_selection_state),
             dcc.Store(id="powder-view-state", data=powder_view_state),
             dcc.Store(id="simulation-camera-state", data={}),
+            dcc.Store(id="simulation-summary-text", data=initial_summary),
             dcc.Store(id="powder-selector-sync", data={}),
             html.Div(
                 [
@@ -1512,27 +1612,29 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                             html.Div(
                                 [
                                     html.Label("simulation", style={"fontWeight": "600"}),
-                                    dcc.Dropdown(
+                                    dcc.RadioItems(
                                         id="simulation-mode",
                                         options=[
                                             {"label": spec.label, "value": spec.key}
                                             for spec in SIMULATION_SPECS.values()
                                         ],
                                         value=mode,
-                                        clearable=False,
+                                        className="simulation-mode-picker",
+                                        inline=True,
                                     ),
                                 ],
                                 style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
+                                className="simulation-mode-card",
                             ),
                             html.Div(
                                 initial_spec.description,
                                 id="simulation-description",
-                                style={"color": "#374151", "lineHeight": "1.5"},
+                                className="simulation-description",
                             ),
-                            html.Pre(
+                            html.Div(
                                 id="simulation-summary",
-                                children=initial_summary,
-                                className="specular-summary-card",
+                                children=build_specular_summary_card(initial_summary),
+                                className="specular-summary-shell",
                                 style=_summary_style(mode, initial_summary),
                             ),
                             html.Div(
@@ -1544,7 +1646,6 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                                 ),
                                 id="simulation-controls",
                                 className="simulation-controls",
-                                style={"display": "grid", "gap": "0.9rem"},
                             ),
                         ],
                         id="simulation-sidebar",
@@ -1569,38 +1670,46 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
                                         "Save PNG",
                                         id="export-png-button",
                                         n_clicks=0,
-                                        style={
-                                            "padding": "0.6rem 0.9rem",
-                                            "border": "1px solid #cbd5e1",
-                                            "backgroundColor": "#f8fafc",
-                                            "borderRadius": "0.5rem",
-                                            "cursor": "pointer",
-                                            "fontWeight": "600",
-                                        },
+                                        className="simulation-toolbar-button",
                                     ),
                                     html.Div(
                                         id="export-png-status",
-                                        style={"color": "#475569", "fontSize": "0.95rem"},
+                                        className="simulation-toolbar-status",
                                     ),
                                 ],
-                                style={
-                                    "display": "flex",
-                                    "justifyContent": "space-between",
-                                    "alignItems": "center",
-                                    "paddingBottom": "0.75rem",
-                                    "gap": "1rem",
-                                },
+                                className="simulation-toolbar",
                             ),
-                            html.Div(
+                            html.Section(
                                 [
-                                    dcc.Graph(
-                                        id="simulation-figure",
-                                        figure=initial_figure,
-                                        style={"height": "100%", "minHeight": "0"},
-                                        config={"responsive": True, "displaylogo": False},
+                                    html.Div(
+                                        [
+                                            html.H2(
+                                                main_title,
+                                                id="simulation-main-title",
+                                                style={"margin": "0"},
+                                            ),
+                                            html.Div(
+                                                main_caption,
+                                                id="simulation-main-caption",
+                                                className="simulation-main-caption",
+                                            ),
+                                        ],
+                                        className="simulation-visual-header",
+                                    ),
+                                    html.Div(
+                                        [
+                                            dcc.Graph(
+                                                id="simulation-figure",
+                                                figure=initial_figure,
+                                                style={"height": "100%", "minHeight": "0"},
+                                                config={"responsive": True, "displaylogo": False},
+                                            )
+                                        ],
+                                        className="simulation-graph-frame simulation-graph-frame--primary",
                                     ),
                                 ],
-                                className="simulation-graph-frame simulation-graph-frame--primary",
+                                id="simulation-primary-card",
+                                className="simulation-visual-card simulation-visual-card--hero",
                             ),
                             html.Section(
                                 [
@@ -1729,6 +1838,8 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
     @app.callback(
         Output("simulation-description", "children"),
         Output("simulation-controls", "children"),
+        Output("simulation-main-title", "children"),
+        Output("simulation-main-caption", "children"),
         Input("simulation-mode", "value"),
         Input("powder-view-state", "data"),
         State("simulation-state", "data"),
@@ -1744,11 +1855,17 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
         mode_key = _resolve_mode(mode_value)
         spec = SIMULATION_SPECS[mode_key]
         values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
-        return spec.description, _build_controls_for_mode(
-            mode_key,
-            values,
-            powder_state_value,
-            powder_view_value,
+        main_title, main_caption = _main_visual_copy(mode_key)
+        return (
+            spec.description,
+            _build_controls_for_mode(
+                mode_key,
+                values,
+                powder_state_value,
+                powder_view_value,
+            ),
+            main_title,
+            main_caption,
         )
 
     @app.callback(
@@ -1890,21 +2007,22 @@ def build_unified_app(initial_mode: str = DEFAULT_MODE) -> Dash:
     @app.callback(
         Output("simulation-summary", "children"),
         Output("simulation-summary", "style"),
+        Output("simulation-summary-text", "data"),
         Input("simulation-mode", "value"),
         Input("simulation-state", "data"),
-        State("simulation-summary", "children"),
+        State("simulation-summary-text", "data"),
         prevent_initial_call=True,
     )
-    def render_summary(mode_value, state_value, current_summary):  # pragma: no cover - UI callback
+    def render_summary(mode_value, state_value, current_summary_text):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
         if mode_key != SPECULAR_MODE:
-            return "", _summary_style(mode_key, "")
+            return "", _summary_style(mode_key, ""), ""
 
         values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
         summary = _build_specular_summary_adapter(values)
-        if current_summary == summary:
+        if current_summary_text == summary:
             raise PreventUpdate
-        return summary, _summary_style(mode_key, summary)
+        return build_specular_summary_card(summary), _summary_style(mode_key, summary), summary
 
     app.clientside_callback(
         PNG_EXPORT_CLIENTSIDE_CALLBACK,
@@ -1954,7 +2072,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="start the server without opening a browser tab",
     )
+    parser.add_argument(
+        "--state-json",
+        help="initial simulation-state JSON payload used to seed the GUI",
+    )
     return parser.parse_args()
+
+
+def _parse_initial_state_json(
+    raw_state: str | None,
+) -> dict[str, dict[str, Any]] | None:
+    if raw_state is None:
+        return None
+    try:
+        parsed = json.loads(raw_state)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid --state-json payload: {exc.msg}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Initial state JSON must decode to an object.")
+    return parsed
 
 
 def main(
@@ -1963,22 +2099,34 @@ def main(
     host: str | None = None,
     port: int | None = None,
     open_browser: bool | None = None,
+    initial_state: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Launch the unified simulator app."""
 
-    if mode is None and host is None and port is None and open_browser is None:
+    if (
+        mode is None
+        and host is None
+        and port is None
+        and open_browser is None
+        and initial_state is None
+    ):
         args = parse_args()
         resolved_mode = _resolve_mode(args.mode)
         resolved_host = str(args.host)
         resolved_port = int(args.port)
         resolved_open_browser = not args.no_browser
+        resolved_initial_state = _parse_initial_state_json(args.state_json)
     else:
         resolved_mode = _resolve_mode(mode)
         resolved_host = DEFAULT_HOST if host is None else str(host)
         resolved_port = DEFAULT_PORT if port is None else int(port)
         resolved_open_browser = True if open_browser is None else bool(open_browser)
+        resolved_initial_state = initial_state
 
-    app = build_unified_app(initial_mode=resolved_mode)
+    app = build_unified_app(
+        initial_mode=resolved_mode,
+        initial_state=resolved_initial_state,
+    )
     url = f"http://{resolved_host}:{resolved_port}"
     if resolved_open_browser:
         threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()

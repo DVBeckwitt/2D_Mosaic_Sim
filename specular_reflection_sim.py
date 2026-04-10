@@ -54,6 +54,11 @@ from typing import Any, Callable
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from mosaic_sim.constants import (
+    a_hex as DEFAULT_LATTICE_A_M,
+    c_hex as DEFAULT_LATTICE_C_M,
+    λ as DEFAULT_WAVELENGTH_M,
+)
 
 
 LAB_X = np.array([1.0, 0.0, 0.0], dtype=float)
@@ -145,6 +150,9 @@ class DiffractionConfig:
     sigma_deg: float = 0.8
     mosaic_gamma_deg: float = 5.0
     eta: float = 0.5
+    wavelength_m: float = DEFAULT_WAVELENGTH_M
+    lattice_a_m: float = DEFAULT_LATTICE_A_M
+    lattice_c_m: float = DEFAULT_LATTICE_C_M
 
 
 @dataclass(frozen=True)
@@ -247,6 +255,60 @@ CONTROL_SECTIONS: tuple[tuple[str, tuple[ControlSpec, ...]], ...] = (
         ),
     ),
 )
+SPECULAR_BASIC_CONTROL_NAMES = (
+    "theta_i",
+    "H",
+    "K",
+    "L",
+    "sigma_deg",
+    "mosaic_gamma_deg",
+    "eta",
+)
+SPECULAR_ADVANCED_CONTROL_SECTIONS = (
+    (
+        "Sample Geometry",
+        (
+            "sample_width",
+            "sample_height",
+            "delta",
+            "alpha",
+            "psi",
+            "z_sample",
+        ),
+    ),
+    (
+        "Beam Model",
+        (
+            "rays",
+            "display_rays",
+            "seed",
+            "source_y",
+            "beam_width_x",
+            "beam_width_z",
+            "divergence_x",
+            "divergence_z",
+            "z_beam",
+        ),
+    ),
+    (
+        "Detector Geometry",
+        (
+            "distance",
+            "detector_width",
+            "detector_height",
+            "beta",
+            "gamma",
+            "chi",
+            "pixel_u",
+            "pixel_v",
+        ),
+    ),
+)
+SPECULAR_CONTROL_BY_NAME = {
+    control.name: control
+    for _, controls in CONTROL_SECTIONS
+    for control in controls
+}
 
 SPECULAR_CONTROL_NAMES = tuple(
     control.name
@@ -296,6 +358,19 @@ class SummaryStats:
     detector_weight_sum: float
     detector_weighted_uv_sum: np.ndarray
     detector_weighted_pixel_sum: np.ndarray
+
+
+@dataclass(frozen=True)
+class SpecularSummaryCardData:
+    """Structured readout content derived from the text summary."""
+
+    kind: str
+    title: str
+    interpretation: str
+    metric_items: tuple[tuple[str, str], ...]
+    secondary_items: tuple[tuple[str, str], ...]
+    detail_lines: tuple[str, ...]
+    raw_text: str
 
 
 @dataclass(frozen=True)
@@ -631,11 +706,30 @@ def normalized_diffraction_params(
     return params.as_tuple()
 
 
+def diffraction_wavevector_magnitude(diffraction: DiffractionConfig) -> float:
+    """Return ``|k|`` in inverse meters for the selected wavelength."""
+
+    wavelength_m = float(diffraction.wavelength_m)
+    return 2.0 * math.pi / wavelength_m
+
+
+def diffraction_d_spacing(diffraction: DiffractionConfig) -> float:
+    """Return the lattice d-spacing in meters for the selected HKL."""
+
+    _, _, d_hex, _, _ = _hkl_engine()
+    return d_hex(
+        diffraction.H,
+        diffraction.K,
+        diffraction.L,
+        float(diffraction.lattice_a_m),
+        float(diffraction.lattice_c_m),
+    )
+
+
 def diffraction_magnitude_angstrom(diffraction: DiffractionConfig) -> float:
     """Return ``|G|`` in reciprocal angstroms for the selected HKL."""
 
-    _, _, d_hex, _, _ = _hkl_engine()
-    d_spacing = d_hex(diffraction.H, diffraction.K, diffraction.L)
+    d_spacing = diffraction_d_spacing(diffraction)
     return (2.0 * math.pi / d_spacing) * 1e-10
 
 
@@ -734,6 +828,10 @@ def validate_configs(
     if detector.pixel_u <= 0.0 or detector.pixel_v <= 0.0:
         raise ValueError("detector pixel sizes must be positive")
     if diffraction is not None:
+        if float(diffraction.wavelength_m) <= 0.0:
+            raise ValueError("diffraction.wavelength_m must be positive")
+        if float(diffraction.lattice_a_m) <= 0.0 or float(diffraction.lattice_c_m) <= 0.0:
+            raise ValueError("diffraction lattice constants must be positive")
         normalized_diffraction_params(diffraction)
 
 
@@ -785,6 +883,9 @@ def configs_from_values(
     sigma_deg: Any = None,
     mosaic_gamma_deg: Any = None,
     eta: Any = None,
+    wavelength_m: Any = None,
+    lattice_a_m: Any = None,
+    lattice_c_m: Any = None,
     default_beam: BeamConfig | None = None,
     default_sample: SampleConfig | None = None,
     default_detector: DetectorConfig | None = None,
@@ -846,6 +947,15 @@ def configs_from_values(
             )
         ),
         eta=float(coerce_value(eta, diffraction_defaults.eta, float)),
+        wavelength_m=float(
+            coerce_value(wavelength_m, diffraction_defaults.wavelength_m, float)
+        ),
+        lattice_a_m=float(
+            coerce_value(lattice_a_m, diffraction_defaults.lattice_a_m, float)
+        ),
+        lattice_c_m=float(
+            coerce_value(lattice_c_m, diffraction_defaults.lattice_c_m, float)
+        ),
     )
     validate_configs(beam, sample, detector, diffraction)
     return beam, sample, detector, diffraction
@@ -1316,8 +1426,9 @@ def _cached_projection_trace_context(
         Gamma,
         eta,
     ) = normalized_diffraction_params(diffraction_config)
-    _, reciprocal_k_mag, d_hex, intersection_circle, _ = _hkl_engine()
-    g_mag = 2.0 * math.pi / d_hex(H, K, L)
+    _, _, _, intersection_circle, _ = _hkl_engine()
+    reciprocal_k_mag = diffraction_wavevector_magnitude(diffraction_config)
+    g_mag = 2.0 * math.pi / diffraction_d_spacing(diffraction_config)
     ring_x, ring_y, ring_z = intersection_circle(
         g_mag,
         reciprocal_k_mag,
@@ -1525,8 +1636,9 @@ def trace_specular_simulation(
         Gamma,
         eta,
     ) = normalized_diffraction_params(diffraction)
-    _, reciprocal_k_mag, d_hex, intersection_circle, mosaic_intensity = _hkl_engine()
-    g_mag = 2.0 * math.pi / d_hex(H, K, L)
+    _, _, _, intersection_circle, mosaic_intensity = _hkl_engine()
+    reciprocal_k_mag = diffraction_wavevector_magnitude(diffraction)
+    g_mag = 2.0 * math.pi / diffraction_d_spacing(diffraction)
     _emit_progress(
         progress,
         (
@@ -2252,6 +2364,227 @@ def simulation_summary(
     )
 
 
+def _summary_int(value: str | None) -> int | None:
+    """Return an integer parsed from a summary field."""
+
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _summary_fraction(value: str | None) -> tuple[int | None, int | None]:
+    """Return the numerator and denominator parsed from ``a/b`` summary text."""
+
+    if value is None:
+        return None, None
+    left, separator, right = str(value).partition("/")
+    if not separator:
+        return None, None
+    return _summary_int(left), _summary_int(right)
+
+
+def build_specular_summary_card_data(summary_text: str) -> SpecularSummaryCardData:
+    """Return structured readout content derived from the raw summary text."""
+
+    raw_text = str(summary_text or "").strip()
+    if not raw_text:
+        return SpecularSummaryCardData(
+            kind="empty",
+            title="Experiment Readout",
+            interpretation="Run the simulator to populate the specular readout.",
+            metric_items=(),
+            secondary_items=(),
+            detail_lines=(),
+            raw_text="",
+        )
+
+    if raw_text.startswith("Error:"):
+        return SpecularSummaryCardData(
+            kind="error",
+            title="Input Error",
+            interpretation=raw_text.removeprefix("Error:").strip(),
+            metric_items=(),
+            secondary_items=(),
+            detail_lines=(),
+            raw_text=raw_text,
+        )
+
+    values: dict[str, str] = {}
+    detail_lines: list[str] = []
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line or line == "Specular diffraction summary":
+            continue
+        if line.startswith("HKL = "):
+            values["hkl"] = line.removeprefix("HKL = ").strip()
+        elif line.startswith("|G|: "):
+            values["g_mag"] = line.removeprefix("|G|: ").strip()
+        elif line.startswith("sample hits: "):
+            values["sample_hits"] = line.removeprefix("sample hits: ").strip()
+        elif line.startswith("diffraction rays: "):
+            values["diffraction_rays"] = line.removeprefix("diffraction rays: ").strip()
+        elif line.startswith("detector-plane intersections: "):
+            values["plane_hits"] = line.removeprefix("detector-plane intersections: ").strip()
+        elif line.startswith("active detector hits: "):
+            values["active_hits"] = line.removeprefix("active detector hits: ").strip()
+        elif line.startswith("mosaic sigma: "):
+            values["sigma"] = line.removeprefix("mosaic sigma: ").strip()
+        elif line.startswith("mosaic Gamma: "):
+            values["gamma"] = line.removeprefix("mosaic Gamma: ").strip()
+        elif line.startswith("mosaic eta: "):
+            values["eta"] = line.removeprefix("mosaic eta: ").strip()
+        elif line.startswith("sample size (W x H): "):
+            values["sample_size"] = line.removeprefix("sample size (W x H): ").strip()
+        elif line.startswith("detector size (W x H): "):
+            values["detector_size"] = line.removeprefix("detector size (W x H): ").strip()
+        elif (
+            line.startswith("weighted detector-plane centroid")
+            or line.startswith("weighted detector centroid")
+            or line.startswith("direct beam")
+        ):
+            detail_lines.append(line)
+        else:
+            detail_lines.append(line)
+
+    sample_hits, total_rays = _summary_fraction(values.get("sample_hits"))
+    plane_hits = _summary_int(values.get("plane_hits"))
+    active_hits = _summary_int(values.get("active_hits"))
+    if active_hits and active_hits > 0:
+        interpretation = (
+            "Diffracted intensity lands on the active detector area for the current geometry."
+        )
+    elif plane_hits and plane_hits > 0:
+        interpretation = (
+            "The diffraction family reaches the detector plane but misses the active detector area."
+        )
+    elif sample_hits and sample_hits > 0:
+        interpretation = (
+            "The sample is illuminated, but the current reflection family does not reach the detector plane."
+        )
+    elif sample_hits == 0 and total_rays:
+        interpretation = (
+            "The incident beam misses the finite sample. Sweep θi or open Advanced to realign the setup."
+        )
+    else:
+        interpretation = (
+            "Choose HKL, sweep θi, and then open Advanced if you need to realign the beam or detector."
+        )
+
+    metric_items = tuple(
+        item
+        for item in (
+            ("HKL", values.get("hkl", "Unavailable")),
+            ("|G|", values.get("g_mag", "Unavailable")),
+            ("Sample hits", values.get("sample_hits", "Unavailable")),
+            ("Diffraction rays", values.get("diffraction_rays", "Unavailable")),
+            ("Detector hits", values.get("active_hits", "Unavailable")),
+        )
+        if item[1]
+    )
+    secondary_items = tuple(
+        item
+        for item in (
+            ("Plane hits", values.get("plane_hits")),
+            ("σ", values.get("sigma")),
+            ("Γ", values.get("gamma")),
+            ("η", values.get("eta")),
+        )
+        if item[1]
+    )
+    supporting_lines = tuple(
+        line
+        for line in (
+            *detail_lines,
+            f"sample size (W x H): {values['sample_size']}" if values.get("sample_size") else "",
+            (
+                f"detector size (W x H): {values['detector_size']}"
+                if values.get("detector_size")
+                else ""
+            ),
+        )
+        if line
+    )
+    return SpecularSummaryCardData(
+        kind="summary",
+        title="Experiment Readout",
+        interpretation=interpretation,
+        metric_items=metric_items,
+        secondary_items=secondary_items,
+        detail_lines=supporting_lines,
+        raw_text=raw_text,
+    )
+
+
+def build_specular_summary_card(summary_text: str):
+    """Return a structured Dash readout card for the current raw summary text."""
+
+    from dash import html
+
+    summary = build_specular_summary_card_data(summary_text)
+    if summary.kind == "error":
+        return html.Div(
+            [
+                html.Div("Input Error", className="specular-readout-eyebrow"),
+                html.H3("Specular Readout Blocked", className="specular-readout-title"),
+                html.Div(summary.interpretation, className="specular-readout-interpretation"),
+            ],
+            className="specular-readout-card specular-readout-card--error",
+        )
+
+    if summary.kind != "summary":
+        return html.Div(
+            [
+                html.Div("Experiment Readout", className="specular-readout-eyebrow"),
+                html.H3("Specular Diffraction", className="specular-readout-title"),
+                html.Div(summary.interpretation, className="specular-readout-interpretation"),
+                html.Div(summary.raw_text or "No summary available.", className="specular-readout-fallback"),
+            ],
+            className="specular-readout-card",
+        )
+
+    return html.Div(
+        [
+            html.Div(summary.title, className="specular-readout-eyebrow"),
+            html.H3("Specular Diffraction", className="specular-readout-title"),
+            html.Div(summary.interpretation, className="specular-readout-interpretation"),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div(label, className="specular-metric-label"),
+                            html.Div(value, className="specular-metric-value"),
+                        ],
+                        className="specular-metric-card",
+                    )
+                    for label, value in summary.metric_items
+                ],
+                className="specular-summary-metrics",
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Span(label, className="specular-chip-label"),
+                            html.Span(value, className="specular-chip-value"),
+                        ],
+                        className="specular-summary-chip",
+                    )
+                    for label, value in summary.secondary_items
+                ],
+                className="specular-summary-secondary",
+            ),
+            html.Div(
+                [html.Div(line, className="specular-detail-line") for line in summary.detail_lines],
+                className="specular-summary-details",
+            ),
+        ],
+        className="specular-readout-card",
+    )
+
+
 def build_specular_companion_figure(
     sample_config: SampleConfig,
     diffraction_config: DiffractionConfig,
@@ -2655,48 +2988,64 @@ def build_specular_app(
             default_diffraction=diffraction_defaults,
         )
 
-    def section(title: str, children: list[Any]):
-        return html.Div(
-            [
-                html.H3(title, className="specular-section-title", style={"margin": "0"}),
-                html.Div(
-                    children,
-                    style={
-                        "display": "grid",
-                        "gridTemplateColumns": "minmax(0, 1fr)",
-                        "gap": "0.75rem",
-                    },
-                    className="specular-section-grid",
-                ),
-            ],
-            className="specular-section-card",
-            style={
-                "border": "1px solid #d8dee9",
-                "borderRadius": "10px",
-                "padding": "0.9rem",
-                "backgroundColor": "#fbfcfd",
-                "display": "flex",
-                "flexDirection": "column",
-                "gap": "0.85rem",
-            },
+    advanced_descriptions = {
+        "Sample Geometry": "Finite sample size and extra substrate rotations beyond the main incidence sweep.",
+        "Beam Model": "Ray sampling, divergence, and beam footprint controls for the incident bundle.",
+        "Detector Geometry": "Distance, panel size, tilts, and pixel calibration for the receiving detector.",
+    }
+
+    def control_component(control_name: str):
+        spec = SPECULAR_CONTROL_BY_NAME[control_name]
+        config_obj = config_by_group[spec.config_group]
+        return build_number_control(
+            spec.name,
+            spec.label,
+            getattr(config_obj, spec.attr_name),
+            step=spec.step,
+            min_value=spec.min_value,
+            max_value=spec.max_value,
+            updatemode=spec.updatemode,
         )
 
-    def controls_for_section(specs: tuple[ControlSpec, ...]) -> list[Any]:
-        controls: list[Any] = []
-        for spec in specs:
-            config_obj = config_by_group[spec.config_group]
-            controls.append(
-                build_number_control(
-                    spec.name,
-                    spec.label,
-                    getattr(config_obj, spec.attr_name),
-                    step=spec.step,
-                    min_value=spec.min_value,
-                    max_value=spec.max_value,
-                    updatemode=spec.updatemode,
-                )
-            )
-        return controls
+    def labeled_control_grid(
+        title: str,
+        control_names: tuple[str, ...],
+        *,
+        grid_class_name: str = "specular-basic-grid",
+    ):
+        return html.Div(
+            [
+                html.Div(title, className="specular-control-group-label"),
+                html.Div(
+                    [control_component(control_name) for control_name in control_names],
+                    className=grid_class_name,
+                ),
+            ],
+            className="specular-control-group",
+        )
+
+    def advanced_section(title: str, control_names: tuple[str, ...], *, element_id: str):
+        return html.Details(
+            [
+                html.Summary(
+                    [
+                        html.Div(title, className="specular-advanced-title"),
+                        html.Div(
+                            advanced_descriptions[title],
+                            className="specular-advanced-description",
+                        ),
+                    ],
+                    className="specular-advanced-summary",
+                ),
+                html.Div(
+                    [control_component(control_name) for control_name in control_names],
+                    className="specular-advanced-grid",
+                ),
+            ],
+            id=element_id,
+            className="specular-advanced-card",
+            open=False,
+        )
 
     def visual_card(
         title: str,
@@ -2737,37 +3086,71 @@ def build_specular_app(
 
     app.layout = html.Div(
         [
+            dcc.Store(id="specular-summary-text", data=initial_summary),
             html.Div(
                 [
                     html.Div(
                         [
                             html.H2("Specular Diffraction", style={"margin": "0"}),
                             html.Div(
-                                "Beam, sample, detector, and HKL controls stay visible while the diffraction figure remains in view.",
-                                style={"color": "#4a5568"},
+                                "Choose HKL, sweep θi, and then open Advanced if you need beam, sample, or detector alignment controls.",
+                                className="specular-sidebar-helper",
                             ),
                         ],
                         className="specular-sidebar-header",
                         style={"display": "flex", "flexDirection": "column", "gap": "0.45rem"},
                     ),
-                    html.Pre(
+                    html.Div(
                         id="specular-summary",
-                        children=initial_summary,
-                        className="specular-summary-card",
-                        style={
-                            "whiteSpace": "pre-wrap",
-                            "backgroundColor": "#f7fafc",
-                            "border": "1px solid #e2e8f0",
-                            "borderRadius": "10px",
-                            "padding": "0.85rem",
-                            "fontFamily": "Consolas, Monaco, monospace",
-                            "fontSize": "0.92rem",
-                        },
+                        children=build_specular_summary_card(initial_summary),
+                        className="specular-summary-shell",
                     ),
                     html.Div(
-                        [section(title, controls_for_section(controls)) for title, controls in CONTROL_SECTIONS],
+                        [
+                            html.Section(
+                                [
+                                    html.Div(
+                                        [
+                                            html.Div("Basic Controls", className="specular-card-eyebrow"),
+                                            html.H3(
+                                                "Start With the Reflection",
+                                                className="specular-section-title",
+                                                style={"margin": "0"},
+                                            ),
+                                            html.Div(
+                                                "Keep the incidence sweep and diffraction family visible. Open Advanced only when you need alignment or calibration controls.",
+                                                className="specular-card-description",
+                                            ),
+                                        ],
+                                        className="specular-control-card-header",
+                                    ),
+                                    html.Div(
+                                        [control_component("theta_i")],
+                                        className="specular-basic-grid specular-basic-grid--single",
+                                    ),
+                                    labeled_control_grid("Reflection", ("H", "K", "L")),
+                                    labeled_control_grid(
+                                        "Mosaic Envelope",
+                                        ("sigma_deg", "mosaic_gamma_deg", "eta"),
+                                    ),
+                                ],
+                                id="specular-basic-card",
+                                className="specular-control-card specular-control-card--basic",
+                            ),
+                            html.Div(
+                                [
+                                    advanced_section(
+                                        title,
+                                        control_names,
+                                        element_id=f"specular-advanced-{title.lower().replace(' ', '-')}",
+                                    )
+                                    for title, control_names in SPECULAR_ADVANCED_CONTROL_SECTIONS
+                                ],
+                                id="specular-advanced-sections",
+                                className="specular-advanced-stack",
+                            ),
+                        ],
                         className="specular-sections",
-                        style={"display": "grid", "gap": "1rem"},
                     ),
                 ],
                 className="specular-sidebar",
@@ -2907,23 +3290,24 @@ def build_specular_app(
 
     @app.callback(
         Output("specular-summary", "children"),
+        Output("specular-summary-text", "data"),
         Input({"type": "specular-slider", "name": ALL}, "value"),
         State({"type": "specular-slider", "name": ALL}, "id"),
-        State("specular-summary", "children"),
+        State("specular-summary-text", "data"),
     )
     def update_specular_summary(
         slider_values,
         slider_ids,
-        current_summary,
+        current_summary_text,
     ):  # pragma: no cover - UI callback
         value_by_name = control_values_from_ids(slider_ids, slider_values)
         try:
             beam_config, sample_config, detector_config, diffraction_config = resolve_configs(value_by_name)
         except ValueError as exc:
             message = f"Error: {exc}"
-            if current_summary == message:
+            if current_summary_text == message:
                 raise PreventUpdate
-            return message
+            return build_specular_summary_card(message), message
 
         summary = build_specular_summary_output(
             beam_config,
@@ -2931,9 +3315,9 @@ def build_specular_app(
             detector_config,
             diffraction_config,
         )
-        if current_summary == summary:
+        if current_summary_text == summary:
             raise PreventUpdate
-        return summary
+        return build_specular_summary_card(summary), summary
 
     return app
 

@@ -9,7 +9,18 @@ from .intensity import cap_intensity, belt_intensity, mosaic_intensity
 from .detector import build_detector_figure
 from .cylinder import build_cylinder_figure
 from .mono import build_mono_figure
-from .unified import build_unified_app, build_unified_figure
+
+
+def build_unified_app(*args, **kwargs):
+    from .unified import build_unified_app as _build_unified_app
+
+    return _build_unified_app(*args, **kwargs)
+
+
+def build_unified_figure(*args, **kwargs):
+    from .unified import build_unified_figure as _build_unified_figure
+
+    return _build_unified_figure(*args, **kwargs)
 
 __all__ = [
     "λ", "a_hex", "c_hex", "K_MAG", "d_hex",

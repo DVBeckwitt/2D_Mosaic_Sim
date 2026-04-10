@@ -28,36 +28,74 @@ def _shell(app):
     return app.layout.children[-1]
 
 
-def _sidebar(app):
-    return _shell(app).children[0]
+def _find_component_by_id(component, target_id):
+    if getattr(component, "id", None) == target_id:
+        return component
+
+    children = getattr(component, "children", None)
+    if children is None:
+        return None
+
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            result = _find_component_by_id(child, target_id)
+            if result is not None:
+                return result
+        return None
+
+    return _find_component_by_id(children, target_id)
 
 
-def _main(app):
-    return _shell(app).children[1]
-
-
-def _graph(app):
-    return _main(app).children[1].children[0]
-
-
-def _specular_companion_card(app):
-    return _main(app).children[2]
-
-
-def _specular_companion_graph(app):
-    return _specular_companion_card(app).children[1].children[0]
-
-
-def _summary(app):
-    return _sidebar(app).children[4]
-
-
-def _controls(app):
-    return _sidebar(app).children[5].children
+def _render_component_text(component) -> str:
+    if component is None:
+        return ""
+    if isinstance(component, (str, int, float)):
+        return str(component)
+    if isinstance(component, (list, tuple)):
+        return "".join(_render_component_text(child) for child in component)
+    return _render_component_text(getattr(component, "children", None))
 
 
 def _callback_by_output(app, output_key: str):
-    return app.callback_map[output_key]["callback"].__wrapped__
+    for key, value in app.callback_map.items():
+        if key == output_key or output_key in key:
+            return value["callback"].__wrapped__
+    raise KeyError(output_key)
+
+
+def _sidebar(app):
+    return _find_component_by_id(app.layout, "simulation-sidebar")
+
+
+def _main(app):
+    return _find_component_by_id(app.layout, "simulation-main")
+
+
+def _graph(app):
+    return _find_component_by_id(app.layout, "simulation-figure")
+
+
+def _specular_companion_card(app):
+    return _find_component_by_id(app.layout, "simulation-specular-companion-card")
+
+
+def _specular_companion_graph(app):
+    return _find_component_by_id(app.layout, "simulation-specular-companion-figure")
+
+
+def _summary(app):
+    return _find_component_by_id(app.layout, "simulation-summary")
+
+
+def _controls(app):
+    return _find_component_by_id(app.layout, "simulation-controls").children
+
+
+def _callback_by_output(app, output_key: str):
+    for key, value in app.callback_map.items():
+        if key == output_key or output_key in key:
+            return value["callback"].__wrapped__
+    raise KeyError(output_key)
 
 
 def _main_figure_callback(app):
@@ -97,13 +135,13 @@ def test_build_unified_figure_uses_specular_mode_and_sets_summary_meta():
 def test_build_unified_app_seeds_mode_selector_and_initial_figure():
     app = build_unified_app(initial_mode="fibrous-view")
 
-    sidebar = _sidebar(app)
     main = _main(app)
-    mode_dropdown = sidebar.children[2].children[1]
+    mode_selector = _find_component_by_id(app.layout, "simulation-mode")
     export_toolbar = main.children[0]
     graph = _graph(app)
 
-    assert mode_dropdown.value == "fibrous-view"
+    assert isinstance(mode_selector, dcc.RadioItems)
+    assert mode_selector.value == "fibrous-view"
     assert export_toolbar.children[0].id == "export-png-button"
     assert isinstance(graph, dcc.Graph)
     assert "HKL = (0, 0, 12)" in graph.figure.layout.title.text
@@ -112,47 +150,61 @@ def test_build_unified_app_seeds_mode_selector_and_initial_figure():
 def test_build_unified_app_seeds_specular_mode_selector_and_initial_figure():
     app = build_unified_app(initial_mode="specular-view")
 
-    sidebar = _sidebar(app)
-    mode_dropdown = sidebar.children[2].children[1]
+    mode_selector = _find_component_by_id(app.layout, "simulation-mode")
     graph = _graph(app)
     companion_card = _specular_companion_card(app)
     companion_graph = _specular_companion_graph(app)
     summary = _summary(app)
+    basic_card = _find_component_by_id(app.layout, "simulation-specular-basic-card")
     control_sections = _controls(app)
 
-    assert mode_dropdown.value == "specular-view"
+    assert isinstance(mode_selector, dcc.RadioItems)
+    assert mode_selector.value == "specular-view"
     assert isinstance(graph, dcc.Graph)
     assert isinstance(companion_graph, dcc.Graph)
     assert "HKL = (1, 1, 1)" in graph.figure.layout.title.text
     assert "diffraction rays" in graph.figure.layout.title.text
     assert "HKL = (1, 1, 1)" in companion_graph.figure.layout.title.text
-    assert "HKL = (1, 1, 1)" in summary.children
-    assert "diffraction rays" in summary.children
-    assert "nominal 2θ" not in summary.children
+    assert "(1, 1, 1)" in _render_component_text(summary)
+    assert "Diffraction rays" in _render_component_text(summary)
+    assert "nominal 2θ" not in _render_component_text(summary)
     assert summary.style.get("display") != "none"
     assert companion_card.style.get("display") != "none"
-    assert control_sections[0].children[0].children == "Sample"
-    assert control_sections[1].children[0].children == "Beam"
-    assert control_sections[2].children[0].children == "Detector"
-    assert control_sections[3].children[0].children == "Diffraction"
-    diffraction_controls = control_sections[3].children[1].children
-    assert len(diffraction_controls) == 6
-    assert diffraction_controls[0].children[1].children[0].children.id == {
-        "type": "simulation-hybrid-slider",
-        "key": "H",
-    }
-    assert diffraction_controls[3].children[1].children[0].children.id == {
-        "type": "simulation-hybrid-slider",
-        "key": "sigma_deg",
-    }
-    assert diffraction_controls[4].children[1].children[0].children.id == {
-        "type": "simulation-hybrid-slider",
-        "key": "mosaic_gamma_deg",
-    }
-    assert diffraction_controls[5].children[1].children[0].children.id == {
-        "type": "simulation-hybrid-slider",
-        "key": "eta",
-    }
+    assert len(control_sections) == 2
+    assert "Start With the Reflection" in _render_component_text(basic_card)
+    assert _find_component_by_id(basic_card, {"type": "simulation-hybrid-slider", "key": "H"}) is not None
+    assert _find_component_by_id(
+        basic_card,
+        {"type": "simulation-hybrid-slider", "key": "mosaic_gamma_deg"},
+    ) is not None
+
+
+def test_build_unified_app_seeds_specular_state_payload():
+    app = build_unified_app(
+        initial_mode="specular-view",
+        initial_state={
+            "specular-view": {
+                "H": 3,
+                "K": -1,
+                "L": 5,
+                "theta_i": 14.5,
+                "sigma_deg": 1.2,
+                "wavelength_m": 1.3776e-10,
+                "lattice_a_m": 4.95e-10,
+                "lattice_c_m": 2.68e-9,
+            }
+        },
+    )
+
+    graph = _graph(app)
+    companion_graph = _specular_companion_graph(app)
+    state_store = app.layout.children[0]
+
+    assert "HKL = (3, -1, 5)" in graph.figure.layout.title.text
+    assert "HKL = (3, -1, 5)" in companion_graph.figure.layout.title.text
+    assert state_store.data["specular-view"]["wavelength_m"] == pytest.approx(1.3776e-10)
+    assert state_store.data["specular-view"]["lattice_a_m"] == pytest.approx(4.95e-10)
+    assert state_store.data["specular-view"]["lattice_c_m"] == pytest.approx(2.68e-9)
 
 
 def test_unified_non_specular_modes_keep_summary_hidden():
@@ -168,65 +220,21 @@ def test_unified_specular_mode_restores_all_parameter_sections_and_controls():
     app = build_unified_app(initial_mode="specular-view")
 
     control_sections = _controls(app)
+    basic_card = _find_component_by_id(app.layout, "simulation-specular-basic-card")
+    sample_advanced = _find_component_by_id(app.layout, "simulation-specular-advanced-sample-geometry")
+    beam_advanced = _find_component_by_id(app.layout, "simulation-specular-advanced-beam-model")
+    detector_advanced = _find_component_by_id(app.layout, "simulation-specular-advanced-detector-geometry")
 
-    expected_sections = (
-        (
-            "Sample",
-            [
-                "sample_width",
-                "sample_height",
-                "theta_i",
-                "delta",
-                "alpha",
-                "psi",
-                "z_sample",
-            ],
-        ),
-        (
-            "Beam",
-            [
-                "rays",
-                "seed",
-                "display_rays",
-                "source_y",
-                "beam_width_x",
-                "beam_width_z",
-                "divergence_x",
-                "divergence_z",
-                "z_beam",
-            ],
-        ),
-        (
-            "Detector",
-            [
-                "distance",
-                "detector_width",
-                "detector_height",
-                "beta",
-                "gamma",
-                "chi",
-                "pixel_u",
-                "pixel_v",
-            ],
-        ),
-        (
-            "Diffraction",
-            [
-                "H",
-                "K",
-                "L",
-                "sigma_deg",
-                "mosaic_gamma_deg",
-                "eta",
-            ],
-        ),
-    )
-
-    assert len(control_sections) == len(expected_sections)
-    for section, (title, keys) in zip(control_sections, expected_sections, strict=True):
-        assert section.children[0].children == title
-        assert _specular_section_keys(section) == keys
-        assert _specular_section_input_keys(section) == keys
+    assert len(control_sections) == 2
+    for key in ("theta_i", "H", "K", "L", "sigma_deg", "mosaic_gamma_deg", "eta"):
+        assert _find_component_by_id(basic_card, {"type": "simulation-hybrid-slider", "key": key}) is not None
+        assert _find_component_by_id(basic_card, {"type": "simulation-hybrid-input", "key": key}) is not None
+    for key in ("sample_width", "sample_height", "delta", "alpha", "psi", "z_sample"):
+        assert _find_component_by_id(sample_advanced, {"type": "simulation-hybrid-slider", "key": key}) is not None
+    for key in ("rays", "display_rays", "seed", "source_y", "beam_width_x", "beam_width_z", "divergence_x", "divergence_z", "z_beam"):
+        assert _find_component_by_id(beam_advanced, {"type": "simulation-hybrid-slider", "key": key}) is not None
+    for key in ("distance", "detector_width", "detector_height", "beta", "gamma", "chi", "pixel_u", "pixel_v"):
+        assert _find_component_by_id(detector_advanced, {"type": "simulation-hybrid-slider", "key": key}) is not None
 
 
 def test_unified_specular_layout_serializes_for_dash():
@@ -236,7 +244,7 @@ def test_unified_specular_layout_serializes_for_dash():
 
     assert '"simulation-mode"' in serialized
     assert '"specular-view"' in serialized
-    assert '"Diffraction"' in serialized
+    assert '"simulation-specular-basic-card"' in serialized
     assert '"simulation-specular-companion-figure"' in serialized
 
 
@@ -279,14 +287,18 @@ def test_unified_detector_mosaic_kernel_controls_use_slider_input_pairs():
 def test_unified_specular_sliders_only_keep_theta_i_live():
     app = build_unified_app(initial_mode="specular-view")
 
-    sections = _controls(app)
-    sample_controls = sections[0].children[1].children
-    detector_controls = sections[2].children[1].children
-    diffraction_controls = sections[3].children[1].children
+    basic_card = _find_component_by_id(app.layout, "simulation-specular-basic-card")
+    detector_advanced = _find_component_by_id(app.layout, "simulation-specular-advanced-detector-geometry")
 
-    theta_slider = sample_controls[2].children[1].children[0].children
-    beta_slider = detector_controls[3].children[1].children[0].children
-    sigma_slider = diffraction_controls[3].children[1].children[0].children
+    theta_slider = _find_component_by_id(basic_card, {"type": "simulation-hybrid-slider", "key": "theta_i"})
+    beta_slider = _find_component_by_id(
+        detector_advanced,
+        {"type": "simulation-hybrid-slider", "key": "beta"},
+    )
+    sigma_slider = _find_component_by_id(
+        basic_card,
+        {"type": "simulation-hybrid-slider", "key": "sigma_deg"},
+    )
 
     assert theta_slider.updatemode == "drag"
     assert beta_slider.updatemode == "mouseup"
@@ -309,11 +321,11 @@ def test_unified_powder_view_exposes_picker_and_only_relevant_peak_ui():
 
 def test_powder_view_picker_renders_only_active_peak_selector():
     app = build_unified_app(initial_mode="reciprocal-space")
-    callback = app.callback_map["..simulation-description.children...simulation-controls.children.."]["callback"].__wrapped__
+    callback = _callback_by_output(app, "simulation-description.children")
     state = app.layout.children[0].data
     powder_selection_state = app.layout.children[1].data
 
-    _, controls = callback(
+    _, controls, _, _ = callback(
         "reciprocal-space",
         "2d-powder",
         state,
@@ -544,7 +556,11 @@ def test_unified_specular_companion_callback_skips_main_only_changes():
 
 def test_unified_summary_callback_no_longer_reads_figure_payload():
     app = build_unified_app(initial_mode="specular-view")
-    callback_entry = app.callback_map["..simulation-summary.children...simulation-summary.style.."]
+    callback_entry = next(
+        value
+        for key, value in app.callback_map.items()
+        if "simulation-summary.children" in key
+    )
     inputs = {(item["id"], item["property"]) for item in callback_entry["inputs"]}
 
     assert ("simulation-mode", "value") in inputs
@@ -742,8 +758,9 @@ def test_unified_main_uses_cli_args_when_called_without_parameters(monkeypatch):
         def __init__(self, *args, **kwargs):
             raise AssertionError("browser timer should not run when --no-browser is set")
 
-    def stub_build_unified_app(initial_mode):
+    def stub_build_unified_app(initial_mode, *, initial_state=None):
         recorded["initial_mode"] = initial_mode
+        recorded["initial_state"] = initial_state
         return StubApp()
 
     monkeypatch.setattr(
@@ -757,6 +774,7 @@ def test_unified_main_uses_cli_args_when_called_without_parameters(monkeypatch):
                 "host": "127.0.0.1",
                 "port": 8067,
                 "no_browser": True,
+                "state_json": '{"specular-view":{"H":4,"wavelength_m":1.2e-10}}',
             },
         )(),
     )
@@ -770,6 +788,9 @@ def test_unified_main_uses_cli_args_when_called_without_parameters(monkeypatch):
     unified_app.main()
 
     assert recorded["initial_mode"] == "specular-view"
+    assert recorded["initial_state"] == {
+        "specular-view": {"H": 4, "wavelength_m": 1.2e-10}
+    }
     assert recorded["debug"] is False
     assert recorded["host"] == "127.0.0.1"
     assert recorded["port"] == 8067
@@ -784,8 +805,9 @@ def test_unified_main_uses_explicit_parameters_without_parsing_cli(monkeypatch):
             recorded["host"] = host
             recorded["port"] = port
 
-    def stub_build_unified_app(initial_mode):
+    def stub_build_unified_app(initial_mode, *, initial_state=None):
         recorded["initial_mode"] = initial_mode
+        recorded["initial_state"] = initial_state
         return StubApp()
 
     monkeypatch.setattr(
@@ -809,9 +831,13 @@ def test_unified_main_uses_explicit_parameters_without_parsing_cli(monkeypatch):
         host="0.0.0.0",
         port=9001,
         open_browser=False,
+        initial_state={"specular-view": {"H": 2, "lattice_a_m": 5.5e-10}},
     )
 
     assert recorded["initial_mode"] == "specular-view"
+    assert recorded["initial_state"] == {
+        "specular-view": {"H": 2, "lattice_a_m": 5.5e-10}
+    }
     assert recorded["debug"] is False
     assert recorded["host"] == "0.0.0.0"
     assert recorded["port"] == 9001
