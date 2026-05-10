@@ -1,4 +1,6 @@
-from dash import dcc
+from pathlib import Path
+
+from dash import dcc, html
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 import pytest
@@ -46,6 +48,25 @@ def _find_component_by_id(component, target_id):
     return _find_component_by_id(children, target_id)
 
 
+def _find_component_by_class(component, class_name: str):
+    class_names = str(getattr(component, "className", "") or "").split()
+    if class_name in class_names:
+        return component
+
+    children = getattr(component, "children", None)
+    if children is None:
+        return None
+
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            result = _find_component_by_class(child, class_name)
+            if result is not None:
+                return result
+        return None
+
+    return _find_component_by_class(children, class_name)
+
+
 def _render_component_text(component) -> str:
     if component is None:
         return ""
@@ -91,11 +112,21 @@ def _controls(app):
     return _find_component_by_id(app.layout, "simulation-controls").children
 
 
-def _callback_by_output(app, output_key: str):
-    for key, value in app.callback_map.items():
-        if key == output_key or output_key in key:
-            return value["callback"].__wrapped__
-    raise KeyError(output_key)
+def _control_section_titles(app) -> list[str]:
+    return [
+        _render_component_text(control_group.children[0])
+        for control_group in _controls(app)
+        if "simulation-control-section" in str(getattr(control_group, "className", ""))
+    ]
+
+
+def _control_section(app, title: str):
+    for control_group in _controls(app):
+        if "simulation-control-section" not in str(getattr(control_group, "className", "")):
+            continue
+        if _render_component_text(control_group.children[0]) == title:
+            return control_group
+    raise AssertionError(f"Missing control section: {title}")
 
 
 def _main_figure_callback(app):
@@ -110,6 +141,7 @@ def test_unified_registry_exposes_all_simulations():
     assert set(SIMULATION_SPECS) == {
         "reciprocal-space",
         "detector-view",
+        "special-cause-reciprocal",
         "fibrous-view",
         "specular-view",
     }
@@ -119,6 +151,24 @@ def test_build_unified_figure_uses_selected_mode():
     fig = build_unified_figure("detector-view", H=0, K=0, L=12, sigma_deg=0.8, Gamma_deg=5.0, eta=0.5)
 
     assert "HKL = (0, 0, 12)" in fig.layout.title.text
+
+
+def test_build_unified_figure_uses_special_cause_reciprocal_mode():
+    fig = build_unified_figure(
+        "special-cause-reciprocal",
+        H=0,
+        K=0,
+        L=12,
+        sigma_deg=0.8,
+        Gamma_deg=5.0,
+        eta=0.5,
+    )
+
+    assert "HKL = (0, 0, 12)" in fig.layout.title.text
+    assert any(trace.name == "Bragg sphere" for trace in fig.data)
+    assert any(trace.name == "Ewald sphere" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+    assert not any(trace.type == "scatter" for trace in fig.data)
 
 
 def test_build_unified_figure_uses_specular_mode_and_sets_summary_meta():
@@ -145,6 +195,26 @@ def test_build_unified_app_seeds_mode_selector_and_initial_figure():
     assert export_toolbar.children[0].id == "export-png-button"
     assert isinstance(graph, dcc.Graph)
     assert "HKL = (0, 0, 12)" in graph.figure.layout.title.text
+
+
+def test_unified_layout_uses_compact_browser_header_for_mode_switching():
+    app = build_unified_app(initial_mode="fibrous-view")
+
+    header = _find_component_by_id(app.layout, "simulation-sidebar-header")
+    mode_card = _find_component_by_class(header, "simulation-mode-card")
+    mode_selector = _find_component_by_id(header, "simulation-mode")
+
+    assert header is not None
+    assert mode_card is not None
+    assert isinstance(mode_selector, dcc.RadioItems)
+    assert mode_selector.inline is True
+
+
+def test_unified_graphs_use_dash_responsive_graph_property():
+    app = build_unified_app(initial_mode="specular-view")
+
+    assert _graph(app).responsive is True
+    assert _specular_companion_graph(app).responsive is True
 
 
 def test_build_unified_app_seeds_specular_mode_selector_and_initial_figure():
@@ -251,29 +321,95 @@ def test_unified_specular_layout_serializes_for_dash():
 def test_unified_detector_theta_slider_updates_continuously():
     app = build_unified_app(initial_mode="detector-view")
 
-    controls = _controls(app)
-    theta_control = controls[0].children[1]
+    theta_control = _find_component_by_id(app.layout, {"type": "simulation-control", "key": "theta_i_deg"})
 
     assert isinstance(theta_control, dcc.Slider)
     assert theta_control.updatemode == "drag"
 
 
+def test_unified_layout_keeps_public_callback_ids_and_state_keys_stable():
+    app = build_unified_app(initial_mode="detector-view")
+
+    for component_id in (
+        "simulation-mode",
+        "simulation-controls",
+        "simulation-figure",
+        "simulation-state",
+    ):
+        assert _find_component_by_id(app.layout, component_id) is not None
+
+    state_store = _find_component_by_id(app.layout, "simulation-state")
+    assert "detector-view" in state_store.data
+    assert "wavelength_bandwidth_pct" in state_store.data["detector-view"]
+
+
+def test_unified_detector_controls_are_grouped_for_browser_scanning():
+    app = build_unified_app(initial_mode="detector-view")
+
+    assert _control_section_titles(app) == ["Incident Angle", "Reflection", "Mosaic Envelope"]
+    mosaic_section = _control_section(app, "Mosaic Envelope")
+
+    assert _find_component_by_id(mosaic_section, {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"}) is not None
+    assert "λ bandwidth (%)" in _render_component_text(mosaic_section)
+
+
+def test_unified_special_cause_reciprocal_controls_are_grouped_for_browser_scanning():
+    app = build_unified_app(initial_mode="special-cause-reciprocal")
+
+    mode_selector = _find_component_by_id(app.layout, "simulation-mode")
+    graph = _graph(app)
+    summary = _summary(app)
+    companion_card = _specular_companion_card(app)
+
+    assert mode_selector.value == "special-cause-reciprocal"
+    assert "HKL = (0, 0, 12)" in graph.figure.layout.title.text
+    assert _control_section_titles(app) == ["Incident Angle", "Reflection", "Mosaic Envelope"]
+    assert _find_component_by_id(
+        _control_section(app, "Incident Angle"),
+        {"type": "simulation-control", "key": "theta_i_deg"},
+    ) is not None
+    assert _find_component_by_id(
+        _control_section(app, "Mosaic Envelope"),
+        {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"},
+    ) is not None
+    assert summary.style.get("display") == "none"
+    assert companion_card.style.get("display") == "none"
+
+
+def test_unified_fibrous_controls_are_grouped_for_browser_scanning():
+    app = build_unified_app(initial_mode="fibrous-view")
+
+    assert _control_section_titles(app) == ["Reflection", "Mosaic Envelope"]
+    mosaic_section = _control_section(app, "Mosaic Envelope")
+
+    assert _find_component_by_id(mosaic_section, {"type": "simulation-control", "key": "wavelength_bandwidth_pct"}) is not None
+    assert "λ bandwidth (%)" in _render_component_text(mosaic_section)
+
+
+def test_unified_reciprocal_controls_are_grouped_for_browser_scanning():
+    app = build_unified_app(initial_mode="reciprocal-space")
+
+    assert _control_section_titles(app)[:2] == ["Sweep", "Render"]
+    assert _find_component_by_id(_control_section(app, "Sweep"), {"type": "simulation-control", "key": "theta_i_min_deg"}) is not None
+    assert _find_component_by_id(_control_section(app, "Render"), {"type": "simulation-control", "key": "render_profile"}) is not None
+
+
 def test_unified_detector_mosaic_kernel_controls_use_slider_input_pairs():
     app = build_unified_app(initial_mode="detector-view")
 
-    controls = _controls(app)
-
-    sigma_control = controls[4].children[1]
-    Gamma_control = controls[5].children[1]
-    eta_control = controls[6].children[1]
-
     for key, control in (
-        ("sigma_deg", sigma_control),
-        ("Gamma_deg", Gamma_control),
-        ("eta", eta_control),
+        (
+            "sigma_deg",
+            _find_component_by_id(app.layout, {"type": "simulation-hybrid-slider", "key": "sigma_deg"}),
+        ),
+        (
+            "Gamma_deg",
+            _find_component_by_id(app.layout, {"type": "simulation-hybrid-slider", "key": "Gamma_deg"}),
+        ),
+        ("eta", _find_component_by_id(app.layout, {"type": "simulation-hybrid-slider", "key": "eta"})),
     ):
-        slider = control.children[0].children
-        number = control.children[1]
+        slider = control
+        number = _find_component_by_id(app.layout, {"type": "simulation-hybrid-input", "key": key})
 
         assert isinstance(slider, dcc.Slider)
         assert isinstance(number, dcc.Input)
@@ -282,6 +418,68 @@ def test_unified_detector_mosaic_kernel_controls_use_slider_input_pairs():
         assert number.id["type"] == "simulation-hybrid-input"
         assert number.id["key"] == key
         assert number.type == "number"
+
+    bandwidth_slider = _find_component_by_id(
+        app.layout,
+        {"type": "simulation-hybrid-slider", "key": "wavelength_bandwidth_pct"},
+    )
+    bandwidth_input = _find_component_by_id(
+        app.layout,
+        {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"},
+    )
+
+    assert isinstance(bandwidth_slider, dcc.Slider)
+    assert isinstance(bandwidth_input, dcc.Input)
+    assert bandwidth_slider.id["type"] == "simulation-hybrid-slider"
+    assert bandwidth_slider.id["key"] == "wavelength_bandwidth_pct"
+    assert bandwidth_slider.min == pytest.approx(0.0)
+    assert bandwidth_slider.max == pytest.approx(5.0)
+    assert bandwidth_input.id["type"] == "simulation-hybrid-input"
+    assert bandwidth_input.id["key"] == "wavelength_bandwidth_pct"
+    assert bandwidth_input.step == pytest.approx(0.01)
+
+
+def test_unified_fibrous_wavelength_bandwidth_control_uses_number_input():
+    app = build_unified_app(initial_mode="fibrous-view")
+
+    bandwidth_input = _find_component_by_id(
+        app.layout,
+        {"type": "simulation-control", "key": "wavelength_bandwidth_pct"},
+    )
+
+    assert isinstance(bandwidth_input, dcc.Input)
+    assert bandwidth_input.id["type"] == "simulation-control"
+    assert bandwidth_input.id["key"] == "wavelength_bandwidth_pct"
+    assert bandwidth_input.type == "number"
+    assert bandwidth_input.step == pytest.approx(0.01)
+    assert bandwidth_input.min == pytest.approx(0.0)
+
+
+def test_unified_wavelength_bandwidth_callbacks_preserve_state_values():
+    app = build_unified_app(initial_mode="detector-view")
+    state = app.layout.children[0].data
+
+    detector_state = _updated_mode_state(
+        "detector-view",
+        [],
+        [1.25],
+        [],
+        [{"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"}],
+        state,
+        {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"},
+    )
+    fibrous_state = _updated_mode_state(
+        "fibrous-view",
+        [0.75],
+        [],
+        [{"type": "simulation-control", "key": "wavelength_bandwidth_pct"}],
+        [],
+        state,
+        {"type": "simulation-control", "key": "wavelength_bandwidth_pct"},
+    )
+
+    assert detector_state["detector-view"]["wavelength_bandwidth_pct"] == pytest.approx(1.25)
+    assert fibrous_state["fibrous-view"]["wavelength_bandwidth_pct"] == pytest.approx(0.75)
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():
@@ -308,15 +506,15 @@ def test_unified_specular_sliders_only_keep_theta_i_live():
 def test_unified_powder_view_exposes_picker_and_only_relevant_peak_ui():
     app = build_unified_app(initial_mode="reciprocal-space")
 
-    controls = _controls(app)
-    view_picker = controls[-2].children[1]
-    peak_card = controls[-1]
+    view_picker = _find_component_by_id(app.layout, "powder-view-mode")
 
     assert isinstance(view_picker, dcc.RadioItems)
     assert view_picker.id == "powder-view-mode"
     assert view_picker.value == "single-crystal"
-    assert peak_card.children[0].children == "Peak filters"
-    assert "Single crystal does not use grouped powder peak filters." in peak_card.children[1].children
+    assert "Peak filters" in _render_component_text(_find_component_by_id(app.layout, "simulation-controls"))
+    assert "Single crystal does not use grouped powder peak filters." in _render_component_text(
+        _find_component_by_id(app.layout, "simulation-controls")
+    )
 
 
 def test_powder_view_picker_renders_only_active_peak_selector():
@@ -331,9 +529,13 @@ def test_powder_view_picker_renders_only_active_peak_selector():
         state,
         powder_selection_state,
     )
-    peak_selector = controls[-1].children[1]
+    rendered_controls = html.Div(controls)
+    peak_selector = _find_component_by_id(
+        rendered_controls,
+        {"type": "powder-qr-control", "key": "ring_selection"},
+    )
 
-    assert isinstance(controls[-2].children[1], dcc.RadioItems)
+    assert isinstance(_find_component_by_id(rendered_controls, "powder-view-mode"), dcc.RadioItems)
     assert isinstance(peak_selector, dcc.Checklist)
     assert peak_selector.id["type"] == "powder-qr-control"
     assert peak_selector.id["key"] == "ring_selection"
@@ -384,6 +586,7 @@ def test_png_export_callback_targets_rendered_plotly_figure_and_powder_exports()
     assert 'mosaic_reciprocal_space.png' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert 'mosaic_detector_view.png' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert 'mosaic_centered_integration.png' in PNG_EXPORT_CLIENTSIDE_CALLBACK
+    assert '"special-cause-reciprocal": "special_cause_reciprocal"' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert '"specular-view": "specular_reflection"' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert 'trace?.scene === "scene"' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert 'trace?.xaxis === "x" && trace?.yaxis === "y"' in PNG_EXPORT_CLIENTSIDE_CALLBACK

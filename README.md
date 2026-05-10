@@ -32,7 +32,7 @@ These are intentionally temporary images. Keep the same filenames when you repla
 - File: `docs/images/placeholders/detector_placeholder.png`
 - Purpose: 3-panel browser UI linking reciprocal-space geometry to detector intensity and centered integration, with live `theta_i`, HKL, `σ`, `Γ`, and `η` controls in the GUI.
 - What to capture: Full figure with all three panels visible, including colorbar, integration subplot, and the `theta_i` control.
-- Run: `python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5`
+- Run: `python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5 --wavelength-bandwidth-pct 0.5`
   The CLI values seed the initial browser state; you can then change HKL and the mosaic parameters directly in the GUI.
 
 ### Fibrous Bragg/Ewald Intersections (`fibrous_bragg_ewald_intersections.py`)
@@ -42,7 +42,7 @@ These are intentionally temporary images. Keep the same filenames when you repla
 - File: `docs/images/placeholders/fibrous_placeholder.png`
 - Purpose: Browser-based Bragg/Ewald/cylinder intersection view with live HKL / `σ` / `Γ` / `η` controls below the plot.
 - What to capture: A frame showing all three overlap curves clearly (`Ewald/Bragg`, `Cylinder/Ewald`, `Cylinder/Bragg`).
-- Run: `python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5`
+- Run: `python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5 --wavelength-bandwidth-pct 0.5`
   The CLI values seed the initial browser state; you can then change HKL and the mosaic parameters directly in the GUI.
 
 ## Installation
@@ -53,6 +53,17 @@ The project targets Python `3.11+`.
 pip install -e .
 ```
 
+## Project Status
+
+Status date: 2026-05-10
+
+- Feature: `Special Cause Reciprocal` is implemented in the unified GUI. It renders the Cu-K alpha Ewald sphere, Bi2Se3 Bragg sphere, and Bragg/Ewald overlap as a one-panel reciprocal-space view using the same HKL, `theta_i`, `σ`, `Γ`, and `η` controls as `Mosaic View`.
+- Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. The default `0.0` keeps the previous monochromatic behavior.
+- Bug/error status: no application runtime error is known for the new mode. Browser smoke testing found only Chromium/Plotly graphics warnings and expected Dash `PreventUpdate` responses during camera-state callbacks.
+- Migration status: no existing mode or CLI argument was removed. Existing scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied.
+- CI status: GitHub Actions now runs install, `pip check`, compile, tests, and package build on pull requests and pushes to `main`.
+- Shipping status: local full test suite passes; rollback is a normal git revert of this feature commit.
+
 ## Usage
 
 Run scripts from the project root:
@@ -60,19 +71,27 @@ Run scripts from the project root:
 ```bash
 python mosaic_simulator.py                                          # unified GUI for the supported simulations
 python mosaic_simulator.py --mode specular-view                     # open the unified GUI directly in Specular Diffraction mode
+python mosaic_simulator.py --mode special-cause-reciprocal          # one-panel Cu-Kα/Bi2Se3 reciprocal-space overlap view
 python single_crystal_powder_cylinder_viewer.py                # single-crystal / 3D powder / 2D powder / cylinder views
 python single_crystal_powder_cylinder_viewer.py --full-quality # higher quality render profile
 python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # launches the detector Dash UI with live HKL/mosaic controls
+python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5 --wavelength-bandwidth-pct 0.5  # adds a finite Ewald wavelength layer stack
 python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # fibrous Bragg/Ewald/cylinder GUI with live HKL/mosaic controls
+python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5 --wavelength-bandwidth-pct 0.5  # adds a finite Ewald wavelength layer stack
 python specular_reflection_sim.py                                  # standalone specular diffraction GUI with lab geometry plus reciprocal-space / integrated-response companion panels
 ```
+
+`λ bandwidth (%)` is the full `Δλ / λ` percentage, not FWHM. The default `0.0` keeps the monochromatic Ewald sphere behavior.
 
 The unified GUI includes these switchable modes in one Dash app:
 
 - `Powder Views`
 - `Mosaic View`
+- `Special Cause Reciprocal`
 - `Ewald Cylinder`
 - `Specular Diffraction`
+
+`Special Cause Reciprocal` is the reciprocal-space panel of the mosaic detector geometry by itself. It uses the Cu-Kα Ewald sphere size, the Bi2Se3 `d_hex(H,K,L)` Bragg-sphere size, and the Bragg/Ewald intersection with the same HKL, `theta_i`, `σ`, `Γ`, `η`, and `λ bandwidth (%)` controls as `Mosaic View`.
 
 ### Specular Diffraction notes
 

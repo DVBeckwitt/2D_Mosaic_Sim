@@ -49,6 +49,7 @@ from .detector import (
     THETA_MAX_DEG,
     THETA_MIN_DEG,
     build_detector_figure,
+    build_special_cause_reciprocal_figure,
     extract_scene_camera,
     normalize_detector_params,
 )
@@ -69,6 +70,7 @@ DEFAULT_PORT = 8052
 DEFAULT_MODE = "reciprocal-space"
 DEFAULT_POWDER_VIEW = "single-crystal"
 SPECULAR_MODE = "specular-view"
+SPECIAL_CAUSE_RECIPROCAL_MODE = "special-cause-reciprocal"
 POWDER_SPHERE_SELECTION_KEY = "sphere_selection"
 POWDER_RING_SELECTION_KEY = "ring_selection"
 POWDER_CYLINDER_SELECTION_KEY = "cylinder_selection"
@@ -76,6 +78,7 @@ SCENE_CAMERA_MODES = frozenset(
     {
         DEFAULT_MODE,
         "detector-view",
+        SPECIAL_CAUSE_RECIPROCAL_MODE,
         "fibrous-view",
         SPECULAR_MODE,
     }
@@ -96,6 +99,7 @@ PNG_EXPORT_CLIENTSIDE_CALLBACK = """
             const filenames = {
                 "reciprocal-space": "powder_views",
                 "detector-view": "mosaic_view",
+                "special-cause-reciprocal": "special_cause_reciprocal",
                 "fibrous-view": "ewald_cylinder",
                 "specular-view": "specular_reflection",
             };
@@ -627,12 +631,45 @@ def _hkl_controls(*, hybrid_mosaic_params: bool = False) -> tuple[ControlSpec, .
                 max=1.0,
                 input_step=0.01,
             ),
+            ControlSpec(
+                "wavelength_bandwidth_pct",
+                "λ bandwidth (%)",
+                "slider_input",
+                0.0,
+                step=0.01,
+                min=0.0,
+                max=5.0,
+                input_step=0.01,
+            ),
         )
     return base_controls + (
         ControlSpec("sigma_deg", "σ (deg)", "number", 0.8, step=0.1, min=0.0),
         ControlSpec("Gamma_deg", "Γ (deg)", "number", 5.0, step=0.1, min=0.0),
         ControlSpec("eta", "η", "number", 0.5, step=0.05, min=0.0, max=1.0),
+        ControlSpec("wavelength_bandwidth_pct", "λ bandwidth (%)", "number", 0.0, step=0.01, min=0.0),
     )
+
+
+def _mosaic_theta_hkl_controls() -> tuple[ControlSpec, ...]:
+    return (
+        ControlSpec(
+            "theta_i_deg",
+            "θᵢ (deg)",
+            "slider",
+            DEFAULT_THETA_DEG,
+            step=0.25,
+            min=THETA_MIN_DEG,
+            max=THETA_MAX_DEG,
+        ),
+        *_hkl_controls(hybrid_mosaic_params=True),
+    )
+
+
+_MOSAIC_CONTROL_SECTIONS = (
+    ("Incident Angle", ("theta_i_deg",)),
+    ("Reflection", ("H", "K", "L")),
+    ("Mosaic Envelope", ("sigma_deg", "Gamma_deg", "eta", "wavelength_bandwidth_pct")),
+)
 
 
 @lru_cache(maxsize=1)
@@ -792,10 +829,27 @@ def _build_reciprocal_space_figure(values: dict[str, Any]) -> go.Figure:
 def _build_detector_adapter(values: dict[str, Any]) -> go.Figure:
     try:
         params = _normalize_hkl_mosaic_values(values)
+        theta_deg = float(values.get("theta_i_deg", values.get("theta_deg", DEFAULT_THETA_DEG)))
+        return build_detector_figure(
+            *params,
+            wavelength_bandwidth_pct=values.get("wavelength_bandwidth_pct"),
+            theta_i=math.radians(theta_deg),
+        )
     except ValueError as exc:
         return _message_figure("Mosaic View", str(exc))
-    theta_deg = float(values.get("theta_i_deg", values.get("theta_deg", DEFAULT_THETA_DEG)))
-    return build_detector_figure(*params, theta_i=math.radians(theta_deg))
+
+
+def _build_special_cause_reciprocal_adapter(values: dict[str, Any]) -> go.Figure:
+    try:
+        params = _normalize_hkl_mosaic_values(values)
+        theta_deg = float(values.get("theta_i_deg", values.get("theta_deg", DEFAULT_THETA_DEG)))
+        return build_special_cause_reciprocal_figure(
+            *params,
+            wavelength_bandwidth_pct=values.get("wavelength_bandwidth_pct"),
+            theta_i=math.radians(theta_deg),
+        )
+    except ValueError as exc:
+        return _message_figure("Special Cause Reciprocal", str(exc))
 
 
 def _build_fibrous_adapter(values: dict[str, Any]) -> go.Figure:
@@ -808,9 +862,12 @@ def _build_fibrous_adapter(values: dict[str, Any]) -> go.Figure:
             values.get("Gamma_deg", values.get("gamma_deg")),
             values.get("eta"),
         )
+        return build_cylinder_figure(
+            *params,
+            wavelength_bandwidth_pct=values.get("wavelength_bandwidth_pct"),
+        )
     except ValueError as exc:
         return _message_figure("Ewald Cylinder", str(exc))
-    return build_cylinder_figure(*params)
 
 
 def _resolve_specular_configs(
@@ -993,6 +1050,11 @@ def _main_visual_copy(mode: str) -> tuple[str, str]:
         return (
             "Mosaic Detector View",
             "Reciprocal-space geometry, detector intensity, and centered integration for the current HKL and incidence angle.",
+        )
+    if mode == SPECIAL_CAUSE_RECIPROCAL_MODE:
+        return (
+            "Special Cause Reciprocal",
+            "One-panel physical reciprocal-space view using the Cu-Kα Ewald sphere and Bi2Se3 Bragg sphere for the current HKL.",
         )
     if mode == "fibrous-view":
         return (
@@ -1357,8 +1419,7 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
         label="Powder Views",
         description=(
             "Single-crystal, 3D powder, 2D powder, and cylinder reciprocal-space "
-            "views in one Plotly figure. Use the sidebar powder view picker and "
-            "peak filters, plus the in-figure θᵢ slider."
+            "views in one Plotly figure."
         ),
         controls=(
             ControlSpec("theta_i_min_deg", "θᵢ min (deg)", "number", 0.0, step=1.0),
@@ -1379,22 +1440,20 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
         label="Mosaic View",
         description=(
             "Three-panel detector simulation linking reciprocal-space geometry, detector "
-            "intensity, and centered integration. Use the θᵢ slider in the sidebar to "
-            "move the Ewald sphere without resetting the camera."
+            "intensity, and centered integration."
         ),
-        controls=(
-            ControlSpec(
-                "theta_i_deg",
-                "θᵢ (deg)",
-                "slider",
-                DEFAULT_THETA_DEG,
-                step=0.25,
-                min=THETA_MIN_DEG,
-                max=THETA_MAX_DEG,
-            ),
-            *_hkl_controls(hybrid_mosaic_params=True),
-        ),
+        controls=_mosaic_theta_hkl_controls(),
         build_figure=_build_detector_adapter,
+    ),
+    SPECIAL_CAUSE_RECIPROCAL_MODE: SimulationSpec(
+        key=SPECIAL_CAUSE_RECIPROCAL_MODE,
+        label="Special Cause Reciprocal",
+        description=(
+            "One-panel physical reciprocal-space view of the Cu-Kα Ewald sphere, "
+            "Bi2Se3 Bragg sphere, and their mosaic-weighted overlap."
+        ),
+        controls=_mosaic_theta_hkl_controls(),
+        build_figure=_build_special_cause_reciprocal_adapter,
     ),
     "fibrous-view": SimulationSpec(
         key="fibrous-view",
@@ -1409,11 +1468,24 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
         key=SPECULAR_MODE,
         label="Specular Diffraction",
         description=(
-            "Choose HKL, sweep θi, and then open Advanced if you need beam, sample, "
-            "or detector alignment controls."
+            "Specular reflection geometry with beam, sample, detector, and diffraction controls."
         ),
         controls=_specular_controls(),
         build_figure=lambda values: _build_specular_adapter(values)[0],
+    ),
+}
+
+
+_NON_SPECULAR_CONTROL_SECTIONS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "reciprocal-space": (
+        ("Sweep", ("theta_i_min_deg", "theta_i_max_deg")),
+        ("Render", ("frames", "render_profile")),
+    ),
+    "detector-view": _MOSAIC_CONTROL_SECTIONS,
+    SPECIAL_CAUSE_RECIPROCAL_MODE: _MOSAIC_CONTROL_SECTIONS,
+    "fibrous-view": (
+        ("Reflection", ("H", "K", "L")),
+        ("Mosaic Envelope", ("sigma_deg", "Gamma_deg", "eta", "wavelength_bandwidth_pct")),
     ),
 }
 
@@ -1474,7 +1546,7 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
                         marks=marks,
                         tooltip={"placement": "bottom", "always_visible": False},
                     ),
-                    style={"flex": "1 1 auto"},
+                    className="simulation-control-slider",
                 ),
                 dcc.Input(
                     id=input_id,
@@ -1484,15 +1556,10 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
                     min=control.min,
                     max=control.max,
                     debounce=True,
-                    style={"width": "88px", "minWidth": "88px"},
+                    className="simulation-control-number",
                 ),
             ],
             className="simulation-control-pair",
-            style={
-                "display": "flex",
-                "alignItems": "center",
-                "gap": "0.75rem",
-            },
         )
     elif control.component == "range":
         component = dcc.RangeSlider(
@@ -1517,16 +1584,26 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
             min=control.min,
             max=control.max,
             debounce=True,
-            style={"width": "100%"},
+            className="simulation-control-input",
         )
 
     return html.Div(
         [
-            html.Label(label_content, style={"fontWeight": "600"}),
+            html.Label(label_content),
             component,
         ],
         className="simulation-control",
-        style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
+    )
+
+
+def _build_control_section(title: str, controls: list[html.Div]) -> html.Section:
+    section_key = title.lower().replace(" ", "-")
+    return html.Section(
+        [
+            html.Div(title, className="simulation-control-section-title"),
+            html.Div(controls, className="simulation-control-grid"),
+        ],
+        className=f"simulation-control-section simulation-control-section--{section_key}",
     )
 
 
@@ -1540,7 +1617,14 @@ def _build_controls_for_mode(
         return _build_specular_control_sections(values)
 
     spec = SIMULATION_SPECS[mode]
-    controls = [_build_control(control, values[control.key]) for control in spec.controls]
+    control_lookup = {control.key: control for control in spec.controls}
+    controls = [
+        _build_control_section(
+            title,
+            [_build_control(control_lookup[key], values[key]) for key in control_keys],
+        )
+        for title, control_keys in _NON_SPECULAR_CONTROL_SECTIONS[mode]
+    ]
     if mode == "reciprocal-space":
         controls.extend(_build_powder_selector_controls(powder_selection_state, powder_view))
     return controls
@@ -1604,27 +1688,34 @@ def build_unified_app(
                 [
                     html.Div(
                         [
-                            html.H1("Unified Mosaic Simulator", style={"margin": "0"}),
-                            html.Div(
-                                "One GUI for Powder Views, Mosaic View, Ewald Cylinder, and Specular Diffraction, backed by the same package-level builders.",
-                                style={"color": "#4b5563", "lineHeight": "1.5"},
-                            ),
-                            html.Div(
+                            html.Header(
                                 [
-                                    html.Label("simulation", style={"fontWeight": "600"}),
-                                    dcc.RadioItems(
-                                        id="simulation-mode",
-                                        options=[
-                                            {"label": spec.label, "value": spec.key}
-                                            for spec in SIMULATION_SPECS.values()
+                                    html.Div(
+                                        [
+                                            html.Div("Mosaic Simulator", className="simulation-app-title"),
+                                            html.Div("Browser workbench", className="simulation-app-kicker"),
                                         ],
-                                        value=mode,
-                                        className="simulation-mode-picker",
-                                        inline=True,
+                                        className="simulation-brand",
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Mode", className="simulation-mode-label"),
+                                            dcc.RadioItems(
+                                                id="simulation-mode",
+                                                options=[
+                                                    {"label": spec.label, "value": spec.key}
+                                                    for spec in SIMULATION_SPECS.values()
+                                                ],
+                                                value=mode,
+                                                className="simulation-mode-picker",
+                                                inline=True,
+                                            ),
+                                        ],
+                                        className="simulation-mode-card",
                                     ),
                                 ],
-                                style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
-                                className="simulation-mode-card",
+                                id="simulation-sidebar-header",
+                                className="simulation-sidebar-header",
                             ),
                             html.Div(
                                 initial_spec.description,
@@ -1650,17 +1741,6 @@ def build_unified_app(
                         ],
                         id="simulation-sidebar",
                         className=sidebar_class_name,
-                        style={
-                            "display": "flex",
-                            "flexDirection": "column",
-                            "gap": "1rem",
-                            "padding": "1.25rem",
-                            "backgroundColor": "#f8fafc",
-                            "borderRight": "1px solid #dbe4ee",
-                            "boxSizing": "border-box",
-                            "maxHeight": "100vh",
-                            "overflowY": "auto",
-                        },
                     ),
                     html.Div(
                         [
@@ -1686,7 +1766,6 @@ def build_unified_app(
                                             html.H2(
                                                 main_title,
                                                 id="simulation-main-title",
-                                                style={"margin": "0"},
                                             ),
                                             html.Div(
                                                 main_caption,
@@ -1701,8 +1780,9 @@ def build_unified_app(
                                             dcc.Graph(
                                                 id="simulation-figure",
                                                 figure=initial_figure,
+                                                responsive=True,
                                                 style={"height": "100%", "minHeight": "0"},
-                                                config={"responsive": True, "displaylogo": False},
+                                                config={"displaylogo": False},
                                             )
                                         ],
                                         className="simulation-graph-frame simulation-graph-frame--primary",
@@ -1717,23 +1797,22 @@ def build_unified_app(
                                         [
                                             html.H3(
                                                 "Reciprocal Space and Integrated Response",
-                                                style={"margin": "0"},
                                             ),
                                             html.Div(
                                                 "The synchronized mosaic reciprocal-space and centered-integration panels for the current specular HKL and θᵢ.",
-                                                style={"color": "#475569", "lineHeight": "1.5"},
+                                                className="simulation-main-caption",
                                             ),
                                         ],
                                         className="simulation-visual-header",
-                                        style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
                                     ),
                                     html.Div(
                                         [
                                             dcc.Graph(
                                                 id="simulation-specular-companion-figure",
                                                 figure=initial_companion_figure,
+                                                responsive=True,
                                                 style={"height": "100%", "minHeight": "0"},
-                                                config={"responsive": True, "displaylogo": False},
+                                                config={"displaylogo": False},
                                             ),
                                         ],
                                         className="simulation-graph-frame simulation-graph-frame--secondary",
@@ -1746,7 +1825,6 @@ def build_unified_app(
                         ],
                         id="simulation-main",
                         className="simulation-main",
-                        style={"flex": "1 1 auto", "padding": "1rem", "minWidth": "0"},
                     ),
                 ],
                 id="simulation-shell",

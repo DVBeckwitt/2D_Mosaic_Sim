@@ -17,9 +17,19 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .common import build_error_figure, compact_figure_numeric_payload, normalize_peak_params
+from .common import (
+    build_error_figure,
+    compact_figure_numeric_payload,
+    normalize_peak_params,
+)
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
-from .geometry import sphere, rot_x, intersection_circle
+from .geometry import (
+    ewald_bandwidth_layers,
+    intersection_circle,
+    normalize_wavelength_bandwidth_pct,
+    rot_x,
+    sphere,
+)
 from .intensity import mosaic_intensity
 
 DEFAULT_H = 0
@@ -29,6 +39,7 @@ DEFAULT_SIGMA_DEG = 0.8
 DEFAULT_GAMMA_DEG = 5.0
 DEFAULT_ETA = 0.5
 DEFAULT_THETA_DEG = 5.0
+DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 0.0
 THETA_MIN_DEG = 5.0
 THETA_MAX_DEG = 30.0
 DEFAULT_HOST = "127.0.0.1"
@@ -151,16 +162,26 @@ def extract_scene_camera(relayout_data: dict[str, Any] | None) -> dict[str, Any]
     return camera or None
 
 
-def _detector_title(H: int, K: int, L: int,
-                    sigma: float, Gamma: float, eta: float) -> str:
+def _detector_title(
+    H: int,
+    K: int,
+    L: int,
+    sigma: float,
+    Gamma: float,
+    eta: float,
+    wavelength_bandwidth_pct: float = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+) -> str:
     """Return the shared title string for the detector figure."""
 
-    return (
+    title = (
         f"HKL = ({H}, {K}, {L})"
         f" | Gaussian σ = {math.degrees(sigma):.2f}°"
         f" | Lorentzian Γ = {math.degrees(Gamma):.2f}°"
         f" | Mix η = {eta:.2f}"
     )
+    if wavelength_bandwidth_pct:
+        title += f" | λ bandwidth = {wavelength_bandwidth_pct:.2f}%"
+    return title
 
 
 def normalize_detector_params(
@@ -195,6 +216,22 @@ def build_detector_error_figure(message: str) -> go.Figure:
     """Return a compact figure that surfaces invalid GUI inputs."""
 
     return build_error_figure("Detector mosaic/Ewald view", message)
+
+
+def _hidden_scene_axis() -> dict[str, bool]:
+    return dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False)
+
+
+def _detector_scene_layout(**overrides: Any) -> dict[str, Any]:
+    scene = dict(
+        xaxis=_hidden_scene_axis(),
+        yaxis=_hidden_scene_axis(),
+        zaxis=_hidden_scene_axis(),
+        bgcolor="rgba(0,0,0,0)",
+        uirevision=DETECTOR_CAMERA_UIREVISION,
+    )
+    scene.update(overrides)
+    return scene
 
 
 def _center_ring_profile(phi: np.ndarray, intensity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -507,13 +544,7 @@ def build_detector_companion_figure(
     )
 
     fig.update_scenes(
-        dict(
-            xaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
-            zaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
-            bgcolor="rgba(0,0,0,0)",
-            uirevision=DETECTOR_CAMERA_UIREVISION,
-        ),
+        _detector_scene_layout(),
         row=1,
         col=1,
     )
@@ -546,12 +577,201 @@ def build_detector_companion_figure(
     return fig
 
 
+def build_special_cause_reciprocal_figure(
+    H: int = DEFAULT_H,
+    K: int = DEFAULT_K,
+    L: int = DEFAULT_L,
+    sigma: float = np.deg2rad(DEFAULT_SIGMA_DEG),
+    Gamma: float | None = None,
+    eta: float = DEFAULT_ETA,
+    *,
+    gamma: float | None = None,
+    wavelength_bandwidth_pct: float | None = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    theta_i: float = np.deg2rad(DEFAULT_THETA_DEG),
+    camera: dict[str, Any] | None = None,
+) -> go.Figure:
+    """Return the detector reciprocal-space geometry as a one-panel figure."""
+
+    Gamma = _resolve_Gamma(
+        Gamma,
+        gamma,
+        default=float(np.deg2rad(DEFAULT_GAMMA_DEG)),
+    )
+    wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+        wavelength_bandwidth_pct,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    )
+    d_hkl = d_hex(H, K, L, a_hex, c_hex)
+    g_mag = 2.0 * math.pi / d_hkl
+    theta_i = float(theta_i)
+
+    phi, theta = np.meshgrid(
+        np.linspace(0.0, math.pi, 100),
+        np.linspace(0.0, 2.0 * math.pi, 200),
+    )
+    ewald_layers = ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct)
+    bragg_x, bragg_y, bragg_z = sphere(g_mag, phi, theta)
+    bragg_surface_intensity = mosaic_intensity(
+        bragg_x,
+        bragg_y,
+        bragg_z,
+        H,
+        K,
+        L,
+        sigma,
+        Gamma,
+        eta,
+    )
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Surface(
+            x=bragg_x,
+            y=bragg_y,
+            z=bragg_z,
+            surfacecolor=bragg_surface_intensity,
+            colorscale=[[0, "rgba(128,128,128,0.25)"], [1, "rgba(255,0,0,1)"]],
+            showscale=True,
+            colorbar=dict(title="Mosaic<br>Intensity"),
+            name="Bragg sphere",
+        )
+    )
+
+    for layer in ewald_layers:
+        ewald_x, ewald_y, ewald_z = sphere(
+            layer.k_mag,
+            phi,
+            theta,
+            (0.0, layer.k_mag, 0.0),
+        )
+        ewald_x, ewald_y, ewald_z = rot_x(ewald_x, ewald_y, ewald_z, theta_i)
+        fig.add_trace(
+            go.Surface(
+                x=ewald_x,
+                y=ewald_y,
+                z=ewald_z,
+                opacity=layer.opacity,
+                colorscale="Blues",
+                showscale=False,
+                showlegend=False,
+                name="Ewald sphere",
+            )
+        )
+
+        ring_x, ring_y, ring_z = intersection_circle(
+            g_mag,
+            layer.k_mag,
+            layer.k_mag,
+        )
+        ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
+        fig.add_trace(
+            go.Scatter3d(
+                x=ring_x,
+                y=ring_y,
+                z=ring_z,
+                mode="lines",
+                opacity=layer.opacity,
+                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                showlegend=False,
+                name="Bragg/Ewald overlap",
+            )
+        )
+
+    k_head = np.array(
+        rot_x(np.array([0.0]), np.array([K_MAG]), np.array([0.0]), theta_i),
+        dtype=float,
+    ).ravel()
+    fig.add_trace(
+        go.Scatter3d(
+            x=[k_head[0], 0.0],
+            y=[k_head[1], 0.0],
+            z=[k_head[2], 0.0],
+            mode="lines",
+            line=dict(color="black", width=K_VECTOR_LINE_WIDTH),
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Cone(
+            x=[0.0],
+            y=[0.0],
+            z=[0.0],
+            u=[-k_head[0]],
+            v=[-k_head[1]],
+            w=[-k_head[2]],
+            anchor="tip",
+            sizemode="absolute",
+            sizeref=K_VECTOR_CONE_SIZE,
+            colorscale=[[0, "black"], [1, "black"]],
+            showscale=False,
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=[k_head[0] * K_VECTOR_LABEL_SCALE],
+            y=[k_head[1] * K_VECTOR_LABEL_SCALE],
+            z=[k_head[2] * K_VECTOR_LABEL_SCALE],
+            mode="text",
+            text=["kᵢ"],
+            textfont=dict(size=K_VECTOR_LABEL_SIZE),
+            showlegend=False,
+        )
+    )
+
+    r_arc = 0.3 * K_MAG
+    arc_thetas = np.linspace(0.0, theta_i, 50)
+    fig.add_trace(
+        go.Scatter3d(
+            x=np.zeros_like(arc_thetas),
+            y=r_arc * np.cos(arc_thetas),
+            z=r_arc * np.sin(arc_thetas),
+            mode="lines",
+            line=dict(color="magenta", width=3, dash="dot"),
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=[0.0],
+            y=[r_arc * np.cos(theta_i / 2.0)],
+            z=[r_arc * np.sin(theta_i / 2.0)],
+            mode="text",
+            text=["θᵢ"],
+            textfont=dict(size=THETA_LABEL_SIZE),
+            showlegend=False,
+        )
+    )
+
+    fig.update_scenes(_detector_scene_layout(aspectmode="data"))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        uirevision=DETECTOR_CAMERA_UIREVISION,
+        margin=dict(l=0, r=0, b=0, t=120),
+        title=dict(
+            text=_detector_title(H, K, L, sigma, Gamma, eta, wavelength_bandwidth_pct),
+            x=0.5,
+            y=0.98,
+            xanchor="center",
+        ),
+    )
+
+    if camera:
+        fig.update_layout(scene_camera=camera)
+
+    compact_figure_numeric_payload(fig)
+    return fig
+
+
 def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                           sigma: float = np.deg2rad(0.8),
                           Gamma: float | None = None,
                           eta: float = 0.5,
                           *,
                           gamma: float | None = None,
+                          wavelength_bandwidth_pct: float | None = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
                           theta_i: float | None = None,
                           camera: dict[str, Any] | None = None) -> go.Figure:
     """Return a Plotly figure with synchronized reciprocal/detector sliders."""
@@ -560,20 +780,30 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
         gamma,
         default=float(np.deg2rad(DEFAULT_GAMMA_DEG)),
     )
+    wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+        wavelength_bandwidth_pct,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    )
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     G_MAG = 2 * math.pi / d_hkl
 
     phi, theta = np.meshgrid(np.linspace(0, math.pi, 100),
                              np.linspace(0, 2*math.pi, 200))
-    Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
+    ewald_layers = ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct)
+    ewald_base_surfaces = tuple(
+        sphere(layer.k_mag, phi, theta, (0, layer.k_mag, 0))
+        for layer in ewald_layers
+    )
+    ewald_ring_bases = tuple(
+        intersection_circle(G_MAG, layer.k_mag, layer.k_mag)
+        for layer in ewald_layers
+    )
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
     I_surf = mosaic_intensity(B0_x, B0_y, B0_z, H, K, L, sigma, Gamma, eta)
 
     ring_x_full, ring_y_full, ring_z_full = intersection_circle(G_MAG, K_MAG, K_MAG)
     ring_x = ring_x_full[:-1]
-    ring_y = ring_y_full[:-1]
-    ring_z = ring_z_full[:-1]
     ring_phi = np.linspace(0.0, 2.0 * math.pi, ring_x.size, endpoint=False)
 
     theta_min, theta_max, n_frames = np.deg2rad(THETA_MIN_DEG), np.deg2rad(THETA_MAX_DEG), 60
@@ -581,10 +811,20 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
 
     r_arc = 0.3 * K_MAG
 
-    def state_for_theta(th: float) -> dict[str, np.ndarray]:
+    def state_for_theta(th: float, *, include_ewald_geometry: bool = False) -> dict[str, Any]:
         """Return the synchronized detector state for a rocking angle."""
 
-        Ewx, Ewy, Ewz = rot_x(Ew_x, Ew_y, Ew_z, th)
+        ewald_surfaces = ()
+        ewald_rings = ()
+        if include_ewald_geometry:
+            ewald_surfaces = tuple(
+                rot_x(base_x, base_y, base_z, th)
+                for base_x, base_y, base_z in ewald_base_surfaces
+            )
+            ewald_rings = tuple(
+                rot_x(base_x, base_y, base_z, th)
+                for base_x, base_y, base_z in ewald_ring_bases
+            )
 
         rx_full, ry_full, rz_full = rot_x(ring_x_full, ring_y_full, ring_z_full, th)
         rx, ry, rz = rx_full[:-1], ry_full[:-1], rz_full[:-1]
@@ -605,9 +845,8 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
         arc_z = r_arc * np.sin(u)
 
         return {
-            "Ew_x": Ewx,
-            "Ew_y": Ewy,
-            "Ew_z": Ewz,
+            "ewald_surfaces": ewald_surfaces,
+            "ewald_rings": ewald_rings,
             "ring_x": rx_full,
             "ring_y": ry_full,
             "ring_z": rz_full,
@@ -624,7 +863,10 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
             "centered_intensity": centered_intensity,
         }
 
-    theta_states = [state_for_theta(th) for th in theta_all]
+    theta_states = [
+        state_for_theta(th, include_ewald_geometry=theta_i is None)
+        for th in theta_all
+    ]
     detector_intensity_max = max(
         float(np.max(state["detector_intensity"]))
         for state in theta_states
@@ -652,7 +894,7 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
     initial_state = (
         theta_states[0]
         if theta_i is None
-        else state_for_theta(theta_initial)
+        else state_for_theta(theta_initial, include_ewald_geometry=True)
     )
 
     fig = make_subplots(rows=1, cols=3,
@@ -668,16 +910,48 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                                          [1, "rgba(255,0,0,1)"]],
                              showscale=True,
                              colorbar=dict(title="Mosaic<br>Intensity")), 1, 1)
-    bragg_idx = len(fig.data) - 1
 
-    fig.add_trace(go.Surface(x=initial_state["Ew_x"], y=initial_state["Ew_y"], z=initial_state["Ew_z"],
-                             opacity=0.3, colorscale="Blues", showscale=False), 1, 1)
-    ewald_idx = len(fig.data) - 1
+    ewald_indices: list[int] = []
+    for layer, (ewald_x, ewald_y, ewald_z) in zip(
+        ewald_layers,
+        initial_state["ewald_surfaces"],
+        strict=True,
+    ):
+        fig.add_trace(
+            go.Surface(
+                x=ewald_x,
+                y=ewald_y,
+                z=ewald_z,
+                opacity=layer.opacity,
+                colorscale="Blues",
+                showscale=False,
+                name="Ewald sphere",
+            ),
+            1,
+            1,
+        )
+        ewald_indices.append(len(fig.data) - 1)
 
-    fig.add_trace(go.Scatter3d(x=initial_state["ring_x"], y=initial_state["ring_y"], z=initial_state["ring_z"],
-                               mode="lines",
-                               line=dict(color="green", width=INTERSECTION_LINE_WIDTH)), 1, 1)
-    ring3d_idx = len(fig.data) - 1
+    ring3d_indices: list[int] = []
+    for layer, (layer_ring_x, layer_ring_y, layer_ring_z) in zip(
+        ewald_layers,
+        initial_state["ewald_rings"],
+        strict=True,
+    ):
+        fig.add_trace(
+            go.Scatter3d(
+                x=layer_ring_x,
+                y=layer_ring_y,
+                z=layer_ring_z,
+                mode="lines",
+                opacity=layer.opacity,
+                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                name="Bragg/Ewald overlap",
+            ),
+            1,
+            1,
+        )
+        ring3d_indices.append(len(fig.data) - 1)
 
     k_head = initial_state["k_head"]
     fig.add_trace(go.Scatter3d(x=[k_head[0], 0.0], y=[k_head[1], 0.0], z=[k_head[2], 0.0],
@@ -699,11 +973,7 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                                mode="text", text=["θᵢ"], textfont=dict(size=THETA_LABEL_SIZE), showlegend=False), 1, 1)
     thetatext_idx = len(fig.data) - 1
 
-    fig.update_scenes(dict(xaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
-                           yaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
-                           zaxis=dict(visible=False, showbackground=False, showgrid=False, zeroline=False, showticklabels=False),
-                           bgcolor="rgba(0,0,0,0)",
-                           uirevision=DETECTOR_CAMERA_UIREVISION), row=1, col=1)
+    fig.update_scenes(_detector_scene_layout(), row=1, col=1)
 
     fig.add_trace(go.Scatter(x=initial_state["detector_x"], y=initial_state["detector_z"],
                              mode="markers+lines",
@@ -736,7 +1006,7 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
                       uirevision=DETECTOR_CAMERA_UIREVISION,
                       margin=dict(l=0, r=0, b=0, t=140),
                       title=dict(
-                          text=_detector_title(H, K, L, sigma, Gamma, eta),
+                          text=_detector_title(H, K, L, sigma, Gamma, eta, wavelength_bandwidth_pct),
                           x=0.5,
                           y=0.98,
                           xanchor="center",
@@ -745,21 +1015,38 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
     if theta_i is None:
         frames = []
         for i, (th, state) in enumerate(zip(theta_all, theta_states, strict=True)):
-            ewald_surf = go.Surface(
-                x=state["Ew_x"],
-                y=state["Ew_y"],
-                z=state["Ew_z"],
-                opacity=0.3,
-                colorscale="Blues",
-                showscale=False,
-            )
-            ring3d = go.Scatter3d(
-                x=state["ring_x"],
-                y=state["ring_y"],
-                z=state["ring_z"],
-                mode="lines",
-                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
-            )
+            ewald_surfs = [
+                go.Surface(
+                    x=ewald_x,
+                    y=ewald_y,
+                    z=ewald_z,
+                    opacity=layer.opacity,
+                    colorscale="Blues",
+                    showscale=False,
+                    name="Ewald sphere",
+                )
+                for layer, (ewald_x, ewald_y, ewald_z) in zip(
+                    ewald_layers,
+                    state["ewald_surfaces"],
+                    strict=True,
+                )
+            ]
+            ring3ds = [
+                go.Scatter3d(
+                    x=layer_ring_x,
+                    y=layer_ring_y,
+                    z=layer_ring_z,
+                    mode="lines",
+                    opacity=layer.opacity,
+                    line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                    name="Bragg/Ewald overlap",
+                )
+                for layer, (layer_ring_x, layer_ring_y, layer_ring_z) in zip(
+                    ewald_layers,
+                    state["ewald_rings"],
+                    strict=True,
+                )
+            ]
 
             ring_up = go.Scatter(x=state["detector_x"], y=state["detector_z"],
                                  mode="markers+lines",
@@ -814,8 +1101,8 @@ def build_detector_figure(H: int = 0, K: int = 0, L: int = 12,
             frames.append(
                 go.Frame(
                     name=f"theta-{i}",
-                    data=[ewald_surf, ring3d, k_line, k_cone, k_text, ring_up, arc_line, arc_text, centered_trace],
-                    traces=[ewald_idx, ring3d_idx, kline_idx, kcone_idx, ktext_idx, ring2d_idx, arc_idx, thetatext_idx, centered_idx],
+                    data=[*ewald_surfs, *ring3ds, k_line, k_cone, k_text, ring_up, arc_line, arc_text, centered_trace],
+                    traces=[*ewald_indices, *ring3d_indices, kline_idx, kcone_idx, ktext_idx, ring2d_idx, arc_idx, thetatext_idx, centered_idx],
                 )
             )
 
@@ -880,6 +1167,7 @@ def build_detector_app(
     initial_theta_deg: float = DEFAULT_THETA_DEG,
     *,
     initial_gamma: float | None = None,
+    initial_wavelength_bandwidth_pct: float | None = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
 ):
     """Return a Dash app for live detector-parameter updates."""
 
@@ -891,6 +1179,10 @@ def build_detector_app(
         initial_Gamma,
         initial_gamma,
         default=float(np.deg2rad(DEFAULT_GAMMA_DEG)),
+    )
+    initial_wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+        initial_wavelength_bandwidth_pct,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     )
 
     control_defaults = (
@@ -949,6 +1241,20 @@ def build_detector_app(
                                                       min=0, max=1, debounce=True)],
                         style={"display": "flex", "flexDirection": "column", "gap": "0.25rem"},
                     ),
+                    html.Div(
+                        [
+                            html.Label("λ bandwidth (%)"),
+                            dcc.Input(
+                                id="detector-wavelength-bandwidth",
+                                type="number",
+                                value=initial_wavelength_bandwidth_pct,
+                                step=0.01,
+                                min=0.0,
+                                debounce=True,
+                            ),
+                        ],
+                        style={"display": "flex", "flexDirection": "column", "gap": "0.25rem"},
+                    ),
                 ],
                 style={
                     "display": "flex",
@@ -986,6 +1292,7 @@ def build_detector_app(
                     sigma=initial_sigma,
                     Gamma=initial_Gamma,
                     eta=initial_eta,
+                    wavelength_bandwidth_pct=initial_wavelength_bandwidth_pct,
                     theta_i=math.radians(initial_theta_deg),
                 ),
                 style={"height": "82vh"},
@@ -1003,10 +1310,11 @@ def build_detector_app(
         Input("detector-sigma", "value"),
         Input("detector-gamma", "value"),
         Input("detector-eta", "value"),
+        Input("detector-wavelength-bandwidth", "value"),
         Input("detector-theta", "value"),
         State("detector-fig", "relayoutData"),
     )
-    def update_detector(h, k, l, sigma_deg, Gamma_deg, eta_value, theta_deg, relayout_data):  # pragma: no cover - UI callback
+    def update_detector(h, k, l, sigma_deg, Gamma_deg, eta_value, wavelength_bandwidth_pct, theta_deg, relayout_data):  # pragma: no cover - UI callback
         try:
             params = normalize_detector_params(
                 h,
@@ -1017,11 +1325,16 @@ def build_detector_app(
                 eta_value,
                 defaults=control_defaults,
             )
+            wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+                wavelength_bandwidth_pct,
+                default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+            )
         except ValueError as exc:
             return build_detector_error_figure(str(exc))
 
         return build_detector_figure(
             *params,
+            wavelength_bandwidth_pct=wavelength_bandwidth_pct,
             theta_i=math.radians(float(theta_deg)),
             camera=extract_scene_camera(relayout_data),
         )
@@ -1064,6 +1377,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_ETA,
         help="Gaussian/Lorentzian mixing factor η, from 0 to 1 (default: 0.5)",
     )
+    parser.add_argument(
+        "--wavelength-bandwidth-pct",
+        type=float,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+        help="Full wavelength bandwidth Δλ/λ in percent (default: 0.0)",
+    )
     return parser.parse_args()
 
 
@@ -1076,6 +1395,7 @@ def main(
     eta: float | None = None,
     *,
     gamma: float | None = None,
+    wavelength_bandwidth_pct: float | None = None,
 ) -> None:
     """Launch a Dash detector viewer seeded from CLI or function inputs."""
 
@@ -1088,6 +1408,10 @@ def main(
             args.sigma,
             args.Gamma,
             args.eta,
+        )
+        wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+            args.wavelength_bandwidth_pct,
+            default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
         )
     else:
         Gamma = _resolve_Gamma(
@@ -1103,6 +1427,10 @@ def main(
             math.degrees(Gamma),
             eta,
         )
+        wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+            wavelength_bandwidth_pct,
+            default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+        )
 
     app = build_detector_app(
         initial_H=H,
@@ -1111,6 +1439,7 @@ def main(
         initial_sigma=sigma,
         initial_Gamma=Gamma,
         initial_eta=eta,
+        initial_wavelength_bandwidth_pct=wavelength_bandwidth_pct,
     )
     url = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
     threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()

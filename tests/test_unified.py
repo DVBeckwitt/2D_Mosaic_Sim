@@ -15,8 +15,36 @@ def _main(app):
     return _shell(app).children[1]
 
 
+def _find_component_by_id(component, target_id):
+    if getattr(component, "id", None) == target_id:
+        return component
+
+    children = getattr(component, "children", None)
+    if children is None:
+        return None
+
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            result = _find_component_by_id(child, target_id)
+            if result is not None:
+                return result
+        return None
+
+    return _find_component_by_id(children, target_id)
+
+
+def _render_component_text(component) -> str:
+    if component is None:
+        return ""
+    if isinstance(component, (str, int, float)):
+        return str(component)
+    if isinstance(component, (list, tuple)):
+        return "".join(_render_component_text(child) for child in component)
+    return _render_component_text(getattr(component, "children", None))
+
+
 def _graph(app):
-    return _main(app).children[1].children[0]
+    return _find_component_by_id(_main(app), "simulation-figure")
 
 
 def test_build_unified_figure_uses_detector_mode():
@@ -26,11 +54,55 @@ def test_build_unified_figure_uses_detector_mode():
     assert len(fig.frames) == 0
 
 
+def test_build_unified_figure_uses_detector_mode_with_wavelength_bandwidth():
+    fig = build_unified_figure(mode="detector-view", wavelength_bandwidth_pct=1.0)
+
+    assert "λ bandwidth = 1.00%" in fig.layout.title.text
+
+
+def test_build_unified_figure_uses_special_cause_reciprocal_mode():
+    fig = build_unified_figure(
+        mode="special-cause-reciprocal",
+        H=0,
+        K=0,
+        L=12,
+        sigma_deg=0.8,
+        Gamma_deg=5.0,
+        eta=0.5,
+        wavelength_bandwidth_pct=1.0,
+    )
+
+    assert "HKL = (0, 0, 12)" in fig.layout.title.text
+    assert "λ bandwidth = 1.00%" in fig.layout.title.text
+    assert len(fig.frames) == 0
+    assert any(trace.name == "Bragg sphere" for trace in fig.data)
+    assert any(trace.name == "Ewald sphere" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+
+
+def test_build_unified_figure_detector_invalid_wavelength_bandwidth_returns_message():
+    fig = build_unified_figure(mode="detector-view", wavelength_bandwidth_pct=-1.0)
+
+    assert "wavelength_bandwidth_pct" in fig.layout.annotations[0].text
+
+
 def test_build_unified_figure_uses_fibrous_mode():
     fig = build_unified_figure(mode="fibrous-view")
 
     assert "HKL = (0, 0, 12)" in fig.layout.title.text
     assert len(fig.frames) == 60
+
+
+def test_build_unified_figure_uses_fibrous_mode_with_wavelength_bandwidth():
+    fig = build_unified_figure(mode="fibrous-view", wavelength_bandwidth_pct=1.0)
+
+    assert "λ bandwidth = 1.00%" in fig.layout.title.text
+
+
+def test_build_unified_figure_fibrous_invalid_wavelength_bandwidth_returns_message():
+    fig = build_unified_figure(mode="fibrous-view", wavelength_bandwidth_pct=-1.0)
+
+    assert "wavelength_bandwidth_pct" in fig.layout.annotations[0].text
 
 
 def test_build_unified_figure_uses_specular_mode():
@@ -45,15 +117,14 @@ def test_build_unified_figure_uses_specular_mode():
 def test_build_unified_app_seeds_initial_mode_and_figure():
     app = build_unified_app(initial_mode="fibrous-view")
 
-    sidebar = _sidebar(app)
     graph_panel = _main(app)
-    mode_selector = sidebar.children[2].children[1]
-    controls = sidebar.children[5]
+    mode_selector = _find_component_by_id(app.layout, "simulation-mode")
+    controls = _find_component_by_id(app.layout, "simulation-controls")
     export_toolbar = graph_panel.children[0]
     graph = _graph(app)
 
     assert mode_selector.value == "fibrous-view"
-    assert len(controls.children) == 6
+    assert _find_component_by_id(controls, {"type": "simulation-control", "key": "wavelength_bandwidth_pct"}) is not None
     assert export_toolbar.children[0].id == "export-png-button"
     assert isinstance(graph, dcc.Graph)
     assert "HKL = (0, 0, 12)" in graph.figure.layout.title.text
@@ -62,16 +133,16 @@ def test_build_unified_app_seeds_initial_mode_and_figure():
 def test_build_unified_app_seeds_specular_mode_and_summary():
     app = build_unified_app(initial_mode="specular-view")
 
-    sidebar = _sidebar(app)
-    mode_selector = sidebar.children[2].children[1]
+    mode_selector = _find_component_by_id(app.layout, "simulation-mode")
     graph = _graph(app)
-    summary = sidebar.children[4]
+    summary = _find_component_by_id(app.layout, "simulation-summary")
 
     assert mode_selector.value == "specular-view"
     assert isinstance(graph, dcc.Graph)
     assert "HKL = (1, 1, 1)" in graph.figure.layout.title.text
     assert "diffraction rays" in graph.figure.layout.title.text
-    assert "HKL = (1, 1, 1)" in summary.children
-    assert "diffraction rays" in summary.children
-    assert "nominal 2θ" not in summary.children
+    summary_text = _render_component_text(summary)
+    assert "Specular Diffraction" in summary_text
+    assert "Diffracted intensity" in summary_text
+    assert "nominal 2θ" not in summary_text
     assert summary.style.get("display") != "none"

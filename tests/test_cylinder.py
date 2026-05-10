@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from dash import dcc
 
+from mosaic_sim.constants import K_MAG
 from mosaic_sim.cylinder import (
     CYLINDER_CAMERA_UIREVISION,
     build_cylinder_app,
@@ -11,6 +12,7 @@ from mosaic_sim.cylinder import (
     build_cylinder_figure,
     normalize_cylinder_params,
 )
+from mosaic_sim.geometry import ewald_bandwidth_layers
 
 
 def test_normalize_cylinder_params_uses_defaults_and_converts_units():
@@ -111,6 +113,69 @@ def test_build_cylinder_figure_uses_single_toggle_buttons_without_legend_overlap
     assert list(menus[-1].buttons[0].args2[1]) == [0, 1, 3, 2, 4, 5]
 
 
+def test_build_cylinder_figure_adds_wavelength_bandwidth_layers():
+    fig = build_cylinder_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        wavelength_bandwidth_pct=1.0,
+    )
+
+    layers = ewald_bandwidth_layers(K_MAG, 1.0)
+    ewald_traces = [trace for trace in fig.data if trace.name == "Ewald sphere"]
+    ring_traces = [trace for trace in fig.data if trace.name == "Ewald/Bragg overlap"]
+    cylinder_ewald_traces = [trace for trace in fig.data if trace.name == "Cylinder/Ewald overlap"]
+
+    assert len(ewald_traces) == len(layers)
+    assert len(ring_traces) == len(layers)
+    assert len(cylinder_ewald_traces) == len(layers)
+    assert ewald_traces[len(layers) // 2].opacity > ewald_traces[0].opacity
+    assert ewald_traces[len(layers) // 2].opacity > ewald_traces[-1].opacity
+    for layer, ewald_trace, ring_trace, cylinder_ewald_trace in zip(
+        layers,
+        ewald_traces,
+        ring_traces,
+        cylinder_ewald_traces,
+        strict=True,
+    ):
+        assert ewald_trace.opacity == pytest.approx(layer.opacity)
+        assert ring_trace.opacity == pytest.approx(layer.opacity)
+        assert cylinder_ewald_trace.opacity == pytest.approx(layer.opacity)
+
+
+def test_build_cylinder_figure_bandwidth_visibility_toggles_cover_layer_groups():
+    fig = build_cylinder_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        wavelength_bandwidth_pct=1.0,
+    )
+
+    ewald_indices = [idx for idx, trace in enumerate(fig.data) if trace.name == "Ewald sphere"]
+    ring_indices = [idx for idx, trace in enumerate(fig.data) if trace.name == "Ewald/Bragg overlap"]
+    cylinder_ewald_indices = [
+        idx for idx, trace in enumerate(fig.data) if trace.name == "Cylinder/Ewald overlap"
+    ]
+    menus = {menu.buttons[0].label: menu for menu in fig.layout.updatemenus}
+
+    assert list(menus["Ewald sphere"].buttons[0].args[1]) == ewald_indices
+    assert list(menus["Ewald sphere"].buttons[0].args2[1]) == ewald_indices
+    assert list(menus["Bragg/Ewald overlap"].buttons[0].args[1]) == ring_indices
+    assert list(menus["Bragg/Ewald overlap"].buttons[0].args2[1]) == ring_indices
+    assert list(menus["Cylinder/Ewald overlap"].buttons[0].args[1]) == cylinder_ewald_indices
+    assert list(menus["Cylinder/Ewald overlap"].buttons[0].args2[1]) == cylinder_ewald_indices
+    disable_indices = list(menus["Disable all"].buttons[0].args[1])
+    assert set(ewald_indices).issubset(disable_indices)
+    assert set(ring_indices).issubset(disable_indices)
+    assert set(cylinder_ewald_indices).issubset(disable_indices)
+
+
 def test_build_cylinder_app_seeds_inputs_and_figure_from_initial_values():
     app = build_cylinder_app(
         initial_H=1,
@@ -130,6 +195,10 @@ def test_build_cylinder_app_seeds_inputs_and_figure_from_initial_values():
     assert controls[3].children[0].children == "σ (deg)"
     assert controls[4].children[0].children == "Γ (deg)"
     assert controls[5].children[0].children == "η"
+    assert controls[6].children[0].children == "λ bandwidth (%)"
+    assert controls[6].children[1].value == pytest.approx(0.0)
+    assert controls[6].children[1].step == pytest.approx(0.01)
+    assert controls[6].children[1].min == pytest.approx(0.0)
     assert math.isclose(controls[3].children[1].value, 1.1)
     assert math.isclose(controls[4].children[1].value, 6.2)
     assert math.isclose(controls[5].children[1].value, 0.35)
@@ -148,6 +217,7 @@ def test_build_cylinder_app_callback_preserves_camera_from_relayout_data():
         0.8,
         5.0,
         0.5,
+        1.0,
         {
             "scene.camera.eye.x": 1.4,
             "scene.camera.eye.y": 1.1,

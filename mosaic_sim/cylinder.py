@@ -8,6 +8,7 @@ illustrates where the Bragg ring would intersect a rod of scattering.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import math
 import threading
 import webbrowser
@@ -19,6 +20,8 @@ from .common import build_error_figure, normalize_peak_params
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .detector import extract_scene_camera
 from .geometry import (
+    ewald_bandwidth_layers,
+    normalize_wavelength_bandwidth_pct,
     sphere,
     rot_x,
     intersection_circle,
@@ -32,6 +35,7 @@ DEFAULT_L = 12
 DEFAULT_SIGMA_DEG = 0.8
 DEFAULT_GAMMA_DEG = 5.0
 DEFAULT_ETA = 0.5
+DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 0.0
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8051
 DEFAULT_CONTROL_VALUES = (
@@ -81,59 +85,31 @@ def _cylinder_title(
     sigma: float,
     Gamma: float,
     eta: float,
+    wavelength_bandwidth_pct: float = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
 ) -> str:
     """Return the shared title string for the fibrous viewer."""
 
-    return (
+    title = (
         f"HKL = ({H}, {K}, {L})"
         f" | Gaussian σ = {math.degrees(sigma):.2f}°"
         f" | Lorentzian Γ = {math.degrees(Gamma):.2f}°"
         f" | Mix η = {eta:.2f}"
     )
+    if wavelength_bandwidth_pct:
+        title += f" | λ bandwidth = {wavelength_bandwidth_pct:.2f}%"
+    return title
 
 
 def _visibility_toggle_menu(
     label: str,
-    trace_idx: int,
+    trace_idx: int | Sequence[int],
     *,
     x: float,
     y: float,
 ) -> dict[str, object]:
-    """Return a styled single-button visibility toggle for one trace."""
+    """Return a styled single-button visibility toggle for one or more traces."""
 
-    return dict(
-        type="buttons",
-        active=-1,
-        showactive=True,
-        x=x,
-        y=y,
-        xanchor="center",
-        yanchor="middle",
-        direction="left",
-        bgcolor="rgba(255,255,255,0.96)",
-        bordercolor="rgba(31,41,55,0.18)",
-        borderwidth=1,
-        pad=dict(l=8, r=8, t=4, b=4),
-        buttons=[
-            dict(
-                label=label,
-                method="restyle",
-                args=[{"visible": "legendonly"}, [trace_idx]],
-                args2=[{"visible": True}, [trace_idx]],
-            )
-        ],
-    )
-
-
-def _multi_visibility_toggle_menu(
-    label: str,
-    trace_indices: list[int],
-    *,
-    x: float,
-    y: float,
-) -> dict[str, object]:
-    """Return a styled toggle that hides or shows multiple traces at once."""
-
+    trace_indices = [trace_idx] if isinstance(trace_idx, int) else list(trace_idx)
     return dict(
         type="buttons",
         active=-1,
@@ -197,6 +173,7 @@ def build_cylinder_figure(
     eta: float = DEFAULT_ETA,
     *,
     gamma: float | None = None,
+    wavelength_bandwidth_pct: float | None = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     camera: dict[str, Any] | None = None,
 ) -> go.Figure:
     """Return a Plotly figure showing a Bragg sphere and a hollow cylinder.
@@ -210,12 +187,16 @@ def build_cylinder_figure(
         gamma,
         default=float(np.deg2rad(DEFAULT_GAMMA_DEG)),
     )
+    wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+        wavelength_bandwidth_pct,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    )
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     G_MAG = 2 * math.pi / d_hkl
 
     phi, theta = np.meshgrid(np.linspace(0, math.pi, 100),
                              np.linspace(0, 2 * math.pi, 200))
-    Ew_x, Ew_y, Ew_z = sphere(K_MAG, phi, theta, (0, K_MAG, 0))
+    ewald_layers = ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct)
     B0_x, B0_y, B0_z = sphere(G_MAG, phi, theta)
 
     # ``H``, ``K`` and ``L`` define both the Bragg-sphere radius and the
@@ -226,13 +207,6 @@ def build_cylinder_figure(
 
     ring_x, ring_y, ring_z = intersection_circle(G_MAG, K_MAG, K_MAG)
     gr = math.sqrt(ring_x[0] ** 2 + ring_z[0] ** 2)
-
-    cyl_line_x, cyl_line_y, cyl_line_z = intersection_cylinder_sphere(
-        gr,
-        K_MAG,
-        K_MAG,
-        0.0,
-    )
 
     # Intersection of the cylinder with the Bragg sphere (independent of the
     # rocking angle)
@@ -262,30 +236,45 @@ def build_cylinder_figure(
     fig.add_trace(bragg)
     bragg_idx = len(fig.data) - 1
 
-    fig.add_trace(
-        go.Surface(
-            x=Ew_x,
-            y=Ew_y,
-            z=Ew_z,
-            opacity=0.3,
-            colorscale="Blues",
-            showscale=False,
-            name="Ewald sphere",
+    ewald_indices: list[int] = []
+    for layer in ewald_layers:
+        Ew_x, Ew_y, Ew_z = sphere(layer.k_mag, phi, theta, (0, layer.k_mag, 0))
+        fig.add_trace(
+            go.Surface(
+                x=Ew_x,
+                y=Ew_y,
+                z=Ew_z,
+                opacity=layer.opacity,
+                colorscale="Blues",
+                showscale=False,
+                showlegend=not ewald_indices,
+                legendgroup="ewald-bandwidth",
+                name="Ewald sphere",
+            )
         )
-    )
-    ewald_idx = len(fig.data) - 1
+        ewald_indices.append(len(fig.data) - 1)
 
-    fig.add_trace(
-        go.Scatter3d(
-            x=ring_x,
-            y=ring_y,
-            z=ring_z,
-            mode="lines",
-            line=dict(color="red", width=INTERSECTION_LINE_WIDTH),
-            name="Ewald/Bragg overlap",
+    ring_indices: list[int] = []
+    for layer in ewald_layers:
+        layer_ring_x, layer_ring_y, layer_ring_z = intersection_circle(
+            G_MAG,
+            layer.k_mag,
+            layer.k_mag,
         )
-    )
-    ring_idx = len(fig.data) - 1
+        fig.add_trace(
+            go.Scatter3d(
+                x=layer_ring_x,
+                y=layer_ring_y,
+                z=layer_ring_z,
+                mode="lines",
+                opacity=layer.opacity,
+                line=dict(color="red", width=INTERSECTION_LINE_WIDTH),
+                showlegend=not ring_indices,
+                legendgroup="ewald-bragg-bandwidth",
+                name="Ewald/Bragg overlap",
+            )
+        )
+        ring_indices.append(len(fig.data) - 1)
 
     fig.add_trace(
         go.Surface(
@@ -300,17 +289,28 @@ def build_cylinder_figure(
     )
     cyl_idx = len(fig.data) - 1
 
-    fig.add_trace(
-        go.Scatter3d(
-            x=cyl_line_x,
-            y=cyl_line_y,
-            z=cyl_line_z,
-            mode="lines",
-            line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
-            name="Cylinder/Ewald overlap",
+    cylinder_ewald_indices: list[int] = []
+    for layer in ewald_layers:
+        cyl_line_x, cyl_line_y, cyl_line_z = intersection_cylinder_sphere(
+            gr,
+            layer.k_mag,
+            layer.k_mag,
+            0.0,
         )
-    )
-    overlap_idx = len(fig.data) - 1
+        fig.add_trace(
+            go.Scatter3d(
+                x=cyl_line_x,
+                y=cyl_line_y,
+                z=cyl_line_z,
+                mode="lines",
+                opacity=layer.opacity,
+                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                showlegend=not cylinder_ewald_indices,
+                legendgroup="cylinder-ewald-bandwidth",
+                name="Cylinder/Ewald overlap",
+            )
+        )
+        cylinder_ewald_indices.append(len(fig.data) - 1)
 
     fig.add_trace(
         go.Scatter3d(
@@ -387,7 +387,7 @@ def build_cylinder_figure(
             itemsizing="constant",
         ),
         title=dict(
-            text=_cylinder_title(H, K, L, sigma, Gamma, eta),
+            text=_cylinder_title(H, K, L, sigma, Gamma, eta, wavelength_bandwidth_pct),
             x=0.39,
             y=0.95,
             xanchor="center",
@@ -403,14 +403,26 @@ def build_cylinder_figure(
         Bx, By, Bz = rot_x(B0_x, B0_y, B0_z, -th)
         Cx, Cy, Cz = rot_x(cyl_x, cyl_y, cyl_z, -th)
 
-        # Intersection line for the rotated cylinder
-        Lx_r, Ly_r, Lz_r = intersection_cylinder_sphere(
-            gr,
-            K_MAG,
-            K_MAG * math.cos(th),
-            K_MAG * math.sin(th),
-        )
-        Lx, Ly, Lz = rot_x(Lx_r, Ly_r, Lz_r, -th)
+        cylinder_ewald_frame_traces = []
+        for layer in ewald_layers:
+            # Intersection line for the rotated cylinder.
+            Lx_r, Ly_r, Lz_r = intersection_cylinder_sphere(
+                gr,
+                layer.k_mag,
+                layer.k_mag * math.cos(th),
+                layer.k_mag * math.sin(th),
+            )
+            Lx, Ly, Lz = rot_x(Lx_r, Ly_r, Lz_r, -th)
+            cylinder_ewald_frame_traces.append(
+                go.Scatter3d(
+                    x=Lx,
+                    y=Ly,
+                    z=Lz,
+                    mode="lines",
+                    opacity=layer.opacity,
+                    line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                )
+            )
         Bcx, Bcy, Bcz = rot_x(br_line_x, br_line_y, br_line_z, -th)
         ax_line_x, ax_line_y, ax_line_z = rot_x(
             np.array([0.0, 0.0]),
@@ -450,13 +462,7 @@ def build_cylinder_figure(
                         showscale=False,
                         colorscale=[[0, "rgb(255,191,0)"], [1, "rgb(255,191,0)"]],
                     ),
-                    go.Scatter3d(
-                        x=Lx,
-                        y=Ly,
-                        z=Lz,
-                        mode="lines",
-                        line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
-                    ),
+                    *cylinder_ewald_frame_traces,
                     go.Scatter3d(
                         x=Bcx,
                         y=Bcy,
@@ -485,7 +491,7 @@ def build_cylinder_figure(
                         showscale=False,
                     ),
                 ],
-                traces=[bragg_idx, cyl_idx, overlap_idx, br_overlap_idx,
+                traces=[bragg_idx, cyl_idx, *cylinder_ewald_indices, br_overlap_idx,
                         axis_idx, cone_idx],
             )
         )
@@ -519,14 +525,21 @@ def build_cylinder_figure(
     ]
     updatemenus = [
         _visibility_toggle_menu("Bragg sphere", bragg_idx, x=0.15, y=1.13),
-        _visibility_toggle_menu("Ewald sphere", ewald_idx, x=0.39, y=1.13),
+        _visibility_toggle_menu("Ewald sphere", ewald_indices, x=0.39, y=1.13),
         _visibility_toggle_menu("Cylinder", cyl_idx, x=0.63, y=1.13),
-        _visibility_toggle_menu("Bragg/Ewald overlap", ring_idx, x=0.15, y=1.05),
-        _visibility_toggle_menu("Cylinder/Ewald overlap", overlap_idx, x=0.39, y=1.05),
+        _visibility_toggle_menu("Bragg/Ewald overlap", ring_indices, x=0.15, y=1.05),
+        _visibility_toggle_menu("Cylinder/Ewald overlap", cylinder_ewald_indices, x=0.39, y=1.05),
         _visibility_toggle_menu("Cylinder/Bragg overlap", br_overlap_idx, x=0.63, y=1.05),
-        _multi_visibility_toggle_menu(
+        _visibility_toggle_menu(
             "Disable all",
-            [bragg_idx, ewald_idx, cyl_idx, ring_idx, overlap_idx, br_overlap_idx],
+            [
+                bragg_idx,
+                *ewald_indices,
+                cyl_idx,
+                *ring_indices,
+                *cylinder_ewald_indices,
+                br_overlap_idx,
+            ],
             x=0.39,
             y=0.97,
         ),
@@ -548,6 +561,7 @@ def build_cylinder_app(
     initial_eta: float = DEFAULT_ETA,
     *,
     initial_gamma: float | None = None,
+    initial_wavelength_bandwidth_pct: float | None = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
 ):
     """Return a Dash app for live fibrous-viewer parameter updates."""
 
@@ -559,6 +573,10 @@ def build_cylinder_app(
         initial_Gamma,
         initial_gamma,
         default=float(np.deg2rad(DEFAULT_GAMMA_DEG)),
+    )
+    initial_wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+        initial_wavelength_bandwidth_pct,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     )
 
     control_defaults = (
@@ -667,6 +685,20 @@ def build_cylinder_app(
                         ],
                         style={"display": "flex", "flexDirection": "column", "gap": "0.25rem"},
                     ),
+                    html.Div(
+                        [
+                            html.Label("λ bandwidth (%)"),
+                            dcc.Input(
+                                id="cylinder-wavelength-bandwidth",
+                                type="number",
+                                value=initial_wavelength_bandwidth_pct,
+                                step=0.01,
+                                min=0.0,
+                                debounce=True,
+                            ),
+                        ],
+                        style={"display": "flex", "flexDirection": "column", "gap": "0.25rem"},
+                    ),
                 ],
                 style={
                     "display": "flex",
@@ -685,6 +717,7 @@ def build_cylinder_app(
                     sigma=initial_sigma,
                     Gamma=initial_Gamma,
                     eta=initial_eta,
+                    wavelength_bandwidth_pct=initial_wavelength_bandwidth_pct,
                 ),
                 style={"height": "82vh"},
                 config={"responsive": True},
@@ -701,9 +734,10 @@ def build_cylinder_app(
         Input("cylinder-sigma", "value"),
         Input("cylinder-gamma", "value"),
         Input("cylinder-eta", "value"),
+        Input("cylinder-wavelength-bandwidth", "value"),
         State("cylinder-fig", "relayoutData"),
     )
-    def update_cylinder(h, k, l, sigma_deg, Gamma_deg, eta_value, relayout_data):  # pragma: no cover - UI callback
+    def update_cylinder(h, k, l, sigma_deg, Gamma_deg, eta_value, wavelength_bandwidth_pct, relayout_data):  # pragma: no cover - UI callback
         try:
             params = normalize_cylinder_params(
                 h,
@@ -714,10 +748,18 @@ def build_cylinder_app(
                 eta_value,
                 defaults=control_defaults,
             )
+            wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+                wavelength_bandwidth_pct,
+                default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+            )
         except ValueError as exc:
             return build_cylinder_error_figure(str(exc))
 
-        return build_cylinder_figure(*params, camera=extract_scene_camera(relayout_data))
+        return build_cylinder_figure(
+            *params,
+            wavelength_bandwidth_pct=wavelength_bandwidth_pct,
+            camera=extract_scene_camera(relayout_data),
+        )
 
     return app
 
@@ -757,6 +799,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_ETA,
         help="Gaussian/Lorentzian mixing factor η, from 0 to 1 (default: 0.5)",
     )
+    parser.add_argument(
+        "--wavelength-bandwidth-pct",
+        type=float,
+        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+        help="Full wavelength bandwidth Δλ/λ in percent (default: 0.0)",
+    )
     return parser.parse_args()
 
 
@@ -778,6 +826,7 @@ def main(
     eta: float | None = None,
     *,
     gamma: float | None = None,
+    wavelength_bandwidth_pct: float | None = None,
 ) -> None:
     """Launch the fibrous Dash viewer seeded from CLI or function inputs."""
 
@@ -790,6 +839,10 @@ def main(
             args.sigma,
             args.Gamma,
             args.eta,
+        )
+        wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+            args.wavelength_bandwidth_pct,
+            default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
         )
     else:
         Gamma = _resolve_Gamma(
@@ -805,6 +858,10 @@ def main(
             math.degrees(Gamma),
             eta,
         )
+        wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
+            wavelength_bandwidth_pct,
+            default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+        )
 
     app = build_cylinder_app(
         initial_H=H,
@@ -813,6 +870,7 @@ def main(
         initial_sigma=sigma,
         initial_Gamma=Gamma,
         initial_eta=eta,
+        initial_wavelength_bandwidth_pct=wavelength_bandwidth_pct,
     )
     url = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
     threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()

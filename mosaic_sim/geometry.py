@@ -5,14 +5,98 @@ geometric primitives and rotating them.  They are primarily used by the
 visualisation scripts to build the Bragg and Ewald spheres.
 """
 import math
+from dataclasses import dataclass
 import numpy as np
 
 __all__ = [
+    "EWALD_BANDWIDTH_LAYER_COUNT",
+    "EWALD_LAYER_MIN_OPACITY",
+    "EWALD_LAYER_MAX_OPACITY",
+    "EwaldLayer",
+    "ewald_bandwidth_layers",
+    "normalize_wavelength_bandwidth_pct",
     "sphere",
     "rot_x",
     "intersection_circle",
     "intersection_cylinder_sphere",
 ]
+
+EWALD_BANDWIDTH_LAYER_COUNT = 7
+EWALD_LAYER_MIN_OPACITY = 0.04
+EWALD_LAYER_MAX_OPACITY = 0.30
+
+
+def normalize_wavelength_bandwidth_pct(value: float | int | None, default: float = 0.0) -> float:
+    """Normalize the full fractional wavelength bandwidth percentage."""
+
+    raw_value = default if value is None else value
+    try:
+        bandwidth_pct = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("wavelength_bandwidth_pct must be a finite number") from exc
+
+    if not math.isfinite(bandwidth_pct):
+        raise ValueError("wavelength_bandwidth_pct must be a finite number")
+    if bandwidth_pct < 0.0 or bandwidth_pct >= 200.0:
+        raise ValueError("wavelength_bandwidth_pct must be >= 0.0 and < 200.0")
+    return bandwidth_pct
+
+
+@dataclass(frozen=True)
+class EwaldLayer:
+    """Wavelength-specific Ewald geometry and rendering weight."""
+
+    relative_wavelength_offset: float
+    k_mag: float
+    opacity: float
+
+
+def ewald_bandwidth_layers(
+    k0: float,
+    wavelength_bandwidth_pct: float,
+    *,
+    layer_count: int = EWALD_BANDWIDTH_LAYER_COUNT,
+    min_opacity: float = EWALD_LAYER_MIN_OPACITY,
+    max_opacity: float = EWALD_LAYER_MAX_OPACITY,
+) -> tuple[EwaldLayer, ...]:
+    """Return sampled wavelength-dependent Ewald layers around central ``k0``."""
+
+    k0 = float(k0)
+    if not math.isfinite(k0) or k0 <= 0.0:
+        raise ValueError("k0 must be a finite positive number")
+
+    bandwidth_pct = normalize_wavelength_bandwidth_pct(wavelength_bandwidth_pct)
+    min_opacity = float(min_opacity)
+    max_opacity = float(max_opacity)
+    if not math.isfinite(min_opacity) or not math.isfinite(max_opacity):
+        raise ValueError("opacity bounds must be finite numbers")
+    if min_opacity < 0.0 or max_opacity < min_opacity:
+        raise ValueError("opacity bounds must satisfy 0.0 <= min_opacity <= max_opacity")
+
+    if bandwidth_pct == 0.0:
+        return (EwaldLayer(0.0, k0, max_opacity),)
+
+    count = int(layer_count)
+    if count < 1:
+        raise ValueError("layer_count must be at least 1")
+    if count % 2 == 0:
+        count += 1
+
+    half_bandwidth = bandwidth_pct / 200.0
+    layers: list[EwaldLayer] = []
+    for offset in np.linspace(-half_bandwidth, half_bandwidth, count):
+        relative_offset = float(offset)
+        weight = 1.0 - abs(relative_offset) / half_bandwidth
+        opacity = min_opacity + (max_opacity - min_opacity) * max(weight, 0.0)
+        layers.append(
+            EwaldLayer(
+                relative_wavelength_offset=relative_offset,
+                k_mag=k0 / (1.0 + relative_offset),
+                opacity=opacity,
+            )
+        )
+    return tuple(layers)
+
 
 def sphere(R: float, phi: np.ndarray, theta: np.ndarray,
            center: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

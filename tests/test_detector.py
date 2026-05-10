@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 from dash import dcc
 
+import mosaic_sim
 from mosaic_sim.constants import K_MAG, a_hex, c_hex, d_hex
+import mosaic_sim.detector as detector_module
 from mosaic_sim.detector import (
     DETECTOR_CAMERA_UIREVISION,
     K_VECTOR_LABEL_SIZE,
@@ -13,7 +15,7 @@ from mosaic_sim.detector import (
     build_detector_figure,
     normalize_detector_params,
 )
-from mosaic_sim.geometry import intersection_circle, rot_x
+from mosaic_sim.geometry import ewald_bandwidth_layers, intersection_circle, rot_x
 from mosaic_sim.intensity import mosaic_intensity
 
 
@@ -44,6 +46,10 @@ def _expected_detector_ring_profile(
     return ring_x_full, ring_z_full, detector_intensity, dphi[order], ring_intensity[order]
 
 
+def _trace_by_name(fig, name: str):
+    return next(trace for trace in fig.data if getattr(trace, "name", "") == name)
+
+
 def test_normalize_detector_params_uses_defaults_and_converts_units():
     params = normalize_detector_params(
         defaults=(1, 2, 3, 0.9, 4.1, 0.25),
@@ -58,6 +64,10 @@ def test_normalize_detector_params_uses_defaults_and_converts_units():
 def test_normalize_detector_params_rejects_invalid_eta():
     with pytest.raises(ValueError, match="η"):
         normalize_detector_params(0, 0, 12, 0.8, 5.0, 1.2)
+
+
+def test_package_exports_special_cause_reciprocal_builder():
+    assert mosaic_sim.build_special_cause_reciprocal_figure is detector_module.build_special_cause_reciprocal_figure
 
 
 def test_build_detector_figure_exposes_parameterized_slider_state():
@@ -100,6 +110,8 @@ def test_build_detector_figure_exposes_parameterized_slider_state():
         getattr(trace, "text", None) is not None and list(trace.text) == ["G"]
         for trace in fig.data
     )
+    assert [idx for idx, trace in enumerate(fig.data) if trace.name == "Ewald sphere"] == [1]
+    assert [idx for idx, trace in enumerate(fig.data) if trace.name == "Bragg/Ewald overlap"] == [2]
     assert 1 in fig.frames[0].traces
     assert 0 not in fig.frames[0].traces
 
@@ -209,6 +221,180 @@ def test_build_detector_figure_applies_explicit_camera():
     assert fig.layout.scene.camera.eye.z == pytest.approx(0.8)
 
 
+def test_build_detector_figure_adds_wavelength_bandwidth_layers_with_matching_opacity():
+    theta_i = np.deg2rad(12.0)
+    fig = build_detector_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        theta_i=theta_i,
+        wavelength_bandwidth_pct=1.0,
+    )
+
+    layers = ewald_bandwidth_layers(K_MAG, 1.0)
+    ewald_traces = [trace for trace in fig.data if trace.name == "Ewald sphere"]
+    ring_traces = [trace for trace in fig.data if trace.name == "Bragg/Ewald overlap"]
+
+    assert len(ewald_traces) == len(layers)
+    assert len(ring_traces) == len(layers)
+    assert ewald_traces[len(layers) // 2].opacity > ewald_traces[0].opacity
+    assert ewald_traces[len(layers) // 2].opacity > ewald_traces[-1].opacity
+    for layer, ewald_trace, ring_trace in zip(layers, ewald_traces, ring_traces, strict=True):
+        assert ewald_trace.opacity == pytest.approx(layer.opacity)
+        assert ring_trace.opacity == pytest.approx(layer.opacity)
+
+    d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
+    g_mag = 2.0 * math.pi / d_hkl
+    expected_ring = rot_x(
+        *intersection_circle(g_mag, layers[0].k_mag, layers[0].k_mag),
+        theta_i,
+    )
+    np.testing.assert_allclose(np.asarray(ring_traces[0].x, dtype=float), expected_ring[0])
+    np.testing.assert_allclose(np.asarray(ring_traces[0].y, dtype=float), expected_ring[1])
+    np.testing.assert_allclose(np.asarray(ring_traces[0].z, dtype=float), expected_ring[2])
+
+
+def test_build_detector_figure_fixed_theta_rotates_bandwidth_surfaces_once(monkeypatch):
+    surface_rotations = 0
+    original_rot_x = detector_module.rot_x
+
+    def counting_rot_x(x, y, z, ang):
+        nonlocal surface_rotations
+        if np.asarray(x).ndim == 2:
+            surface_rotations += 1
+        return original_rot_x(x, y, z, ang)
+
+    monkeypatch.setattr(detector_module, "rot_x", counting_rot_x)
+
+    fig = detector_module.build_detector_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        theta_i=np.deg2rad(12.0),
+        wavelength_bandwidth_pct=1.0,
+    )
+
+    ewald_traces = [trace for trace in fig.data if trace.name == "Ewald sphere"]
+    assert len(ewald_traces) == len(ewald_bandwidth_layers(K_MAG, 1.0))
+    assert surface_rotations == len(ewald_traces)
+
+
+def test_build_detector_figure_animation_updates_all_bandwidth_layers():
+    fig = build_detector_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        wavelength_bandwidth_pct=1.0,
+    )
+
+    ewald_indices = [idx for idx, trace in enumerate(fig.data) if trace.name == "Ewald sphere"]
+    ring_indices = [idx for idx, trace in enumerate(fig.data) if trace.name == "Bragg/Ewald overlap"]
+    frame_traces = list(fig.frames[0].traces)
+
+    assert len(fig.frames) == 60
+    assert set(ewald_indices).issubset(frame_traces)
+    assert set(ring_indices).issubset(frame_traces)
+
+
+def test_build_special_cause_reciprocal_figure_uses_physical_bragg_and_ewald_geometry():
+    theta_i = np.deg2rad(12.0)
+
+    fig = detector_module.build_special_cause_reciprocal_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        theta_i=theta_i,
+    )
+
+    d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
+    g_mag = 2.0 * math.pi / d_hkl
+    bragg_trace = _trace_by_name(fig, "Bragg sphere")
+    ewald_trace = _trace_by_name(fig, "Ewald sphere")
+    overlap_trace = _trace_by_name(fig, "Bragg/Ewald overlap")
+
+    bragg_radius = np.sqrt(
+        np.asarray(bragg_trace.x, dtype=float) ** 2
+        + np.asarray(bragg_trace.y, dtype=float) ** 2
+        + np.asarray(bragg_trace.z, dtype=float) ** 2
+    )
+    np.testing.assert_allclose(bragg_radius, g_mag, rtol=1e-6)
+
+    ewald_center = rot_x(
+        np.array([0.0]),
+        np.array([K_MAG]),
+        np.array([0.0]),
+        theta_i,
+    )
+    ewald_radius = np.sqrt(
+        (np.asarray(ewald_trace.x, dtype=float) - ewald_center[0][0]) ** 2
+        + (np.asarray(ewald_trace.y, dtype=float) - ewald_center[1][0]) ** 2
+        + (np.asarray(ewald_trace.z, dtype=float) - ewald_center[2][0]) ** 2
+    )
+    np.testing.assert_allclose(ewald_radius, K_MAG, rtol=1e-6)
+
+    expected_overlap = rot_x(
+        *intersection_circle(g_mag, K_MAG, K_MAG),
+        theta_i,
+    )
+    np.testing.assert_allclose(np.asarray(overlap_trace.x, dtype=float), expected_overlap[0])
+    np.testing.assert_allclose(np.asarray(overlap_trace.y, dtype=float), expected_overlap[1])
+    np.testing.assert_allclose(np.asarray(overlap_trace.z, dtype=float), expected_overlap[2])
+
+    assert len(fig.frames) == 0
+    assert len(fig.layout.sliders) == 0
+    assert {trace.type for trace in fig.data}.issubset({"surface", "scatter3d", "cone"})
+    assert fig.layout.scene.uirevision == DETECTOR_CAMERA_UIREVISION
+
+
+def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic_changes():
+    base = detector_module.build_special_cause_reciprocal_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.4),
+        Gamma=np.deg2rad(1.0),
+        eta=0.0,
+        theta_i=np.deg2rad(12.0),
+    )
+    changed = detector_module.build_special_cause_reciprocal_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(2.0),
+        Gamma=np.deg2rad(10.0),
+        eta=1.0,
+        theta_i=np.deg2rad(12.0),
+    )
+
+    base_bragg = _trace_by_name(base, "Bragg sphere")
+    changed_bragg = _trace_by_name(changed, "Bragg sphere")
+    base_ewald = _trace_by_name(base, "Ewald sphere")
+    changed_ewald = _trace_by_name(changed, "Ewald sphere")
+
+    np.testing.assert_allclose(np.asarray(base_bragg.x, dtype=float), np.asarray(changed_bragg.x, dtype=float))
+    np.testing.assert_allclose(np.asarray(base_bragg.y, dtype=float), np.asarray(changed_bragg.y, dtype=float))
+    np.testing.assert_allclose(np.asarray(base_bragg.z, dtype=float), np.asarray(changed_bragg.z, dtype=float))
+    np.testing.assert_allclose(np.asarray(base_ewald.x, dtype=float), np.asarray(changed_ewald.x, dtype=float))
+    np.testing.assert_allclose(np.asarray(base_ewald.y, dtype=float), np.asarray(changed_ewald.y, dtype=float))
+    np.testing.assert_allclose(np.asarray(base_ewald.z, dtype=float), np.asarray(changed_ewald.z, dtype=float))
+    assert not np.allclose(
+        np.asarray(base_bragg.surfacecolor, dtype=float),
+        np.asarray(changed_bragg.surfacecolor, dtype=float),
+    )
+
+
 def test_build_detector_app_seeds_inputs_and_figure_from_initial_values():
     app = build_detector_app(
         initial_H=1,
@@ -229,6 +415,10 @@ def test_build_detector_app_seeds_inputs_and_figure_from_initial_values():
     assert controls[3].children[0].children == "σ (deg)"
     assert controls[4].children[0].children == "Γ (deg)"
     assert controls[5].children[0].children == "η"
+    assert controls[6].children[0].children == "λ bandwidth (%)"
+    assert controls[6].children[1].value == pytest.approx(0.0)
+    assert controls[6].children[1].step == pytest.approx(0.01)
+    assert controls[6].children[1].min == pytest.approx(0.0)
     assert math.isclose(controls[3].children[1].value, 1.1)
     assert math.isclose(controls[4].children[1].value, 6.2)
     assert math.isclose(controls[5].children[1].value, 0.35)
@@ -250,6 +440,7 @@ def test_build_detector_app_callback_preserves_camera_from_relayout_data():
         0.8,
         5.0,
         0.5,
+        1.0,
         12.0,
         {
             "scene.camera.eye.x": 1.5,
