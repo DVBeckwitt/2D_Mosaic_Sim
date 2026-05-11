@@ -56,3 +56,4 @@ Render the special-cause reciprocal Bragg, shell, and overlap-band geometry with
 - `python -m pytest`
 - `python -m compileall mosaic_sim specular_reflection_sim.py`
 - `git diff --check`
+- Local Dash/Chromium runtime check across every unified GUI mode, every powder submode, and 390px mobile layout. The check found no page errors, no HTTP `>=400` responses, and no horizontal mobile overflow.

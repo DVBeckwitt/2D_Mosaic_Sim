@@ -61,10 +61,11 @@ Status date: 2026-05-11
 - Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. Special-cause reciprocal uses the bandwidth as a hollow Ewald shell; mosaic detector and fibrous views keep the sampled layer-stack rendering. The default `0.0` keeps the previous monochromatic behavior in mosaic detector and fibrous views.
 - Feature: unified GUI navigation has been refreshed. The mode picker now uses styled full-width choices on small screens, the powder peak filters use shared CSS classes instead of inline style dictionaries, and inactive powder peak selector cards are no longer constructed.
 - Feature: special-cause reciprocal rendering now uses uniform opaque geometry traces and an RGB Bragg colorscale so the shell/band surfaces render consistently in Plotly.
-- Bug/error status: no current application runtime error is known for these changes. Browser checks covered desktop, tablet, and mobile mode switching with no console errors or HTTP failures beyond expected Plotly/WebGL warnings; mobile mode choices no longer overflow horizontally.
+- Browser runtime status: local Dash/Chromium verification covered all unified GUI modes, all powder submodes, desktop layout, and 390px mobile layout. The mobile mode picker rendered one full-width column with no horizontal overflow.
+- Bug/error status: no current application runtime error is known for these changes. A browser-test harness timeout was localized to the harness reading Dash radio input `value` attributes, which render as `on` in the live DOM; the app had already switched modes correctly. Corrected browser checks found no page errors and no HTTP `>=400` responses. Console output only showed expected Plotly/Chromium Canvas2D/WebGL performance warnings.
 - Migration status: no existing mode, CLI argument, console entry point, or public Dash component ID was removed. Existing detector/fibrous scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied. Direct callers of `build_special_cause_reciprocal_figure()` still use the special-case `(0,0,3)` / `5%` default; pass `L=12, wavelength_bandwidth_pct=0.0` for the old direct-call default view.
 - CI status: GitHub Actions runs install, `pip check`, compile, tests, and package build on pull requests and pushes to `main` across Python 3.11 and 3.13.
-- Shipping status: local compile, full test suite, and diff whitespace checks pass for this update; rollback is a normal git revert of this feature commit.
+- Shipping status: local `pip check`, compile, full test suite, package build, browser smoke testing, and diff whitespace checks pass for this update; rollback is a normal git revert of this feature commit.
 
 ## Usage
 
