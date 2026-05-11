@@ -24,8 +24,6 @@ from .common import (
 )
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import (
-    EWALD_LAYER_MAX_OPACITY,
-    EWALD_LAYER_MIN_OPACITY,
     ewald_bandwidth_k_bounds,
     ewald_bandwidth_layers,
     intersection_circle,
@@ -65,6 +63,7 @@ K_VECTOR_LABEL_SIZE = 24
 THETA_LABEL_SIZE = 24
 SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES = 25
 SPECIAL_CAUSE_OVERLAP_BAND_POINTS = 200
+SPECIAL_CAUSE_TRACE_OPACITY = 1.0
 
 
 @dataclass(frozen=True)
@@ -636,14 +635,15 @@ def build_special_cause_reciprocal_figure(
             y=bragg_y,
             z=bragg_z,
             surfacecolor=bragg_surface_intensity,
-            colorscale=[[0, "rgba(128,128,128,0.25)"], [1, "rgba(255,0,0,1)"]],
+            colorscale=[[0, "rgb(128,128,128)"], [1, "rgb(255,0,0)"]],
+            opacity=SPECIAL_CAUSE_TRACE_OPACITY,
             showscale=True,
             colorbar=dict(title="Mosaic<br>Intensity"),
             name="Bragg sphere",
         )
     )
 
-    def add_ewald_surface(k_mag: float, opacity: float, name: str) -> None:
+    def add_ewald_surface(k_mag: float, name: str) -> None:
         ewald_x, ewald_y, ewald_z = sphere(
             k_mag,
             phi,
@@ -656,7 +656,7 @@ def build_special_cause_reciprocal_figure(
                 x=ewald_x,
                 y=ewald_y,
                 z=ewald_z,
-                opacity=opacity,
+                opacity=SPECIAL_CAUSE_TRACE_OPACITY,
                 colorscale="Blues",
                 showscale=False,
                 showlegend=False,
@@ -666,7 +666,7 @@ def build_special_cause_reciprocal_figure(
 
     if wavelength_bandwidth_pct == 0.0:
         for layer in ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct):
-            add_ewald_surface(layer.k_mag, layer.opacity, "Ewald sphere")
+            add_ewald_surface(layer.k_mag, "Ewald sphere")
 
             ring_x, ring_y, ring_z = intersection_circle(
                 g_mag,
@@ -680,7 +680,7 @@ def build_special_cause_reciprocal_figure(
                     y=ring_y,
                     z=ring_z,
                     mode="lines",
-                    opacity=layer.opacity,
+                    opacity=SPECIAL_CAUSE_TRACE_OPACITY,
                     line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
                     showlegend=False,
                     name="Bragg/Ewald overlap",
@@ -688,11 +688,11 @@ def build_special_cause_reciprocal_figure(
             )
     else:
         k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, wavelength_bandwidth_pct)
-        for name, k_mag, opacity in (
-            ("Ewald shell inner", k_min, EWALD_LAYER_MIN_OPACITY),
-            ("Ewald shell outer", k_max, EWALD_LAYER_MAX_OPACITY),
+        for name, k_mag in (
+            ("Ewald shell inner", k_min),
+            ("Ewald shell outer", k_max),
         ):
-            add_ewald_surface(k_mag, opacity, name)
+            add_ewald_surface(k_mag, name)
 
         band_rows: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
         for k_mag in np.linspace(k_min, k_max, SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES):
@@ -722,7 +722,7 @@ def build_special_cause_reciprocal_figure(
                     y=band_y,
                     z=band_z,
                     surfacecolor=band_color,
-                    opacity=0.65,
+                    opacity=SPECIAL_CAUSE_TRACE_OPACITY,
                     colorscale="Greens",
                     showscale=False,
                     showlegend=False,

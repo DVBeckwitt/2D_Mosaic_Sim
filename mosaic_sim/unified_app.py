@@ -1308,7 +1308,7 @@ def _build_powder_view_control(active_view: Any = None) -> html.Div:
     resolved_view = _resolved_powder_view(active_view)
     return html.Div(
         [
-            html.Label("Powder view", style={"fontWeight": "600"}),
+            html.Label("Powder view", className="simulation-powder-label"),
             dcc.RadioItems(
                 id="powder-view-mode",
                 options=[
@@ -1318,18 +1318,12 @@ def _build_powder_view_control(active_view: Any = None) -> html.Div:
                     {"label": "Cylinder", "value": "cylinder"},
                 ],
                 value=resolved_view,
-                labelStyle={
-                    "display": "block",
-                    "padding": "0.4rem 0.55rem",
-                    "border": "1px solid #dbe4ee",
-                    "borderRadius": "0.5rem",
-                    "backgroundColor": "#ffffff",
-                    "marginBottom": "0.35rem",
-                },
-                inputStyle={"marginRight": "0.5rem"},
+                className="simulation-powder-options",
+                labelClassName="simulation-powder-option",
+                inputClassName="simulation-powder-input",
             ),
         ],
-        style={"display": "flex", "flexDirection": "column", "gap": "0.35rem"},
+        className="simulation-powder-control",
     )
 
 
@@ -1343,13 +1337,13 @@ def _build_peak_selector_card(
         [
             html.Div(
                 [
-                    html.Div(label, style={"fontWeight": "600"}),
+                    html.Div(label, className="simulation-peak-selector-title"),
                     html.Div(
                         f"{len(value)} of {len(options)} peaks visible",
-                        style={"fontSize": "0.85rem", "color": "#64748b"},
+                        className="simulation-peak-selector-count",
                     ),
                 ],
-                style={"display": "flex", "flexDirection": "column", "gap": "0.15rem"},
+                className="simulation-peak-selector-header",
             ),
             dcc.Checklist(
                 id={"type": "powder-qr-control", "key": key},
@@ -1358,25 +1352,12 @@ def _build_peak_selector_card(
                     for option_label, option_value in options
                 ],
                 value=value,
-                labelStyle={
-                    "display": "block",
-                    "marginBottom": "0.4rem",
-                    "padding": "0.35rem 0.4rem",
-                    "borderRadius": "0.45rem",
-                },
-                inputStyle={"marginRight": "0.5rem"},
-                style={"maxHeight": "16rem", "overflowY": "auto"},
+                className="simulation-peak-selector-list",
+                labelClassName="simulation-peak-selector-option",
+                inputClassName="simulation-peak-selector-input",
             ),
         ],
-        style={
-            "display": "flex",
-            "flexDirection": "column",
-            "gap": "0.6rem",
-            "padding": "0.8rem",
-            "border": "1px solid #dbe4ee",
-            "borderRadius": "0.75rem",
-            "backgroundColor": "#ffffff",
-        },
+        className="simulation-peak-selector-card",
     )
 
 
@@ -1389,49 +1370,46 @@ def _build_powder_selector_controls(
     resolved_view = _resolved_powder_view(powder_view)
 
     controls: list[html.Div] = [_build_powder_view_control(resolved_view)]
-    selector_cards = {
-        "3d-powder": _build_peak_selector_card(
+    selector_specs = {
+        "3d-powder": (
             POWDER_SPHERE_SELECTION_KEY,
             "Visible |G| shells",
             catalog["sphere_options"],
-            selection[POWDER_SPHERE_SELECTION_KEY],
         ),
-        "2d-powder": _build_peak_selector_card(
+        "2d-powder": (
             POWDER_RING_SELECTION_KEY,
             "Visible 2D powder peaks",
             catalog["ring_options"],
-            selection[POWDER_RING_SELECTION_KEY],
         ),
-        "cylinder": _build_peak_selector_card(
+        "cylinder": (
             POWDER_CYLINDER_SELECTION_KEY,
             "Visible cylinder peaks",
             catalog["cylinder_options"],
-            selection[POWDER_CYLINDER_SELECTION_KEY],
         ),
     }
 
-    active_selector = selector_cards.get(resolved_view)
+    active_selector = selector_specs.get(resolved_view)
     if active_selector is not None:
-        controls.append(active_selector)
+        key, label, options = active_selector
+        controls.append(
+            _build_peak_selector_card(
+                key,
+                label,
+                options,
+                selection[key],
+            )
+        )
     else:
         controls.append(
             html.Div(
                 [
-                    html.Div("Peak filters", style={"fontWeight": "600"}),
+                    html.Div("Peak filters", className="simulation-peak-selector-title"),
                     html.Div(
                         "Single crystal does not use grouped powder peak filters.",
-                        style={"color": "#64748b", "lineHeight": "1.5"},
+                        className="simulation-peak-selector-empty-text",
                     ),
                 ],
-                style={
-                    "display": "flex",
-                    "flexDirection": "column",
-                    "gap": "0.45rem",
-                    "padding": "0.8rem",
-                    "border": "1px solid #dbe4ee",
-                    "borderRadius": "0.75rem",
-                    "backgroundColor": "#ffffff",
-                },
+                className="simulation-powder-empty",
             )
         )
     return controls
@@ -1728,6 +1706,10 @@ def build_unified_app(
                                     html.Div(
                                         [
                                             html.Label("Mode", className="simulation-mode-label"),
+                                            html.Div(
+                                                "Switch views quickly; each mode keeps its own controls while you compare outputs.",
+                                                className="simulation-mode-helper",
+                                            ),
                                             dcc.RadioItems(
                                                 id="simulation-mode",
                                                 options=[
@@ -1736,6 +1718,8 @@ def build_unified_app(
                                                 ],
                                                 value=mode,
                                                 className="simulation-mode-picker",
+                                                labelClassName="simulation-mode-option",
+                                                inputClassName="simulation-mode-input",
                                                 inline=True,
                                             ),
                                         ],
@@ -1778,6 +1762,7 @@ def build_unified_app(
                                         "Save PNG",
                                         id="export-png-button",
                                         n_clicks=0,
+                                        title="Download the current visualization as a PNG",
                                         className="simulation-toolbar-button",
                                     ),
                                     html.Div(

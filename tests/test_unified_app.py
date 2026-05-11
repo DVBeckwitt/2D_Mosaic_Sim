@@ -194,6 +194,7 @@ def test_build_unified_app_seeds_mode_selector_and_initial_figure():
     assert isinstance(mode_selector, dcc.RadioItems)
     assert mode_selector.value == "fibrous-view"
     assert export_toolbar.children[0].id == "export-png-button"
+    assert export_toolbar.children[0].title == "Download the current visualization as a PNG"
     assert isinstance(graph, dcc.Graph)
     assert "HKL = (0, 0, 12)" in graph.figure.layout.title.text
 
@@ -202,13 +203,20 @@ def test_unified_layout_uses_compact_browser_header_for_mode_switching():
     app = build_unified_app(initial_mode="fibrous-view")
 
     header = _find_component_by_id(app.layout, "simulation-sidebar-header")
+    brand = _find_component_by_class(header, "simulation-brand")
     mode_card = _find_component_by_class(header, "simulation-mode-card")
+    mode_helper = _find_component_by_class(header, "simulation-mode-helper")
     mode_selector = _find_component_by_id(header, "simulation-mode")
 
     assert header is not None
+    assert brand is not None
     assert mode_card is not None
+    assert "each mode" in _render_component_text(mode_helper)
     assert isinstance(mode_selector, dcc.RadioItems)
     assert mode_selector.inline is True
+    assert mode_selector.labelClassName == "simulation-mode-option"
+    assert mode_selector.inputClassName == "simulation-mode-input"
+    assert [option["value"] for option in mode_selector.options] == list(SIMULATION_SPECS)
 
 
 def test_unified_graphs_use_dash_responsive_graph_property():
@@ -512,11 +520,17 @@ def test_unified_specular_sliders_only_keep_theta_i_live():
 def test_unified_powder_view_exposes_picker_and_only_relevant_peak_ui():
     app = build_unified_app(initial_mode="reciprocal-space")
 
+    powder_control = _find_component_by_class(app.layout, "simulation-powder-control")
+    powder_empty = _find_component_by_class(app.layout, "simulation-powder-empty")
     view_picker = _find_component_by_id(app.layout, "powder-view-mode")
 
+    assert powder_control is not None
+    assert powder_empty is not None
     assert isinstance(view_picker, dcc.RadioItems)
     assert view_picker.id == "powder-view-mode"
     assert view_picker.value == "single-crystal"
+    assert view_picker.labelClassName == "simulation-powder-option"
+    assert view_picker.inputClassName == "simulation-powder-input"
     assert "Peak filters" in _render_component_text(_find_component_by_id(app.layout, "simulation-controls"))
     assert "Single crystal does not use grouped powder peak filters." in _render_component_text(
         _find_component_by_id(app.layout, "simulation-controls")
@@ -540,11 +554,33 @@ def test_powder_view_picker_renders_only_active_peak_selector():
         rendered_controls,
         {"type": "powder-qr-control", "key": "ring_selection"},
     )
+    peak_card = _find_component_by_class(rendered_controls, "simulation-peak-selector-card")
 
     assert isinstance(_find_component_by_id(rendered_controls, "powder-view-mode"), dcc.RadioItems)
+    assert peak_card is not None
     assert isinstance(peak_selector, dcc.Checklist)
     assert peak_selector.id["type"] == "powder-qr-control"
     assert peak_selector.id["key"] == "ring_selection"
+    assert peak_selector.className == "simulation-peak-selector-list"
+
+
+def test_unified_styles_define_navigation_and_responsive_workbench_hooks():
+    css = (Path(__file__).resolve().parents[1] / "assets" / "specular_ui.css").read_text()
+    mobile_css = css.split("@media (max-width: 760px)", maxsplit=1)[1]
+
+    for selector in (
+        ".simulation-mode-helper",
+        ".simulation-mode-option",
+        ".simulation-powder-control",
+        ".simulation-peak-selector-card",
+        ".simulation-toolbar-button:focus-visible",
+        ".simulation-graph-frame--primary",
+    ):
+        assert selector in css
+
+    assert ".simulation-sidebar--specular {\n    width: auto;" in css
+    assert ".simulation-mode-picker {\n    grid-template-columns: minmax(0, 1fr);" in mobile_css
+    assert ".simulation-mode-option {\n    box-sizing: border-box;\n    width: 100%;" in mobile_css
 
 
 def test_unified_app_powder_png_export_restores_series_downloads():

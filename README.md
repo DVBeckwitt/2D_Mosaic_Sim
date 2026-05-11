@@ -55,14 +55,16 @@ pip install -e .
 
 ## Project Status
 
-Status date: 2026-05-10
+Status date: 2026-05-11
 
 - Feature: `Special Cause Reciprocal` is implemented in the unified GUI. It renders the Cu-K alpha Ewald shell, Bi2Se3 Bragg sphere, and continuous Bragg/Ewald overlap band as a one-panel reciprocal-space view using the same HKL, `theta_i`, `σ`, `Γ`, and `η` controls as `Mosaic View`. Its defaults are `theta_i = 5°`, `(H,K,L) = (0,0,3)`, and `λ bandwidth (%) = 5.0`.
 - Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. Special-cause reciprocal uses the bandwidth as a hollow Ewald shell; mosaic detector and fibrous views keep the sampled layer-stack rendering. The default `0.0` keeps the previous monochromatic behavior in mosaic detector and fibrous views.
-- Bug/error status: no application runtime error is known for the new mode. Runtime Dash endpoint smoke testing verified the default `5%` shell/band path and the explicit `0%` monochromatic fallback.
-- Migration status: no existing mode or CLI argument was removed. Existing detector/fibrous scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied. Direct callers of `build_special_cause_reciprocal_figure()` now get the special-case `(0,0,3)` / `5%` default; pass `L=12, wavelength_bandwidth_pct=0.0` for the old direct-call default view.
-- CI status: GitHub Actions now runs install, `pip check`, compile, tests, and package build on pull requests and pushes to `main`.
-- Shipping status: local `pip check`, compile, full test suite, and package build pass; rollback is a normal git revert of this feature commit.
+- Feature: unified GUI navigation has been refreshed. The mode picker now uses styled full-width choices on small screens, the powder peak filters use shared CSS classes instead of inline style dictionaries, and inactive powder peak selector cards are no longer constructed.
+- Feature: special-cause reciprocal rendering now uses uniform opaque geometry traces and an RGB Bragg colorscale so the shell/band surfaces render consistently in Plotly.
+- Bug/error status: no current application runtime error is known for these changes. Browser checks covered desktop, tablet, and mobile mode switching with no console errors or HTTP failures beyond expected Plotly/WebGL warnings; mobile mode choices no longer overflow horizontally.
+- Migration status: no existing mode, CLI argument, console entry point, or public Dash component ID was removed. Existing detector/fibrous scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied. Direct callers of `build_special_cause_reciprocal_figure()` still use the special-case `(0,0,3)` / `5%` default; pass `L=12, wavelength_bandwidth_pct=0.0` for the old direct-call default view.
+- CI status: GitHub Actions runs install, `pip check`, compile, tests, and package build on pull requests and pushes to `main` across Python 3.11 and 3.13.
+- Shipping status: local compile, full test suite, and diff whitespace checks pass for this update; rollback is a normal git revert of this feature commit.
 
 ## Usage
 

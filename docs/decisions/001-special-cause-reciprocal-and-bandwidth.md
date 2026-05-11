@@ -18,6 +18,8 @@ Use one shared `wavelength_bandwidth_pct` parameter for detector, special-cause 
 
 The default remains `0.0` for existing detector/fibrous behavior. The special-cause reciprocal mode and its public figure builder default to `theta_i_deg=5.0`, `(H,K,L)=(0,0,3)`, and `wavelength_bandwidth_pct=5.0`.
 
+Render the special-cause reciprocal Bragg, shell, and overlap-band geometry with uniform opaque traces. Use an RGB Bragg colorscale rather than RGBA colorscale stops so Plotly opacity is controlled in one place and the shell/band surfaces remain readable.
+
 ## Alternatives Considered
 
 ### Reuse the Full Mosaic Detector Figure
@@ -35,13 +37,22 @@ The default remains `0.0` for existing detector/fibrous behavior. The special-ca
 - Cons: Makes finite Ewald sphere thickness unavailable in related views.
 - Rejected because the layer-stack model is additive and keeps the default monochromatic behavior.
 
+### Keep Layer-Specific Transparency in Special-Cause Reciprocal
+- Pros: Matches the sampled detector layer-stack visual treatment.
+- Cons: The special-cause view is a focused geometry view, not the sampled detector stack; semi-transparent layers make the shell and overlap band harder to inspect.
+- Rejected because the one-panel special-cause view should prioritize readable physical geometry.
+
 ## Consequences
 - `Special Cause Reciprocal` shares HKL, incidence angle, `sigma`, `Gamma`, `eta`, and wavelength bandwidth controls with `Mosaic View`.
 - `Special Cause Reciprocal` defaults to `theta_i_deg=5.0`, the `(0,0,3)` peak, and `wavelength_bandwidth_pct=5.0` in both the unified GUI and direct `build_special_cause_reciprocal_figure()` calls.
 - The public Python API adds `build_special_cause_reciprocal_figure`.
 - `wavelength_bandwidth_pct=0.0` is the migration path for monochromatic rendering. Direct callers can pass `L=12, wavelength_bandwidth_pct=0.0` to reproduce the previous helper default.
 - Larger non-zero bandwidth values increase Plotly payload size because they add Ewald shell surfaces and the continuous overlap band.
+- The special-cause reciprocal traces are intentionally opaque; future translucent rendering should be treated as a new visual design choice, not a compatibility requirement.
 
 ## Verification
 - `python -m pytest -q`
 - Browser smoke test of `special-cause-reciprocal`, `detector-view`, and switching back to `special-cause-reciprocal`.
+- `python -m pytest`
+- `python -m compileall mosaic_sim specular_reflection_sim.py`
+- `git diff --check`
