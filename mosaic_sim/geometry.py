@@ -13,6 +13,7 @@ __all__ = [
     "EWALD_LAYER_MIN_OPACITY",
     "EWALD_LAYER_MAX_OPACITY",
     "EwaldLayer",
+    "ewald_bandwidth_k_bounds",
     "ewald_bandwidth_layers",
     "normalize_wavelength_bandwidth_pct",
     "sphere",
@@ -42,6 +43,21 @@ def normalize_wavelength_bandwidth_pct(value: float | int | None, default: float
     return bandwidth_pct
 
 
+def ewald_bandwidth_k_bounds(k0: float, wavelength_bandwidth_pct: float) -> tuple[float, float]:
+    """Return ordered Ewald ``k`` radii for a full fractional wavelength bandwidth."""
+
+    k0 = float(k0)
+    if not math.isfinite(k0) or k0 <= 0.0:
+        raise ValueError("k0 must be a finite positive number")
+
+    bandwidth_pct = normalize_wavelength_bandwidth_pct(wavelength_bandwidth_pct)
+    if bandwidth_pct == 0.0:
+        return k0, k0
+
+    half_bandwidth = bandwidth_pct / 200.0
+    return k0 / (1.0 + half_bandwidth), k0 / (1.0 - half_bandwidth)
+
+
 @dataclass(frozen=True)
 class EwaldLayer:
     """Wavelength-specific Ewald geometry and rendering weight."""
@@ -61,10 +77,7 @@ def ewald_bandwidth_layers(
 ) -> tuple[EwaldLayer, ...]:
     """Return sampled wavelength-dependent Ewald layers around central ``k0``."""
 
-    k0 = float(k0)
-    if not math.isfinite(k0) or k0 <= 0.0:
-        raise ValueError("k0 must be a finite positive number")
-
+    k_min, _ = ewald_bandwidth_k_bounds(k0, wavelength_bandwidth_pct)
     bandwidth_pct = normalize_wavelength_bandwidth_pct(wavelength_bandwidth_pct)
     min_opacity = float(min_opacity)
     max_opacity = float(max_opacity)
@@ -74,7 +87,7 @@ def ewald_bandwidth_layers(
         raise ValueError("opacity bounds must satisfy 0.0 <= min_opacity <= max_opacity")
 
     if bandwidth_pct == 0.0:
-        return (EwaldLayer(0.0, k0, max_opacity),)
+        return (EwaldLayer(0.0, k_min, max_opacity),)
 
     count = int(layer_count)
     if count < 1:

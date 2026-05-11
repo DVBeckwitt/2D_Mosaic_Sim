@@ -15,7 +15,7 @@ from mosaic_sim.detector import (
     build_detector_figure,
     normalize_detector_params,
 )
-from mosaic_sim.geometry import ewald_bandwidth_layers, intersection_circle, rot_x
+from mosaic_sim.geometry import ewald_bandwidth_k_bounds, ewald_bandwidth_layers, intersection_circle, rot_x
 from mosaic_sim.intensity import mosaic_intensity
 
 
@@ -316,6 +316,7 @@ def test_build_special_cause_reciprocal_figure_uses_physical_bragg_and_ewald_geo
         Gamma=np.deg2rad(5.0),
         eta=0.5,
         theta_i=theta_i,
+        wavelength_bandwidth_pct=0.0,
     )
 
     d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
@@ -358,6 +359,18 @@ def test_build_special_cause_reciprocal_figure_uses_physical_bragg_and_ewald_geo
     assert fig.layout.scene.uirevision == DETECTOR_CAMERA_UIREVISION
 
 
+def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_bandwidth():
+    fig = detector_module.build_special_cause_reciprocal_figure()
+
+    assert "HKL = (0, 0, 3)" in fig.layout.title.text
+    assert "λ bandwidth = 5.00%" in fig.layout.title.text
+    assert any(trace.name == "Ewald shell inner" for trace in fig.data)
+    assert any(trace.name == "Ewald shell outer" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
+    assert not any(trace.name == "Ewald sphere" for trace in fig.data)
+    assert not any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+
+
 def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic_changes():
     base = detector_module.build_special_cause_reciprocal_figure(
         H=0,
@@ -367,6 +380,7 @@ def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic
         Gamma=np.deg2rad(1.0),
         eta=0.0,
         theta_i=np.deg2rad(12.0),
+        wavelength_bandwidth_pct=0.0,
     )
     changed = detector_module.build_special_cause_reciprocal_figure(
         H=0,
@@ -376,6 +390,7 @@ def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic
         Gamma=np.deg2rad(10.0),
         eta=1.0,
         theta_i=np.deg2rad(12.0),
+        wavelength_bandwidth_pct=0.0,
     )
 
     base_bragg = _trace_by_name(base, "Bragg sphere")
@@ -393,6 +408,97 @@ def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic
         np.asarray(base_bragg.surfacecolor, dtype=float),
         np.asarray(changed_bragg.surfacecolor, dtype=float),
     )
+
+
+def test_build_special_cause_reciprocal_figure_renders_bandwidth_as_ewald_shell():
+    theta_i = np.deg2rad(12.0)
+    fig = detector_module.build_special_cause_reciprocal_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        theta_i=theta_i,
+        wavelength_bandwidth_pct=5.0,
+    )
+
+    assert [trace.name for trace in fig.data].count("Ewald sphere") == 0
+    inner_trace = _trace_by_name(fig, "Ewald shell inner")
+    outer_trace = _trace_by_name(fig, "Ewald shell outer")
+    k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 5.0)
+
+    inner_center = rot_x(
+        np.array([0.0]),
+        np.array([k_min]),
+        np.array([0.0]),
+        theta_i,
+    )
+    outer_center = rot_x(
+        np.array([0.0]),
+        np.array([k_max]),
+        np.array([0.0]),
+        theta_i,
+    )
+    inner_radius = np.sqrt(
+        (np.asarray(inner_trace.x, dtype=float) - inner_center[0][0]) ** 2
+        + (np.asarray(inner_trace.y, dtype=float) - inner_center[1][0]) ** 2
+        + (np.asarray(inner_trace.z, dtype=float) - inner_center[2][0]) ** 2
+    )
+    outer_radius = np.sqrt(
+        (np.asarray(outer_trace.x, dtype=float) - outer_center[0][0]) ** 2
+        + (np.asarray(outer_trace.y, dtype=float) - outer_center[1][0]) ** 2
+        + (np.asarray(outer_trace.z, dtype=float) - outer_center[2][0]) ** 2
+    )
+
+    np.testing.assert_allclose(inner_radius, k_min, rtol=1e-6)
+    np.testing.assert_allclose(outer_radius, k_max, rtol=1e-6)
+
+
+def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_band():
+    theta_i = np.deg2rad(12.0)
+    fig = detector_module.build_special_cause_reciprocal_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        theta_i=theta_i,
+        wavelength_bandwidth_pct=5.0,
+    )
+
+    assert [trace.name for trace in fig.data].count("Bragg/Ewald overlap") == 0
+    band_trace = _trace_by_name(fig, "Bragg/Ewald overlap band")
+    band_x = np.asarray(band_trace.x, dtype=float)
+    band_y = np.asarray(band_trace.y, dtype=float)
+    band_z = np.asarray(band_trace.z, dtype=float)
+
+    assert band_trace.type == "surface"
+    assert band_x.ndim == 2
+    assert band_x.shape[0] > 2
+    assert band_x.shape == band_y.shape == band_z.shape
+
+    d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
+    g_mag = 2.0 * math.pi / d_hkl
+    bragg_radius = np.sqrt(band_x**2 + band_y**2 + band_z**2)
+    np.testing.assert_allclose(bragg_radius, g_mag, rtol=1e-6)
+
+    k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 5.0)
+    expected_inner_edge = rot_x(
+        *intersection_circle(g_mag, k_min, k_min, npts=band_x.shape[1]),
+        theta_i,
+    )
+    expected_outer_edge = rot_x(
+        *intersection_circle(g_mag, k_max, k_max, npts=band_x.shape[1]),
+        theta_i,
+    )
+    np.testing.assert_allclose(band_x[0], expected_inner_edge[0])
+    np.testing.assert_allclose(band_y[0], expected_inner_edge[1])
+    np.testing.assert_allclose(band_z[0], expected_inner_edge[2])
+    np.testing.assert_allclose(band_x[-1], expected_outer_edge[0])
+    np.testing.assert_allclose(band_y[-1], expected_outer_edge[1])
+    np.testing.assert_allclose(band_z[-1], expected_outer_edge[2])
 
 
 def test_build_detector_app_seeds_inputs_and_figure_from_initial_values():

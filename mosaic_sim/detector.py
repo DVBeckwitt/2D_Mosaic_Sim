@@ -24,6 +24,9 @@ from .common import (
 )
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import (
+    EWALD_LAYER_MAX_OPACITY,
+    EWALD_LAYER_MIN_OPACITY,
+    ewald_bandwidth_k_bounds,
     ewald_bandwidth_layers,
     intersection_circle,
     normalize_wavelength_bandwidth_pct,
@@ -40,6 +43,8 @@ DEFAULT_GAMMA_DEG = 5.0
 DEFAULT_ETA = 0.5
 DEFAULT_THETA_DEG = 5.0
 DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 0.0
+SPECIAL_CAUSE_DEFAULT_L = 3
+SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 5.0
 THETA_MIN_DEG = 5.0
 THETA_MAX_DEG = 30.0
 DEFAULT_HOST = "127.0.0.1"
@@ -58,6 +63,8 @@ K_VECTOR_CONE_SIZE = 0.28
 K_VECTOR_LABEL_SCALE = 1.1
 K_VECTOR_LABEL_SIZE = 24
 THETA_LABEL_SIZE = 24
+SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES = 25
+SPECIAL_CAUSE_OVERLAP_BAND_POINTS = 200
 
 
 @dataclass(frozen=True)
@@ -580,13 +587,13 @@ def build_detector_companion_figure(
 def build_special_cause_reciprocal_figure(
     H: int = DEFAULT_H,
     K: int = DEFAULT_K,
-    L: int = DEFAULT_L,
+    L: int = SPECIAL_CAUSE_DEFAULT_L,
     sigma: float = np.deg2rad(DEFAULT_SIGMA_DEG),
     Gamma: float | None = None,
     eta: float = DEFAULT_ETA,
     *,
     gamma: float | None = None,
-    wavelength_bandwidth_pct: float | None = DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    wavelength_bandwidth_pct: float | None = SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     theta_i: float = np.deg2rad(DEFAULT_THETA_DEG),
     camera: dict[str, Any] | None = None,
 ) -> go.Figure:
@@ -599,7 +606,7 @@ def build_special_cause_reciprocal_figure(
     )
     wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
         wavelength_bandwidth_pct,
-        default=DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+        default=SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     )
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     g_mag = 2.0 * math.pi / d_hkl
@@ -609,7 +616,6 @@ def build_special_cause_reciprocal_figure(
         np.linspace(0.0, math.pi, 100),
         np.linspace(0.0, 2.0 * math.pi, 200),
     )
-    ewald_layers = ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct)
     bragg_x, bragg_y, bragg_z = sphere(g_mag, phi, theta)
     bragg_surface_intensity = mosaic_intensity(
         bragg_x,
@@ -637,12 +643,12 @@ def build_special_cause_reciprocal_figure(
         )
     )
 
-    for layer in ewald_layers:
+    def add_ewald_surface(k_mag: float, opacity: float, name: str) -> None:
         ewald_x, ewald_y, ewald_z = sphere(
-            layer.k_mag,
+            k_mag,
             phi,
             theta,
-            (0.0, layer.k_mag, 0.0),
+            (0.0, k_mag, 0.0),
         )
         ewald_x, ewald_y, ewald_z = rot_x(ewald_x, ewald_y, ewald_z, theta_i)
         fig.add_trace(
@@ -650,32 +656,79 @@ def build_special_cause_reciprocal_figure(
                 x=ewald_x,
                 y=ewald_y,
                 z=ewald_z,
-                opacity=layer.opacity,
+                opacity=opacity,
                 colorscale="Blues",
                 showscale=False,
                 showlegend=False,
-                name="Ewald sphere",
+                name=name,
             )
         )
 
-        ring_x, ring_y, ring_z = intersection_circle(
-            g_mag,
-            layer.k_mag,
-            layer.k_mag,
-        )
-        ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
-        fig.add_trace(
-            go.Scatter3d(
-                x=ring_x,
-                y=ring_y,
-                z=ring_z,
-                mode="lines",
-                opacity=layer.opacity,
-                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
-                showlegend=False,
-                name="Bragg/Ewald overlap",
+    if wavelength_bandwidth_pct == 0.0:
+        for layer in ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct):
+            add_ewald_surface(layer.k_mag, layer.opacity, "Ewald sphere")
+
+            ring_x, ring_y, ring_z = intersection_circle(
+                g_mag,
+                layer.k_mag,
+                layer.k_mag,
             )
-        )
+            ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
+            fig.add_trace(
+                go.Scatter3d(
+                    x=ring_x,
+                    y=ring_y,
+                    z=ring_z,
+                    mode="lines",
+                    opacity=layer.opacity,
+                    line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                    showlegend=False,
+                    name="Bragg/Ewald overlap",
+                )
+            )
+    else:
+        k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, wavelength_bandwidth_pct)
+        for name, k_mag, opacity in (
+            ("Ewald shell inner", k_min, EWALD_LAYER_MIN_OPACITY),
+            ("Ewald shell outer", k_max, EWALD_LAYER_MAX_OPACITY),
+        ):
+            add_ewald_surface(k_mag, opacity, name)
+
+        band_rows: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+        for k_mag in np.linspace(k_min, k_max, SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES):
+            ring_x, ring_y, ring_z = intersection_circle(
+                g_mag,
+                k_mag,
+                k_mag,
+                npts=SPECIAL_CAUSE_OVERLAP_BAND_POINTS,
+            )
+            if ring_x.size == 0:
+                continue
+            ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
+            band_rows.append((ring_x, ring_y, ring_z))
+
+        if len(band_rows) >= 2:
+            band_x = np.vstack([row[0] for row in band_rows])
+            band_y = np.vstack([row[1] for row in band_rows])
+            band_z = np.vstack([row[2] for row in band_rows])
+            band_color = np.repeat(
+                np.linspace(0.0, 1.0, len(band_rows))[:, np.newaxis],
+                band_x.shape[1],
+                axis=1,
+            )
+            fig.add_trace(
+                go.Surface(
+                    x=band_x,
+                    y=band_y,
+                    z=band_z,
+                    surfacecolor=band_color,
+                    opacity=0.65,
+                    colorscale="Greens",
+                    showscale=False,
+                    showlegend=False,
+                    name="Bragg/Ewald overlap band",
+                )
+            )
 
     k_head = np.array(
         rot_x(np.array([0.0]), np.array([K_MAG]), np.array([0.0]), theta_i),

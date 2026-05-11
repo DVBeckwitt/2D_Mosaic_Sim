@@ -57,12 +57,12 @@ pip install -e .
 
 Status date: 2026-05-10
 
-- Feature: `Special Cause Reciprocal` is implemented in the unified GUI. It renders the Cu-K alpha Ewald sphere, Bi2Se3 Bragg sphere, and Bragg/Ewald overlap as a one-panel reciprocal-space view using the same HKL, `theta_i`, `σ`, `Γ`, and `η` controls as `Mosaic View`.
-- Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. The default `0.0` keeps the previous monochromatic behavior.
-- Bug/error status: no application runtime error is known for the new mode. Browser smoke testing found only Chromium/Plotly graphics warnings and expected Dash `PreventUpdate` responses during camera-state callbacks.
-- Migration status: no existing mode or CLI argument was removed. Existing scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied.
+- Feature: `Special Cause Reciprocal` is implemented in the unified GUI. It renders the Cu-K alpha Ewald shell, Bi2Se3 Bragg sphere, and continuous Bragg/Ewald overlap band as a one-panel reciprocal-space view using the same HKL, `theta_i`, `σ`, `Γ`, and `η` controls as `Mosaic View`. Its defaults are `theta_i = 5°`, `(H,K,L) = (0,0,3)`, and `λ bandwidth (%) = 5.0`.
+- Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. Special-cause reciprocal uses the bandwidth as a hollow Ewald shell; mosaic detector and fibrous views keep the sampled layer-stack rendering. The default `0.0` keeps the previous monochromatic behavior in mosaic detector and fibrous views.
+- Bug/error status: no application runtime error is known for the new mode. Runtime Dash endpoint smoke testing verified the default `5%` shell/band path and the explicit `0%` monochromatic fallback.
+- Migration status: no existing mode or CLI argument was removed. Existing detector/fibrous scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied. Direct callers of `build_special_cause_reciprocal_figure()` now get the special-case `(0,0,3)` / `5%` default; pass `L=12, wavelength_bandwidth_pct=0.0` for the old direct-call default view.
 - CI status: GitHub Actions now runs install, `pip check`, compile, tests, and package build on pull requests and pushes to `main`.
-- Shipping status: local full test suite passes; rollback is a normal git revert of this feature commit.
+- Shipping status: local `pip check`, compile, full test suite, and package build pass; rollback is a normal git revert of this feature commit.
 
 ## Usage
 
@@ -71,7 +71,7 @@ Run scripts from the project root:
 ```bash
 python mosaic_simulator.py                                          # unified GUI for the supported simulations
 python mosaic_simulator.py --mode specular-view                     # open the unified GUI directly in Specular Diffraction mode
-python mosaic_simulator.py --mode special-cause-reciprocal          # one-panel Cu-Kα/Bi2Se3 reciprocal-space overlap view
+python mosaic_simulator.py --mode special-cause-reciprocal          # one-panel Cu-Kα/Bi2Se3 reciprocal-space overlap view, defaulting to theta_i=5°, (0,0,3), and 5% bandwidth
 python single_crystal_powder_cylinder_viewer.py                # single-crystal / 3D powder / 2D powder / cylinder views
 python single_crystal_powder_cylinder_viewer.py --full-quality # higher quality render profile
 python detector_mosaic_ewald_view.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0.5  # launches the detector Dash UI with live HKL/mosaic controls
@@ -91,7 +91,7 @@ The unified GUI includes these switchable modes in one Dash app:
 - `Ewald Cylinder`
 - `Specular Diffraction`
 
-`Special Cause Reciprocal` is the reciprocal-space panel of the mosaic detector geometry by itself. It uses the Cu-Kα Ewald sphere size, the Bi2Se3 `d_hex(H,K,L)` Bragg-sphere size, and the Bragg/Ewald intersection with the same HKL, `theta_i`, `σ`, `Γ`, `η`, and `λ bandwidth (%)` controls as `Mosaic View`.
+`Special Cause Reciprocal` is the reciprocal-space panel of the mosaic detector geometry by itself. It uses the Cu-Kα Ewald sphere size, the Bi2Se3 `d_hex(H,K,L)` Bragg-sphere size, and the Bragg/Ewald intersection with the same HKL, `theta_i`, `σ`, `Γ`, `η`, and `λ bandwidth (%)` controls as `Mosaic View`. This mode opens at `theta_i = 5°` on the `(0,0,3)` peak with `5%` bandwidth by default.
 
 ### Specular Diffraction notes
 

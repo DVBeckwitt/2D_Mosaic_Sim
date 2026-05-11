@@ -46,6 +46,8 @@ from specular_reflection_sim import (
 from .cylinder import build_cylinder_figure, normalize_cylinder_params
 from .detector import (
     DEFAULT_THETA_DEG,
+    SPECIAL_CAUSE_DEFAULT_L,
+    SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     THETA_MAX_DEG,
     THETA_MIN_DEG,
     build_detector_figure,
@@ -71,6 +73,7 @@ DEFAULT_MODE = "reciprocal-space"
 DEFAULT_POWDER_VIEW = "single-crystal"
 SPECULAR_MODE = "specular-view"
 SPECIAL_CAUSE_RECIPROCAL_MODE = "special-cause-reciprocal"
+SPECIAL_CAUSE_DEFAULT_THETA_I_DEG = 5.0
 POWDER_SPHERE_SELECTION_KEY = "sphere_selection"
 POWDER_RING_SELECTION_KEY = "ring_selection"
 POWDER_CYLINDER_SELECTION_KEY = "cylinder_selection"
@@ -593,11 +596,16 @@ def _message_figure(title: str, message: str) -> go.Figure:
     return fig
 
 
-def _hkl_controls(*, hybrid_mosaic_params: bool = False) -> tuple[ControlSpec, ...]:
+def _hkl_controls(
+    *,
+    hybrid_mosaic_params: bool = False,
+    default_L: int = 12,
+    default_wavelength_bandwidth_pct: float = 0.0,
+) -> tuple[ControlSpec, ...]:
     base_controls = (
         ControlSpec("H", "H", "number", 0, step=1),
         ControlSpec("K", "K", "number", 0, step=1),
-        ControlSpec("L", "L", "number", 12, step=1),
+        ControlSpec("L", "L", "number", default_L, step=1),
     )
     if hybrid_mosaic_params:
         return base_controls + (
@@ -635,7 +643,7 @@ def _hkl_controls(*, hybrid_mosaic_params: bool = False) -> tuple[ControlSpec, .
                 "wavelength_bandwidth_pct",
                 "λ bandwidth (%)",
                 "slider_input",
-                0.0,
+                default_wavelength_bandwidth_pct,
                 step=0.01,
                 min=0.0,
                 max=5.0,
@@ -646,22 +654,38 @@ def _hkl_controls(*, hybrid_mosaic_params: bool = False) -> tuple[ControlSpec, .
         ControlSpec("sigma_deg", "σ (deg)", "number", 0.8, step=0.1, min=0.0),
         ControlSpec("Gamma_deg", "Γ (deg)", "number", 5.0, step=0.1, min=0.0),
         ControlSpec("eta", "η", "number", 0.5, step=0.05, min=0.0, max=1.0),
-        ControlSpec("wavelength_bandwidth_pct", "λ bandwidth (%)", "number", 0.0, step=0.01, min=0.0),
+        ControlSpec(
+            "wavelength_bandwidth_pct",
+            "λ bandwidth (%)",
+            "number",
+            default_wavelength_bandwidth_pct,
+            step=0.01,
+            min=0.0,
+        ),
     )
 
 
-def _mosaic_theta_hkl_controls() -> tuple[ControlSpec, ...]:
+def _mosaic_theta_hkl_controls(
+    *,
+    default_theta_i_deg: float = DEFAULT_THETA_DEG,
+    default_L: int = 12,
+    default_wavelength_bandwidth_pct: float = 0.0,
+) -> tuple[ControlSpec, ...]:
     return (
         ControlSpec(
             "theta_i_deg",
             "θᵢ (deg)",
             "slider",
-            DEFAULT_THETA_DEG,
+            default_theta_i_deg,
             step=0.25,
             min=THETA_MIN_DEG,
             max=THETA_MAX_DEG,
         ),
-        *_hkl_controls(hybrid_mosaic_params=True),
+        *_hkl_controls(
+            hybrid_mosaic_params=True,
+            default_L=default_L,
+            default_wavelength_bandwidth_pct=default_wavelength_bandwidth_pct,
+        ),
     )
 
 
@@ -1452,7 +1476,11 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
             "One-panel physical reciprocal-space view of the Cu-Kα Ewald sphere, "
             "Bi2Se3 Bragg sphere, and their mosaic-weighted overlap."
         ),
-        controls=_mosaic_theta_hkl_controls(),
+        controls=_mosaic_theta_hkl_controls(
+            default_theta_i_deg=SPECIAL_CAUSE_DEFAULT_THETA_I_DEG,
+            default_L=SPECIAL_CAUSE_DEFAULT_L,
+            default_wavelength_bandwidth_pct=SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+        ),
         build_figure=_build_special_cause_reciprocal_adapter,
     ),
     "fibrous-view": SimulationSpec(

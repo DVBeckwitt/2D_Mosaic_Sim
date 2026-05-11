@@ -1,4 +1,4 @@
-# ADR-001: Special Cause Reciprocal Mode and Ewald Bandwidth Sampling
+# ADR-001: Special Cause Reciprocal Mode and Ewald Bandwidth Rendering
 
 ## Status
 Accepted
@@ -14,7 +14,9 @@ The detector and fibrous views also need an optional way to visualize finite Ewa
 ## Decision
 Add `special-cause-reciprocal` as a unified-app mode backed by `build_special_cause_reciprocal_figure`.
 
-Use one shared `wavelength_bandwidth_pct` parameter for detector and fibrous Ewald layer stacks. The default remains `0.0`, which returns the original single-Ewald-sphere behavior. Non-zero values render an odd stack of sampled Ewald layers with the central wavelength at the highest opacity.
+Use one shared `wavelength_bandwidth_pct` parameter for detector, special-cause reciprocal, and fibrous Ewald spread. The base detector and fibrous views keep the sampled Ewald layer stack. `special-cause-reciprocal` renders non-zero bandwidth as a continuous hollow Ewald shell bounded by the minimum and maximum `k = 2π / λ` radii, with a Bragg/Ewald overlap surface spanning the valid intersections across that interval.
+
+The default remains `0.0` for existing detector/fibrous behavior. The special-cause reciprocal mode and its public figure builder default to `theta_i_deg=5.0`, `(H,K,L)=(0,0,3)`, and `wavelength_bandwidth_pct=5.0`.
 
 ## Alternatives Considered
 
@@ -35,9 +37,10 @@ Use one shared `wavelength_bandwidth_pct` parameter for detector and fibrous Ewa
 
 ## Consequences
 - `Special Cause Reciprocal` shares HKL, incidence angle, `sigma`, `Gamma`, `eta`, and wavelength bandwidth controls with `Mosaic View`.
+- `Special Cause Reciprocal` defaults to `theta_i_deg=5.0`, the `(0,0,3)` peak, and `wavelength_bandwidth_pct=5.0` in both the unified GUI and direct `build_special_cause_reciprocal_figure()` calls.
 - The public Python API adds `build_special_cause_reciprocal_figure`.
-- `wavelength_bandwidth_pct=0.0` is the migration path for existing users; no existing script arguments need to change.
-- Larger non-zero bandwidth values increase Plotly payload size because they add Ewald surfaces and overlap traces.
+- `wavelength_bandwidth_pct=0.0` is the migration path for monochromatic rendering. Direct callers can pass `L=12, wavelength_bandwidth_pct=0.0` to reproduce the previous helper default.
+- Larger non-zero bandwidth values increase Plotly payload size because they add Ewald shell surfaces and the continuous overlap band.
 
 ## Verification
 - `python -m pytest -q`

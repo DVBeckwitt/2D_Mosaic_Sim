@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 from mosaic_sim.constants import K_MAG
 from mosaic_sim.intensity import cap_intensity, belt_intensity, mosaic_intensity
-from mosaic_sim.geometry import ewald_bandwidth_layers, normalize_wavelength_bandwidth_pct, sphere
+from mosaic_sim.geometry import (
+    ewald_bandwidth_k_bounds,
+    ewald_bandwidth_layers,
+    normalize_wavelength_bandwidth_pct,
+    sphere,
+)
 
 
 def test_cap_normalisation():
@@ -104,3 +109,18 @@ def test_ewald_bandwidth_layers_sample_odd_stack_with_central_max_opacity():
     assert opacities[-1] < opacities[-2] < opacities[center]
     for layer in layers:
         assert layer.k_mag == pytest.approx(K_MAG / (1.0 + layer.relative_wavelength_offset))
+
+
+def test_ewald_bandwidth_k_bounds_zero_bandwidth_returns_central_radius():
+    k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 0.0)
+
+    assert k_min == pytest.approx(K_MAG)
+    assert k_max == pytest.approx(K_MAG)
+
+
+def test_ewald_bandwidth_k_bounds_returns_ordered_shell_radii():
+    k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 5.0)
+
+    assert k_min == pytest.approx(K_MAG / 1.025)
+    assert k_max == pytest.approx(K_MAG / 0.975)
+    assert k_min < K_MAG < k_max

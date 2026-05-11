@@ -166,8 +166,9 @@ def test_build_unified_figure_uses_special_cause_reciprocal_mode():
 
     assert "HKL = (0, 0, 12)" in fig.layout.title.text
     assert any(trace.name == "Bragg sphere" for trace in fig.data)
-    assert any(trace.name == "Ewald sphere" for trace in fig.data)
-    assert any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+    assert any(trace.name == "Ewald shell inner" for trace in fig.data)
+    assert any(trace.name == "Ewald shell outer" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
     assert not any(trace.type == "scatter" for trace in fig.data)
 
 
@@ -362,16 +363,21 @@ def test_unified_special_cause_reciprocal_controls_are_grouped_for_browser_scann
     companion_card = _specular_companion_card(app)
 
     assert mode_selector.value == "special-cause-reciprocal"
-    assert "HKL = (0, 0, 12)" in graph.figure.layout.title.text
+    assert "HKL = (0, 0, 3)" in graph.figure.layout.title.text
+    assert "λ bandwidth = 5.00%" in graph.figure.layout.title.text
     assert _control_section_titles(app) == ["Incident Angle", "Reflection", "Mosaic Envelope"]
+    assert _find_component_by_id(
+        _control_section(app, "Reflection"),
+        {"type": "simulation-control", "key": "L"},
+    ).value == 3
     assert _find_component_by_id(
         _control_section(app, "Incident Angle"),
         {"type": "simulation-control", "key": "theta_i_deg"},
-    ) is not None
+    ).value == pytest.approx(5.0)
     assert _find_component_by_id(
         _control_section(app, "Mosaic Envelope"),
         {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"},
-    ) is not None
+    ).value == pytest.approx(5.0)
     assert summary.style.get("display") == "none"
     assert companion_card.style.get("display") == "none"
 

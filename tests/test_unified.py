@@ -76,8 +76,16 @@ def test_build_unified_figure_uses_special_cause_reciprocal_mode():
     assert "λ bandwidth = 1.00%" in fig.layout.title.text
     assert len(fig.frames) == 0
     assert any(trace.name == "Bragg sphere" for trace in fig.data)
-    assert any(trace.name == "Ewald sphere" for trace in fig.data)
-    assert any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+    assert any(trace.name == "Ewald shell inner" for trace in fig.data)
+    assert any(trace.name == "Ewald shell outer" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
+
+
+def test_build_unified_figure_uses_special_cause_reciprocal_defaults():
+    fig = build_unified_figure(mode="special-cause-reciprocal")
+
+    assert "HKL = (0, 0, 3)" in fig.layout.title.text
+    assert "λ bandwidth = 5.00%" in fig.layout.title.text
 
 
 def test_build_unified_figure_detector_invalid_wavelength_bandwidth_returns_message():
