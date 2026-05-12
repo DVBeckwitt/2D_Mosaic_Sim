@@ -50,6 +50,10 @@ def _trace_by_name(fig, name: str):
     return next(trace for trace in fig.data if getattr(trace, "name", "") == name)
 
 
+def _traces_by_name(fig, name: str):
+    return [trace for trace in fig.data if getattr(trace, "name", "") == name]
+
+
 def test_normalize_detector_params_uses_defaults_and_converts_units():
     params = normalize_detector_params(
         defaults=(1, 2, 3, 0.9, 4.1, 0.25),
@@ -361,6 +365,7 @@ def test_build_special_cause_reciprocal_figure_uses_physical_bragg_and_ewald_geo
 
 def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_bandwidth():
     fig = detector_module.build_special_cause_reciprocal_figure()
+    layers = ewald_bandwidth_layers(K_MAG, 5.0)
 
     assert "HKL = (0, 0, 3)" in fig.layout.title.text
     assert "λ bandwidth = 5.00%" in fig.layout.title.text
@@ -368,7 +373,7 @@ def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_ba
     assert any(trace.name == "Ewald shell outer" for trace in fig.data)
     assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
     assert not any(trace.name == "Ewald sphere" for trace in fig.data)
-    assert not any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+    assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == len(layers)
 
 
 def test_build_special_cause_reciprocal_figure_uses_uniform_opaque_traces():
@@ -482,7 +487,6 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_band():
         wavelength_bandwidth_pct=5.0,
     )
 
-    assert [trace.name for trace in fig.data].count("Bragg/Ewald overlap") == 0
     band_trace = _trace_by_name(fig, "Bragg/Ewald overlap band")
     band_x = np.asarray(band_trace.x, dtype=float)
     band_y = np.asarray(band_trace.y, dtype=float)
@@ -513,6 +517,43 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_band():
     np.testing.assert_allclose(band_x[-1], expected_outer_edge[0])
     np.testing.assert_allclose(band_y[-1], expected_outer_edge[1])
     np.testing.assert_allclose(band_z[-1], expected_outer_edge[2])
+
+
+def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_lines():
+    theta_i = np.deg2rad(12.0)
+    fig = detector_module.build_special_cause_reciprocal_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+        theta_i=theta_i,
+        wavelength_bandwidth_pct=5.0,
+    )
+
+    layers = ewald_bandwidth_layers(K_MAG, 5.0)
+    overlap_traces = _traces_by_name(fig, "Bragg/Ewald overlap")
+
+    assert len(overlap_traces) == len(layers)
+    assert {trace.type for trace in overlap_traces} == {"scatter3d"}
+    assert {trace.mode for trace in overlap_traces} == {"lines"}
+    assert {trace.opacity for trace in overlap_traces} == {1.0}
+
+    d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
+    g_mag = 2.0 * math.pi / d_hkl
+    edge_pairs = (
+        (layers[0], overlap_traces[0]),
+        (layers[-1], overlap_traces[-1]),
+    )
+    for layer, trace in edge_pairs:
+        expected_overlap = rot_x(
+            *intersection_circle(g_mag, layer.k_mag, layer.k_mag),
+            theta_i,
+        )
+        np.testing.assert_allclose(np.asarray(trace.x, dtype=float), expected_overlap[0])
+        np.testing.assert_allclose(np.asarray(trace.y, dtype=float), expected_overlap[1])
+        np.testing.assert_allclose(np.asarray(trace.z, dtype=float), expected_overlap[2])
 
 
 def test_build_detector_app_seeds_inputs_and_figure_from_initial_values():

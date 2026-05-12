@@ -664,28 +664,31 @@ def build_special_cause_reciprocal_figure(
             )
         )
 
-    if wavelength_bandwidth_pct == 0.0:
-        for layer in ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct):
-            add_ewald_surface(layer.k_mag, "Ewald sphere")
+    def add_overlap_line(k_mag: float) -> None:
+        ring_x, ring_y, ring_z = intersection_circle(
+            g_mag,
+            k_mag,
+            k_mag,
+        )
+        ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
+        fig.add_trace(
+            go.Scatter3d(
+                x=ring_x,
+                y=ring_y,
+                z=ring_z,
+                mode="lines",
+                opacity=SPECIAL_CAUSE_TRACE_OPACITY,
+                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                showlegend=False,
+                name="Bragg/Ewald overlap",
+            )
+        )
 
-            ring_x, ring_y, ring_z = intersection_circle(
-                g_mag,
-                layer.k_mag,
-                layer.k_mag,
-            )
-            ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
-            fig.add_trace(
-                go.Scatter3d(
-                    x=ring_x,
-                    y=ring_y,
-                    z=ring_z,
-                    mode="lines",
-                    opacity=SPECIAL_CAUSE_TRACE_OPACITY,
-                    line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
-                    showlegend=False,
-                    name="Bragg/Ewald overlap",
-                )
-            )
+    ewald_layers = ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct)
+    if wavelength_bandwidth_pct == 0.0:
+        for layer in ewald_layers:
+            add_ewald_surface(layer.k_mag, "Ewald sphere")
+            add_overlap_line(layer.k_mag)
     else:
         k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, wavelength_bandwidth_pct)
         for name, k_mag in (
@@ -729,6 +732,9 @@ def build_special_cause_reciprocal_figure(
                     name="Bragg/Ewald overlap band",
                 )
             )
+
+        for layer in ewald_layers:
+            add_overlap_line(layer.k_mag)
 
     k_head = np.array(
         rot_x(np.array([0.0]), np.array([K_MAG]), np.array([0.0]), theta_i),

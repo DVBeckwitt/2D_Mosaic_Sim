@@ -55,17 +55,17 @@ pip install -e .
 
 ## Project Status
 
-Status date: 2026-05-11
+Status date: 2026-05-12
 
-- Feature: `Special Cause Reciprocal` is implemented in the unified GUI. It renders the Cu-K alpha Ewald shell, Bi2Se3 Bragg sphere, and continuous Bragg/Ewald overlap band as a one-panel reciprocal-space view using the same HKL, `theta_i`, `σ`, `Γ`, and `η` controls as `Mosaic View`. Its defaults are `theta_i = 5°`, `(H,K,L) = (0,0,3)`, and `λ bandwidth (%) = 5.0`.
-- Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. Special-cause reciprocal uses the bandwidth as a hollow Ewald shell; mosaic detector and fibrous views keep the sampled layer-stack rendering. The default `0.0` keeps the previous monochromatic behavior in mosaic detector and fibrous views.
+- Feature: `Special Cause Reciprocal` is implemented in the unified GUI. It renders the Cu-K alpha Ewald shell, Bi2Se3 Bragg sphere, continuous Bragg/Ewald overlap band, and sampled green Bragg/Ewald overlap lines as a one-panel reciprocal-space view using the same HKL, `theta_i`, `σ`, `Γ`, and `η` controls as `Mosaic View`. Its defaults are `theta_i = 5°`, `(H,K,L) = (0,0,3)`, and `λ bandwidth (%) = 5.0`.
+- Feature: finite Ewald wavelength spread is available through `λ bandwidth (%)` for mosaic detector, special-cause reciprocal, and fibrous views. Special-cause reciprocal uses the bandwidth as a hollow Ewald shell plus one green Bragg/Ewald overlap line per sampled bandwidth layer; mosaic detector and fibrous views keep the sampled layer-stack rendering. The default `0.0` keeps the previous monochromatic behavior in mosaic detector and fibrous views.
 - Feature: unified GUI navigation has been refreshed. The mode picker now uses styled full-width choices on small screens, the powder peak filters use shared CSS classes instead of inline style dictionaries, and inactive powder peak selector cards are no longer constructed.
 - Feature: special-cause reciprocal rendering now uses uniform opaque geometry traces and an RGB Bragg colorscale so the shell/band surfaces render consistently in Plotly.
-- Browser runtime status: local Dash/Chromium verification covered all unified GUI modes, all powder submodes, desktop layout, and 390px mobile layout. The mobile mode picker rendered one full-width column with no horizontal overflow.
-- Bug/error status: no current application runtime error is known for these changes. A browser-test harness timeout was localized to the harness reading Dash radio input `value` attributes, which render as `on` in the live DOM; the app had already switched modes correctly. Corrected browser checks found no page errors and no HTTP `>=400` responses. Console output only showed expected Plotly/Chromium Canvas2D/WebGL performance warnings.
-- Migration status: no existing mode, CLI argument, console entry point, or public Dash component ID was removed. Existing detector/fibrous scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied. Direct callers of `build_special_cause_reciprocal_figure()` still use the special-case `(0,0,3)` / `5%` default; pass `L=12, wavelength_bandwidth_pct=0.0` for the old direct-call default view.
+- Browser runtime status: local Dash/Chromium verification confirms `Special Cause Reciprocal` at `λ bandwidth = 5.00%` now renders seven live green `Bragg/Ewald overlap` line traces, one overlap band, and the inner/outer shell traces with no failed requests and no HTTP `>=400` responses. Console output only showed expected Plotly/Chromium Canvas2D/WebGL performance warnings.
+- Bug/error status: fixed the non-zero special-cause bandwidth bug where the green Bragg/Ewald intersection did not widen into sampled overlap lines for each Ewald bandwidth layer. No current application runtime error is known for this change.
+- Migration status: no existing mode, CLI argument, console entry point, public Python function signature, or public Dash component ID was removed. Existing detector/fibrous scripts keep their previous behavior unless `--wavelength-bandwidth-pct` is supplied. Direct callers of `build_special_cause_reciprocal_figure()` still use the special-case `(0,0,3)` / `5%` default; pass `L=12, wavelength_bandwidth_pct=0.0` for the old direct-call default view.
 - CI status: GitHub Actions runs install, `pip check`, compile, tests, and package build on pull requests and pushes to `main` across Python 3.11 and 3.13.
-- Shipping status: local `pip check`, compile, full test suite, package build, browser smoke testing, and diff whitespace checks pass for this update; rollback is a normal git revert of this feature commit.
+- Shipping status: local `pip check`, detector tests, full test suite, compile, package build, browser runtime verification, and diff whitespace checks pass for this update; rollback is a normal git revert of this bug-fix commit.
 
 ## Usage
 
@@ -94,7 +94,7 @@ The unified GUI includes these switchable modes in one Dash app:
 - `Ewald Cylinder`
 - `Specular Diffraction`
 
-`Special Cause Reciprocal` is the reciprocal-space panel of the mosaic detector geometry by itself. It uses the Cu-Kα Ewald sphere size, the Bi2Se3 `d_hex(H,K,L)` Bragg-sphere size, and the Bragg/Ewald intersection with the same HKL, `theta_i`, `σ`, `Γ`, `η`, and `λ bandwidth (%)` controls as `Mosaic View`. This mode opens at `theta_i = 5°` on the `(0,0,3)` peak with `5%` bandwidth by default.
+`Special Cause Reciprocal` is the reciprocal-space panel of the mosaic detector geometry by itself. It uses the Cu-Kα Ewald sphere size, the Bi2Se3 `d_hex(H,K,L)` Bragg-sphere size, and the Bragg/Ewald intersection with the same HKL, `theta_i`, `σ`, `Γ`, `η`, and `λ bandwidth (%)` controls as `Mosaic View`. With non-zero bandwidth, it shows the hollow Ewald shell, the continuous overlap band, and one green overlap line for each sampled Ewald layer. This mode opens at `theta_i = 5°` on the `(0,0,3)` peak with `5%` bandwidth by default.
 
 ### Specular Diffraction notes
 
