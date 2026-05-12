@@ -89,6 +89,28 @@ def test_build_unified_figure_uses_special_cause_reciprocal_mode():
     assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
 
 
+def test_build_unified_figure_uses_special_cause_ewald_shell_sample_count():
+    fig = build_unified_figure(
+        mode="special-cause-reciprocal",
+        wavelength_bandwidth_pct=5.0,
+        ewald_shell_sample_count=13,
+    )
+
+    overlap_traces = [trace for trace in fig.data if trace.name == "Bragg/Ewald overlap"]
+
+    assert len(overlap_traces) == 13
+
+
+def test_build_unified_figure_rejects_invalid_special_cause_ewald_shell_sample_count():
+    fig = build_unified_figure(
+        mode="special-cause-reciprocal",
+        wavelength_bandwidth_pct=5.0,
+        ewald_shell_sample_count=4,
+    )
+
+    assert "ewald_shell_sample_count" in fig.layout.annotations[0].text
+
+
 def test_build_unified_figure_uses_special_cause_reciprocal_defaults():
     fig = build_unified_figure(mode="special-cause-reciprocal")
 

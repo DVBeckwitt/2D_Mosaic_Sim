@@ -381,6 +381,24 @@ def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_ba
     assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == len(layers)
 
 
+def test_build_special_cause_reciprocal_figure_uses_requested_ewald_shell_sample_count():
+    fig = detector_module.build_special_cause_reciprocal_figure(
+        wavelength_bandwidth_pct=5.0,
+        ewald_shell_sample_count=13,
+    )
+
+    assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == 13
+
+
+@pytest.mark.parametrize("sample_count", [2, 4, 102, 3.5, "many"])
+def test_build_special_cause_reciprocal_figure_rejects_invalid_ewald_shell_sample_count(sample_count):
+    with pytest.raises(ValueError, match="ewald_shell_sample_count"):
+        detector_module.build_special_cause_reciprocal_figure(
+            wavelength_bandwidth_pct=5.0,
+            ewald_shell_sample_count=sample_count,
+        )
+
+
 def test_build_special_cause_reciprocal_figure_uses_transparent_surfaces_and_opaque_intersections():
     fig = detector_module.build_special_cause_reciprocal_figure()
 

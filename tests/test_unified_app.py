@@ -373,7 +373,7 @@ def test_unified_special_cause_reciprocal_controls_are_grouped_for_browser_scann
     assert mode_selector.value == "special-cause-reciprocal"
     assert "HKL = (0, 0, 3)" in graph.figure.layout.title.text
     assert "λ bandwidth = 5.00%" in graph.figure.layout.title.text
-    assert _control_section_titles(app) == ["Incident Angle", "Reflection", "Mosaic Envelope"]
+    assert _control_section_titles(app) == ["Incident Angle", "Reflection", "Mosaic Envelope", "Ewald Sampling"]
     assert _find_component_by_id(
         _control_section(app, "Reflection"),
         {"type": "simulation-control", "key": "L"},
@@ -386,6 +386,16 @@ def test_unified_special_cause_reciprocal_controls_are_grouped_for_browser_scann
         _control_section(app, "Mosaic Envelope"),
         {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"},
     ).value == pytest.approx(5.0)
+    sample_input = _find_component_by_id(
+        _control_section(app, "Ewald Sampling"),
+        {"type": "simulation-control", "key": "ewald_shell_sample_count"},
+    )
+    assert isinstance(sample_input, dcc.Input)
+    assert sample_input.type == "number"
+    assert sample_input.value == 7
+    assert sample_input.step == 2
+    assert sample_input.min == 3
+    assert sample_input.max == 101
     assert summary.style.get("display") == "none"
     assert companion_card.style.get("display") == "none"
 
@@ -496,6 +506,23 @@ def test_unified_wavelength_bandwidth_callbacks_preserve_state_values():
 
     assert detector_state["detector-view"]["wavelength_bandwidth_pct"] == pytest.approx(1.25)
     assert fibrous_state["fibrous-view"]["wavelength_bandwidth_pct"] == pytest.approx(0.75)
+
+
+def test_unified_special_cause_ewald_sample_callback_preserves_state_value():
+    app = build_unified_app(initial_mode="special-cause-reciprocal")
+    state = app.layout.children[0].data
+
+    updated_state = _updated_mode_state(
+        "special-cause-reciprocal",
+        [13],
+        [],
+        [{"type": "simulation-control", "key": "ewald_shell_sample_count"}],
+        [],
+        state,
+        {"type": "simulation-control", "key": "ewald_shell_sample_count"},
+    )
+
+    assert updated_state["special-cause-reciprocal"]["ewald_shell_sample_count"] == 13
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():

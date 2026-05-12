@@ -46,7 +46,10 @@ from specular_reflection_sim import (
 from .cylinder import build_cylinder_figure, normalize_cylinder_params
 from .detector import (
     DEFAULT_THETA_DEG,
+    SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT,
     SPECIAL_CAUSE_DEFAULT_L,
+    SPECIAL_CAUSE_MAX_EWALD_SHELL_SAMPLE_COUNT,
+    SPECIAL_CAUSE_MIN_EWALD_SHELL_SAMPLE_COUNT,
     SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     THETA_MAX_DEG,
     THETA_MIN_DEG,
@@ -691,10 +694,31 @@ def _mosaic_theta_hkl_controls(
     )
 
 
+def _special_cause_reciprocal_controls() -> tuple[ControlSpec, ...]:
+    return _mosaic_theta_hkl_controls(
+        default_theta_i_deg=SPECIAL_CAUSE_DEFAULT_THETA_I_DEG,
+        default_L=SPECIAL_CAUSE_DEFAULT_L,
+        default_wavelength_bandwidth_pct=SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    ) + (
+        ControlSpec(
+            "ewald_shell_sample_count",
+            "Ewald samples (odd)",
+            "number",
+            SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT,
+            step=2,
+            min=SPECIAL_CAUSE_MIN_EWALD_SHELL_SAMPLE_COUNT,
+            max=SPECIAL_CAUSE_MAX_EWALD_SHELL_SAMPLE_COUNT,
+        ),
+    )
+
+
 _MOSAIC_CONTROL_SECTIONS = (
     ("Incident Angle", ("theta_i_deg",)),
     ("Reflection", ("H", "K", "L")),
     ("Mosaic Envelope", ("sigma_deg", "Gamma_deg", "eta", "wavelength_bandwidth_pct")),
+)
+_SPECIAL_CAUSE_CONTROL_SECTIONS = _MOSAIC_CONTROL_SECTIONS + (
+    ("Ewald Sampling", ("ewald_shell_sample_count",)),
 )
 
 
@@ -872,6 +896,7 @@ def _build_special_cause_reciprocal_adapter(values: dict[str, Any]) -> go.Figure
         return build_special_cause_reciprocal_figure(
             *params,
             wavelength_bandwidth_pct=values.get("wavelength_bandwidth_pct"),
+            ewald_shell_sample_count=values.get("ewald_shell_sample_count"),
             theta_i=math.radians(theta_deg),
         )
     except ValueError as exc:
@@ -1456,11 +1481,7 @@ SIMULATION_SPECS: dict[str, SimulationSpec] = {
             "One-panel physical reciprocal-space view of the Cu-Kα Ewald sphere, "
             "Bi2Se3 Bragg sphere, and their mosaic-weighted overlap."
         ),
-        controls=_mosaic_theta_hkl_controls(
-            default_theta_i_deg=SPECIAL_CAUSE_DEFAULT_THETA_I_DEG,
-            default_L=SPECIAL_CAUSE_DEFAULT_L,
-            default_wavelength_bandwidth_pct=SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
-        ),
+        controls=_special_cause_reciprocal_controls(),
         build_figure=_build_special_cause_reciprocal_adapter,
     ),
     "fibrous-view": SimulationSpec(
@@ -1490,7 +1511,7 @@ _NON_SPECULAR_CONTROL_SECTIONS: dict[str, tuple[tuple[str, tuple[str, ...]], ...
         ("Render", ("frames", "render_profile")),
     ),
     "detector-view": _MOSAIC_CONTROL_SECTIONS,
-    SPECIAL_CAUSE_RECIPROCAL_MODE: _MOSAIC_CONTROL_SECTIONS,
+    SPECIAL_CAUSE_RECIPROCAL_MODE: _SPECIAL_CAUSE_CONTROL_SECTIONS,
     "fibrous-view": (
         ("Reflection", ("H", "K", "L")),
         ("Mosaic Envelope", ("sigma_deg", "Gamma_deg", "eta", "wavelength_bandwidth_pct")),

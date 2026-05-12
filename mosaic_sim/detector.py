@@ -24,6 +24,7 @@ from .common import (
 )
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import (
+    EWALD_BANDWIDTH_LAYER_COUNT,
     ewald_bandwidth_k_bounds,
     ewald_bandwidth_layers,
     intersection_circle,
@@ -44,6 +45,9 @@ DEFAULT_THETA_DEG = 5.0
 DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 0.0
 SPECIAL_CAUSE_DEFAULT_L = 3
 SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 5.0
+SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT = EWALD_BANDWIDTH_LAYER_COUNT
+SPECIAL_CAUSE_MIN_EWALD_SHELL_SAMPLE_COUNT = 3
+SPECIAL_CAUSE_MAX_EWALD_SHELL_SAMPLE_COUNT = 101
 THETA_MIN_DEG = 5.0
 THETA_MAX_DEG = 30.0
 DEFAULT_HOST = "127.0.0.1"
@@ -219,6 +223,36 @@ def normalize_detector_params(
         gamma_deg=gamma_deg,
         defaults=defaults,
     ).as_tuple()
+
+
+def normalize_special_cause_ewald_shell_sample_count(
+    value: float | int | None,
+    default: int = SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT,
+) -> int:
+    """Normalize the odd sample count used for special-cause Ewald shell lines."""
+
+    raw_value = default if value is None else value
+    try:
+        count_value = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ewald_shell_sample_count must be an odd integer") from exc
+
+    if not math.isfinite(count_value) or not count_value.is_integer():
+        raise ValueError("ewald_shell_sample_count must be an odd integer")
+
+    count = int(count_value)
+    if (
+        count < SPECIAL_CAUSE_MIN_EWALD_SHELL_SAMPLE_COUNT
+        or count > SPECIAL_CAUSE_MAX_EWALD_SHELL_SAMPLE_COUNT
+    ):
+        raise ValueError(
+            "ewald_shell_sample_count must be between "
+            f"{SPECIAL_CAUSE_MIN_EWALD_SHELL_SAMPLE_COUNT} and "
+            f"{SPECIAL_CAUSE_MAX_EWALD_SHELL_SAMPLE_COUNT}"
+        )
+    if count % 2 == 0:
+        raise ValueError("ewald_shell_sample_count must be an odd integer")
+    return count
 
 
 def build_detector_error_figure(message: str) -> go.Figure:
@@ -596,6 +630,7 @@ def build_special_cause_reciprocal_figure(
     *,
     gamma: float | None = None,
     wavelength_bandwidth_pct: float | None = SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    ewald_shell_sample_count: float | int | None = SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT,
     theta_i: float = np.deg2rad(DEFAULT_THETA_DEG),
     camera: dict[str, Any] | None = None,
 ) -> go.Figure:
@@ -609,6 +644,9 @@ def build_special_cause_reciprocal_figure(
     wavelength_bandwidth_pct = normalize_wavelength_bandwidth_pct(
         wavelength_bandwidth_pct,
         default=SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
+    )
+    ewald_shell_sample_count = normalize_special_cause_ewald_shell_sample_count(
+        ewald_shell_sample_count,
     )
     d_hkl = d_hex(H, K, L, a_hex, c_hex)
     g_mag = 2.0 * math.pi / d_hkl
@@ -690,7 +728,11 @@ def build_special_cause_reciprocal_figure(
             )
         )
 
-    ewald_layers = ewald_bandwidth_layers(K_MAG, wavelength_bandwidth_pct)
+    ewald_layers = ewald_bandwidth_layers(
+        K_MAG,
+        wavelength_bandwidth_pct,
+        layer_count=ewald_shell_sample_count,
+    )
     if wavelength_bandwidth_pct == 0.0:
         for layer in ewald_layers:
             add_ewald_surface(layer.k_mag, "Ewald sphere")
