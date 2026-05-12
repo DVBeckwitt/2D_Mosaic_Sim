@@ -64,7 +64,8 @@ K_VECTOR_LABEL_SIZE = 24
 THETA_LABEL_SIZE = 24
 SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES = 25
 SPECIAL_CAUSE_OVERLAP_BAND_POINTS = 200
-SPECIAL_CAUSE_TRACE_OPACITY = 1.0
+SPECIAL_CAUSE_SURFACE_OPACITY = 0.3
+SPECIAL_CAUSE_INTERSECTION_OPACITY = 1.0
 SPECIAL_CAUSE_OVERLAP_LINE_COLOR = "rgb(0,128,0)"
 
 
@@ -638,7 +639,7 @@ def build_special_cause_reciprocal_figure(
             z=bragg_z,
             surfacecolor=bragg_surface_intensity,
             colorscale=[[0, "rgb(128,128,128)"], [1, "rgb(255,0,0)"]],
-            opacity=SPECIAL_CAUSE_TRACE_OPACITY,
+            opacity=SPECIAL_CAUSE_SURFACE_OPACITY,
             showscale=True,
             colorbar=dict(title="Mosaic<br>Intensity"),
             name="Bragg sphere",
@@ -658,7 +659,7 @@ def build_special_cause_reciprocal_figure(
                 x=ewald_x,
                 y=ewald_y,
                 z=ewald_z,
-                opacity=SPECIAL_CAUSE_TRACE_OPACITY,
+                opacity=SPECIAL_CAUSE_SURFACE_OPACITY,
                 colorscale="Blues",
                 showscale=False,
                 showlegend=False,
@@ -679,7 +680,7 @@ def build_special_cause_reciprocal_figure(
                 y=ring_y,
                 z=ring_z,
                 mode="lines",
-                opacity=SPECIAL_CAUSE_TRACE_OPACITY,
+                opacity=SPECIAL_CAUSE_INTERSECTION_OPACITY,
                 line=dict(
                     color=SPECIAL_CAUSE_OVERLAP_LINE_COLOR,
                     width=INTERSECTION_LINE_WIDTH,
@@ -730,7 +731,7 @@ def build_special_cause_reciprocal_figure(
                     y=band_y,
                     z=band_z,
                     surfacecolor=band_color,
-                    opacity=SPECIAL_CAUSE_TRACE_OPACITY,
+                    opacity=SPECIAL_CAUSE_SURFACE_OPACITY,
                     colorscale="Greens",
                     showscale=False,
                     showlegend=False,

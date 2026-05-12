@@ -376,18 +376,19 @@ def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_ba
     assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == len(layers)
 
 
-def test_build_special_cause_reciprocal_figure_uses_uniform_opaque_traces():
+def test_build_special_cause_reciprocal_figure_uses_transparent_surfaces_and_opaque_intersections():
     fig = detector_module.build_special_cause_reciprocal_figure()
 
-    visible_geometry = [
+    transparent_surfaces = [
         _trace_by_name(fig, "Bragg sphere"),
         _trace_by_name(fig, "Ewald shell inner"),
         _trace_by_name(fig, "Ewald shell outer"),
         _trace_by_name(fig, "Bragg/Ewald overlap band"),
-        *_traces_by_name(fig, "Bragg/Ewald overlap"),
     ]
+    opaque_intersections = _traces_by_name(fig, "Bragg/Ewald overlap")
 
-    assert {trace.opacity for trace in visible_geometry} == {1.0}
+    assert all(0.0 < trace.opacity < 1.0 for trace in transparent_surfaces)
+    assert {trace.opacity for trace in opaque_intersections} == {1.0}
     assert "rgba" not in str(_trace_by_name(fig, "Bragg sphere").colorscale).lower()
 
 
