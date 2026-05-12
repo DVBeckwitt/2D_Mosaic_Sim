@@ -1,0 +1,7 @@
+dash>=2.4
+numba>=0.59
+numpy>=1.26
+plotly>=6.0
+
+[dev]
+pytest>=8.0

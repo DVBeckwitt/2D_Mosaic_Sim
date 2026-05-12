@@ -1,0 +1,5 @@
+[console_scripts]
+mosaic-detector-mosaic-ewald-view = mosaic_sim.detector:main
+mosaic-fibrous-bragg-ewald-intersections = mosaic_sim.cylinder:main
+mosaic-simulator = mosaic_sim.unified:main
+mosaic-single-crystal-powder-cylinder-viewer = mosaic_sim.mono:main
