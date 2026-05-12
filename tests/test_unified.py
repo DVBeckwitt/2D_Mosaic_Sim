@@ -60,6 +60,14 @@ def test_build_unified_figure_uses_detector_mode_with_wavelength_bandwidth():
     assert "λ bandwidth = 1.00%" in fig.layout.title.text
 
 
+def test_build_unified_figure_accepts_100_percent_wavelength_bandwidth():
+    fig = build_unified_figure(mode="special-cause-reciprocal", wavelength_bandwidth_pct=100.0)
+
+    assert "λ bandwidth = 100.00%" in fig.layout.title.text
+    assert any(trace.name == "Ewald shell inner" for trace in fig.data)
+    assert any(trace.name == "Ewald shell outer" for trace in fig.data)
+
+
 def test_build_unified_figure_uses_special_cause_reciprocal_mode():
     fig = build_unified_figure(
         mode="special-cause-reciprocal",

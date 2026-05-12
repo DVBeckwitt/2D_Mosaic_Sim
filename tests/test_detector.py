@@ -5,7 +5,7 @@ import pytest
 from dash import dcc
 
 import mosaic_sim
-from mosaic_sim.constants import K_MAG, a_hex, c_hex, d_hex
+from mosaic_sim.constants import INTERSECTION_LINE_WIDTH, K_MAG, a_hex, c_hex, d_hex
 import mosaic_sim.detector as detector_module
 from mosaic_sim.detector import (
     DETECTOR_CAMERA_UIREVISION,
@@ -384,6 +384,7 @@ def test_build_special_cause_reciprocal_figure_uses_uniform_opaque_traces():
         _trace_by_name(fig, "Ewald shell inner"),
         _trace_by_name(fig, "Ewald shell outer"),
         _trace_by_name(fig, "Bragg/Ewald overlap band"),
+        *_traces_by_name(fig, "Bragg/Ewald overlap"),
     ]
 
     assert {trace.opacity for trace in visible_geometry} == {1.0}
@@ -539,6 +540,9 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_lines()
     assert {trace.type for trace in overlap_traces} == {"scatter3d"}
     assert {trace.mode for trace in overlap_traces} == {"lines"}
     assert {trace.opacity for trace in overlap_traces} == {1.0}
+    assert {trace.line.color for trace in overlap_traces} == {"rgb(0,128,0)"}
+    assert {trace.line.width for trace in overlap_traces} == {INTERSECTION_LINE_WIDTH}
+    assert all("rgba" not in trace.line.color.lower() for trace in overlap_traces)
 
     d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
     g_mag = 2.0 * math.pi / d_hkl
@@ -580,6 +584,7 @@ def test_build_detector_app_seeds_inputs_and_figure_from_initial_values():
     assert controls[6].children[1].value == pytest.approx(0.0)
     assert controls[6].children[1].step == pytest.approx(0.01)
     assert controls[6].children[1].min == pytest.approx(0.0)
+    assert controls[6].children[1].max == pytest.approx(100.0)
     assert math.isclose(controls[3].children[1].value, 1.1)
     assert math.isclose(controls[4].children[1].value, 6.2)
     assert math.isclose(controls[5].children[1].value, 0.35)

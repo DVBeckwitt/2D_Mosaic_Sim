@@ -199,6 +199,7 @@ def test_build_cylinder_app_seeds_inputs_and_figure_from_initial_values():
     assert controls[6].children[1].value == pytest.approx(0.0)
     assert controls[6].children[1].step == pytest.approx(0.01)
     assert controls[6].children[1].min == pytest.approx(0.0)
+    assert controls[6].children[1].max == pytest.approx(100.0)
     assert math.isclose(controls[3].children[1].value, 1.1)
     assert math.isclose(controls[4].children[1].value, 6.2)
     assert math.isclose(controls[5].children[1].value, 0.35)

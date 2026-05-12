@@ -26,6 +26,7 @@ from .geometry import (
     rot_x,
     intersection_circle,
     intersection_cylinder_sphere,
+    WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT,
 )
 from .intensity import mosaic_intensity
 
@@ -694,6 +695,7 @@ def build_cylinder_app(
                                 value=initial_wavelength_bandwidth_pct,
                                 step=0.01,
                                 min=0.0,
+                                max=WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT,
                                 debounce=True,
                             ),
                         ],

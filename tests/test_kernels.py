@@ -44,6 +44,7 @@ def test_mosaic_intensity_switches_profile_for_hk():
 def test_normalize_wavelength_bandwidth_pct_uses_default_and_accepts_valid_values():
     assert normalize_wavelength_bandwidth_pct(None, default=0.25) == pytest.approx(0.25)
     assert normalize_wavelength_bandwidth_pct(1) == pytest.approx(1.0)
+    assert normalize_wavelength_bandwidth_pct(100.0) == pytest.approx(100.0)
 
 
 @pytest.mark.parametrize("value", [-0.01, 200.0, float("nan"), float("inf")])
@@ -123,4 +124,12 @@ def test_ewald_bandwidth_k_bounds_returns_ordered_shell_radii():
 
     assert k_min == pytest.approx(K_MAG / 1.025)
     assert k_max == pytest.approx(K_MAG / 0.975)
+    assert k_min < K_MAG < k_max
+
+
+def test_ewald_bandwidth_k_bounds_accepts_100_percent_bandwidth():
+    k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 100.0)
+
+    assert k_min == pytest.approx(K_MAG / 1.5)
+    assert k_max == pytest.approx(K_MAG / 0.5)
     assert k_min < K_MAG < k_max

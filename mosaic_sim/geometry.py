@@ -12,6 +12,7 @@ __all__ = [
     "EWALD_BANDWIDTH_LAYER_COUNT",
     "EWALD_LAYER_MIN_OPACITY",
     "EWALD_LAYER_MAX_OPACITY",
+    "WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT",
     "EwaldLayer",
     "ewald_bandwidth_k_bounds",
     "ewald_bandwidth_layers",
@@ -25,6 +26,7 @@ __all__ = [
 EWALD_BANDWIDTH_LAYER_COUNT = 7
 EWALD_LAYER_MIN_OPACITY = 0.04
 EWALD_LAYER_MAX_OPACITY = 0.30
+WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT = 100.0
 
 
 def normalize_wavelength_bandwidth_pct(value: float | int | None, default: float = 0.0) -> float:

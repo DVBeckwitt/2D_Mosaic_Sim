@@ -84,7 +84,7 @@ python fibrous_bragg_ewald_intersections.py 0 0 12 --sigma 0.8 --gamma 5 --eta 0
 python specular_reflection_sim.py                                  # standalone specular diffraction GUI with lab geometry plus reciprocal-space / integrated-response companion panels
 ```
 
-`λ bandwidth (%)` is the full `Δλ / λ` percentage, not FWHM. The default `0.0` keeps the monochromatic Ewald sphere behavior.
+`λ bandwidth (%)` is the full `Δλ / λ` percentage, not FWHM. The GUI controls allow values from `0.0` through `100.0`; the default `0.0` keeps the monochromatic Ewald sphere behavior.
 
 The unified GUI includes these switchable modes in one Dash app:
 

@@ -55,6 +55,7 @@ from .detector import (
     extract_scene_camera,
     normalize_detector_params,
 )
+from .geometry import WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT
 from .mono import N_FRAMES_DEFAULT, build_mono_figure
 
 __all__ = [
@@ -646,7 +647,7 @@ def _hkl_controls(
                 default_wavelength_bandwidth_pct,
                 step=0.01,
                 min=0.0,
-                max=5.0,
+                max=WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT,
                 input_step=0.01,
             ),
         )
@@ -661,6 +662,7 @@ def _hkl_controls(
             default_wavelength_bandwidth_pct,
             step=0.01,
             min=0.0,
+            max=WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT,
         ),
     )
 

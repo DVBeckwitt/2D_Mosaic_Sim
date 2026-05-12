@@ -30,6 +30,7 @@ from .geometry import (
     normalize_wavelength_bandwidth_pct,
     rot_x,
     sphere,
+    WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT,
 )
 from .intensity import mosaic_intensity
 
@@ -64,6 +65,7 @@ THETA_LABEL_SIZE = 24
 SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES = 25
 SPECIAL_CAUSE_OVERLAP_BAND_POINTS = 200
 SPECIAL_CAUSE_TRACE_OPACITY = 1.0
+SPECIAL_CAUSE_OVERLAP_LINE_COLOR = "rgb(0,128,0)"
 
 
 @dataclass(frozen=True)
@@ -678,7 +680,10 @@ def build_special_cause_reciprocal_figure(
                 z=ring_z,
                 mode="lines",
                 opacity=SPECIAL_CAUSE_TRACE_OPACITY,
-                line=dict(color="green", width=INTERSECTION_LINE_WIDTH),
+                line=dict(
+                    color=SPECIAL_CAUSE_OVERLAP_LINE_COLOR,
+                    width=INTERSECTION_LINE_WIDTH,
+                ),
                 showlegend=False,
                 name="Bragg/Ewald overlap",
             )
@@ -1309,6 +1314,7 @@ def build_detector_app(
                                 value=initial_wavelength_bandwidth_pct,
                                 step=0.01,
                                 min=0.0,
+                                max=WAVELENGTH_BANDWIDTH_CONTROL_MAX_PCT,
                                 debounce=True,
                             ),
                         ],

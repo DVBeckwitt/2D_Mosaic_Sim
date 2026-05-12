@@ -447,10 +447,11 @@ def test_unified_detector_mosaic_kernel_controls_use_slider_input_pairs():
     assert bandwidth_slider.id["type"] == "simulation-hybrid-slider"
     assert bandwidth_slider.id["key"] == "wavelength_bandwidth_pct"
     assert bandwidth_slider.min == pytest.approx(0.0)
-    assert bandwidth_slider.max == pytest.approx(5.0)
+    assert bandwidth_slider.max == pytest.approx(100.0)
     assert bandwidth_input.id["type"] == "simulation-hybrid-input"
     assert bandwidth_input.id["key"] == "wavelength_bandwidth_pct"
     assert bandwidth_input.step == pytest.approx(0.01)
+    assert bandwidth_input.max == pytest.approx(100.0)
 
 
 def test_unified_fibrous_wavelength_bandwidth_control_uses_number_input():
@@ -467,6 +468,7 @@ def test_unified_fibrous_wavelength_bandwidth_control_uses_number_input():
     assert bandwidth_input.type == "number"
     assert bandwidth_input.step == pytest.approx(0.01)
     assert bandwidth_input.min == pytest.approx(0.0)
+    assert bandwidth_input.max == pytest.approx(100.0)
 
 
 def test_unified_wavelength_bandwidth_callbacks_preserve_state_values():
