@@ -399,20 +399,25 @@ def test_build_special_cause_reciprocal_figure_rejects_invalid_ewald_shell_sampl
         )
 
 
-def test_build_special_cause_reciprocal_figure_uses_transparent_surfaces_and_opaque_intersections():
+def test_build_special_cause_reciprocal_figure_shows_bragg_mosaic_with_transparent_auxiliary_surfaces():
     fig = detector_module.build_special_cause_reciprocal_figure()
 
-    transparent_surfaces = [
-        _trace_by_name(fig, "Bragg sphere"),
+    bragg_surface = _trace_by_name(fig, "Bragg sphere")
+    auxiliary_surfaces = [
         _trace_by_name(fig, "Ewald shell inner"),
         _trace_by_name(fig, "Ewald shell outer"),
         _trace_by_name(fig, "Bragg/Ewald overlap band"),
     ]
     opaque_intersections = _traces_by_name(fig, "Bragg/Ewald overlap")
+    bragg_intensity = np.asarray(bragg_surface.surfacecolor, dtype=float)
 
-    assert all(0.0 < trace.opacity < 1.0 for trace in transparent_surfaces)
+    assert bragg_surface.opacity == pytest.approx(1.0)
+    assert bragg_surface.showscale is True
+    assert np.ptp(bragg_intensity) > 0.0
+    assert all(0.0 < trace.opacity < 1.0 for trace in auxiliary_surfaces)
+    assert all(bragg_surface.opacity > trace.opacity for trace in auxiliary_surfaces)
     assert {trace.opacity for trace in opaque_intersections} == {1.0}
-    assert "rgba" not in str(_trace_by_name(fig, "Bragg sphere").colorscale).lower()
+    assert "rgba" not in str(bragg_surface.colorscale).lower()
 
 
 def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic_changes():
