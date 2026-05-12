@@ -646,12 +646,12 @@ def build_special_cause_reciprocal_figure(
         )
     )
 
-    def add_ewald_surface(k_mag: float, name: str) -> None:
+    def add_ewald_surface(ewald_radius: float, name: str) -> None:
         ewald_x, ewald_y, ewald_z = sphere(
-            k_mag,
+            ewald_radius,
             phi,
             theta,
-            (0.0, k_mag, 0.0),
+            (0.0, K_MAG, 0.0),
         )
         ewald_x, ewald_y, ewald_z = rot_x(ewald_x, ewald_y, ewald_z, theta_i)
         fig.add_trace(
@@ -667,11 +667,11 @@ def build_special_cause_reciprocal_figure(
             )
         )
 
-    def add_overlap_line(k_mag: float) -> None:
+    def add_overlap_line(ewald_radius: float) -> None:
         ring_x, ring_y, ring_z = intersection_circle(
             g_mag,
-            k_mag,
-            k_mag,
+            ewald_radius,
+            K_MAG,
         )
         ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
         fig.add_trace(
@@ -697,18 +697,18 @@ def build_special_cause_reciprocal_figure(
             add_overlap_line(layer.k_mag)
     else:
         k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, wavelength_bandwidth_pct)
-        for name, k_mag in (
+        for name, ewald_radius in (
             ("Ewald shell inner", k_min),
             ("Ewald shell outer", k_max),
         ):
-            add_ewald_surface(k_mag, name)
+            add_ewald_surface(ewald_radius, name)
 
         band_rows: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-        for k_mag in np.linspace(k_min, k_max, SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES):
+        for ewald_radius in np.linspace(k_min, k_max, SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES):
             ring_x, ring_y, ring_z = intersection_circle(
                 g_mag,
-                k_mag,
-                k_mag,
+                ewald_radius,
+                K_MAG,
                 npts=SPECIAL_CAUSE_OVERLAP_BAND_POINTS,
             )
             if ring_x.size == 0:

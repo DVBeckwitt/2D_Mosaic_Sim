@@ -54,6 +54,15 @@ def _traces_by_name(fig, name: str):
     return [trace for trace in fig.data if getattr(trace, "name", "") == name]
 
 
+def _trace_radius_from_center(trace, center: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
+    center_x, center_y, center_z = np.asarray(center, dtype=float).ravel()
+    return np.sqrt(
+        (np.asarray(trace.x, dtype=float) - center_x) ** 2
+        + (np.asarray(trace.y, dtype=float) - center_y) ** 2
+        + (np.asarray(trace.z, dtype=float) - center_z) ** 2
+    )
+
+
 def test_normalize_detector_params_uses_defaults_and_converts_units():
     params = normalize_detector_params(
         defaults=(1, 2, 3, 0.9, 4.1, 0.25),
@@ -342,11 +351,7 @@ def test_build_special_cause_reciprocal_figure_uses_physical_bragg_and_ewald_geo
         np.array([0.0]),
         theta_i,
     )
-    ewald_radius = np.sqrt(
-        (np.asarray(ewald_trace.x, dtype=float) - ewald_center[0][0]) ** 2
-        + (np.asarray(ewald_trace.y, dtype=float) - ewald_center[1][0]) ** 2
-        + (np.asarray(ewald_trace.z, dtype=float) - ewald_center[2][0]) ** 2
-    )
+    ewald_radius = _trace_radius_from_center(ewald_trace, ewald_center)
     np.testing.assert_allclose(ewald_radius, K_MAG, rtol=1e-6)
 
     expected_overlap = rot_x(
@@ -449,28 +454,14 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_as_ewald_shell(
     outer_trace = _trace_by_name(fig, "Ewald shell outer")
     k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 5.0)
 
-    inner_center = rot_x(
+    fixed_ewald_center = rot_x(
         np.array([0.0]),
-        np.array([k_min]),
-        np.array([0.0]),
-        theta_i,
-    )
-    outer_center = rot_x(
-        np.array([0.0]),
-        np.array([k_max]),
+        np.array([K_MAG]),
         np.array([0.0]),
         theta_i,
     )
-    inner_radius = np.sqrt(
-        (np.asarray(inner_trace.x, dtype=float) - inner_center[0][0]) ** 2
-        + (np.asarray(inner_trace.y, dtype=float) - inner_center[1][0]) ** 2
-        + (np.asarray(inner_trace.z, dtype=float) - inner_center[2][0]) ** 2
-    )
-    outer_radius = np.sqrt(
-        (np.asarray(outer_trace.x, dtype=float) - outer_center[0][0]) ** 2
-        + (np.asarray(outer_trace.y, dtype=float) - outer_center[1][0]) ** 2
-        + (np.asarray(outer_trace.z, dtype=float) - outer_center[2][0]) ** 2
-    )
+    inner_radius = _trace_radius_from_center(inner_trace, fixed_ewald_center)
+    outer_radius = _trace_radius_from_center(outer_trace, fixed_ewald_center)
 
     np.testing.assert_allclose(inner_radius, k_min, rtol=1e-6)
     np.testing.assert_allclose(outer_radius, k_max, rtol=1e-6)
@@ -506,11 +497,11 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_band():
 
     k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, 5.0)
     expected_inner_edge = rot_x(
-        *intersection_circle(g_mag, k_min, k_min, npts=band_x.shape[1]),
+        *intersection_circle(g_mag, k_min, K_MAG, npts=band_x.shape[1]),
         theta_i,
     )
     expected_outer_edge = rot_x(
-        *intersection_circle(g_mag, k_max, k_max, npts=band_x.shape[1]),
+        *intersection_circle(g_mag, k_max, K_MAG, npts=band_x.shape[1]),
         theta_i,
     )
     np.testing.assert_allclose(band_x[0], expected_inner_edge[0])
@@ -553,7 +544,7 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_lines()
     )
     for layer, trace in edge_pairs:
         expected_overlap = rot_x(
-            *intersection_circle(g_mag, layer.k_mag, layer.k_mag),
+            *intersection_circle(g_mag, layer.k_mag, K_MAG),
             theta_i,
         )
         np.testing.assert_allclose(np.asarray(trace.x, dtype=float), expected_overlap[0])
