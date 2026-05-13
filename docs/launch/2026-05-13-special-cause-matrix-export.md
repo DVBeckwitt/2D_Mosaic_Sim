@@ -8,7 +8,9 @@ Ready for local use as of 2026-05-13.
 - Exports one PNG using current camera and current non-matrix settings.
 - Matrix columns are `theta_i = 5°`, `10°`, and `15°`.
 - Matrix rows are `003`, `006`, and `009`.
+- Matrix row labels appear on the left side as `L = 3`, `L = 6`, and `L = 9`.
 - Keeps one mosaic-intensity color legend for the whole figure.
+- Repeated exports remove any previous off-screen matrix export host before rendering the next one.
 
 ## Non-Goals
 - No batch export API.
@@ -29,11 +31,14 @@ Ready for local use as of 2026-05-13.
 ## Deprecation and Migration
 No migration is required. The change is additive: no existing mode, CLI argument, console script, public Python function signature, or trace name was removed. Existing users can ignore the new button and keep the previous workflow.
 
+## Known Limits
+The app cleans up its off-screen Plotly export host before each matrix render. It cannot delete files already saved by the browser, so duplicate filenames in `Downloads` may still receive browser-managed suffixes such as `(1)`.
+
 ## Rollback
-Revert the matrix export commit if the button or export behavior regresses:
+Revert the matrix export fix commit if the button or export behavior regresses:
 
 ```bash
-git revert 05cf657
+git revert <matrix-export-fix-commit>
 ```
 
 After revert, run the CI gate locally:
@@ -46,4 +51,4 @@ git diff --check
 ```
 
 ## Monitoring
-For local GUI usage, monitor the browser console, Dash server output, and whether `special_cause_reciprocal_matrix.png` downloads after repeated clicks. The main risk is browser-side 3D export performance for the nine-panel figure.
+For local GUI usage, monitor the browser console, Dash server output, whether repeated clicks download the latest matrix without overlapping export hosts, and whether `L = 3`, `L = 6`, and `L = 9` remain left-side row labels. The main risk is browser-side 3D export performance for the nine-panel figure.

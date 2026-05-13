@@ -409,16 +409,36 @@ PNG_EXPORT_CLIENTSIDE_CALLBACK = """
 SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
         function(figureSpec) {
             const statusNode = document.getElementById("export-special-cause-matrix-status");
+            const hostSelector = "[data-special-cause-matrix-export-host='true']";
             const setStatus = (message) => {
                 if (statusNode) {
                     statusNode.textContent = message;
                 }
                 return message;
             };
+            const purgeAndRemoveHost = (exportHost) => {
+                try {
+                    if (window.Plotly) {
+                        Plotly.purge(exportHost);
+                    }
+                } catch (purgeErr) {
+                    console.error(purgeErr);
+                }
+                exportHost.remove();
+            };
+            const cleanupExistingMatrixExports = () =>
+                document.querySelectorAll(hostSelector).forEach(purgeAndRemoveHost);
 
             if (!figureSpec) {
                 return window.dash_clientside.no_update;
             }
+            window.__specialCauseMatrixExportRequest = (window.__specialCauseMatrixExportRequest || 0) + 1;
+            const requestId = window.__specialCauseMatrixExportRequest;
+            const ignoreStaleRequest = () => {
+                const currentMatrixExportRequest = window.__specialCauseMatrixExportRequest;
+                return requestId !== currentMatrixExportRequest;
+            };
+            cleanupExistingMatrixExports();
             if (figureSpec.error) {
                 return setStatus("Matrix export failed: " + figureSpec.error);
             }
@@ -429,6 +449,7 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
             const exportWidth = 1800;
             const exportHeight = 1800;
             const host = document.createElement("div");
+            host.dataset.specialCauseMatrixExportHost = "true";
             host.style.position = "fixed";
             host.style.left = "-10000px";
             host.style.top = "0";
@@ -437,15 +458,6 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
             host.style.background = "white";
             host.style.pointerEvents = "none";
             document.body.appendChild(host);
-
-            const cleanup = () => {
-                try {
-                    Plotly.purge(host);
-                } catch (purgeErr) {
-                    console.error(purgeErr);
-                }
-                host.remove();
-            };
 
             const downloadMatrix = async () => {
                 try {
@@ -466,12 +478,18 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                         width: exportWidth,
                         height: exportHeight,
                     });
+                    if (ignoreStaleRequest()) {
+                        return;
+                    }
                     setStatus("Downloaded special_cause_reciprocal_matrix.png.");
                 } catch (err) {
                     console.error(err);
+                    if (ignoreStaleRequest()) {
+                        return;
+                    }
                     setStatus("Matrix export failed. Please retry.");
                 } finally {
-                    cleanup();
+                    purgeAndRemoveHost(host);
                 }
             };
 
@@ -1041,7 +1059,6 @@ def _build_special_cause_matrix_figure(
             for _ in SPECIAL_CAUSE_MATRIX_L_VALUES
         ],
         column_titles=[f"θᵢ = {theta:g}°" for theta in SPECIAL_CAUSE_MATRIX_THETA_DEG],
-        row_titles=[f"00{L}" for L in SPECIAL_CAUSE_MATRIX_L_VALUES],
         horizontal_spacing=0.01,
         vertical_spacing=0.03,
     )
@@ -1070,6 +1087,22 @@ def _build_special_cause_matrix_figure(
                 scene_layout["camera"] = camera
             fig.update_layout({scene_name: scene_layout})
 
+    for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
+        scene_layout = getattr(fig.layout, _scene_name_for_matrix_cell(row, 1))
+        y_domain = scene_layout.domain.y
+        fig.add_annotation(
+            text=f"L = {L}",
+            x=-0.03,
+            y=(float(y_domain[0]) + float(y_domain[1])) / 2.0,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            textangle=-90,
+            xanchor="center",
+            yanchor="middle",
+            font=dict(size=16, color="#2d4363"),
+        )
+
     fig.update_layout(
         title=dict(
             text="Special Cause Reciprocal Matrix",
@@ -1079,11 +1112,12 @@ def _build_special_cause_matrix_figure(
         showlegend=False,
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin=dict(l=24, r=90, b=24, t=88),
+        margin=dict(l=90, r=90, b=24, t=88),
         width=SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
         height=SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
     )
     return fig
+
 
 def _build_fibrous_adapter(values: dict[str, Any]) -> go.Figure:
     try:

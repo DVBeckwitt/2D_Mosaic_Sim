@@ -37,4 +37,6 @@ The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public 
 - Export quality follows the browser Plotly renderer already used by the app.
 - The generated figure spec is transient and stored in memory only.
 - A click nonce is included so repeated exports with unchanged settings still trigger downloads.
+- Each matrix export removes any previous off-screen matrix export host before rendering the next one, then purges and removes its own host after completion.
+- Browser-managed duplicate filenames remain outside the app boundary; the app does not delete files from the user's download directory.
 - Rollback is a normal git revert of the feature commit; no migration or data cleanup is needed.

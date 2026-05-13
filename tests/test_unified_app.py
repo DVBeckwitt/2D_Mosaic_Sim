@@ -607,7 +607,13 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
         [name for name in layout_json if name.startswith("scene")],
         key=lambda name: int(name[5:] or "1"),
     )
-    annotations = " ".join(annotation["text"] for annotation in layout_json["annotations"])
+    annotations = layout_json["annotations"]
+    annotation_text = " ".join(annotation["text"] for annotation in annotations)
+    row_label_annotations = [
+        annotation
+        for annotation in annotations
+        if str(annotation.get("text", "")).startswith("L = ")
+    ]
     visible_colorbars = [
         trace
         for trace in fig.data
@@ -615,12 +621,16 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
     ]
 
     assert scene_names == ["scene", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9"]
-    assert "θᵢ = 5°" in annotations
-    assert "θᵢ = 10°" in annotations
-    assert "θᵢ = 15°" in annotations
-    assert "003" in annotations
-    assert "006" in annotations
-    assert "009" in annotations
+    assert "θᵢ = 5°" in annotation_text
+    assert "θᵢ = 10°" in annotation_text
+    assert "θᵢ = 15°" in annotation_text
+    assert [annotation["text"] for annotation in row_label_annotations] == ["L = 3", "L = 6", "L = 9"]
+    assert all(annotation["xref"] == "paper" and annotation["yref"] == "paper" for annotation in row_label_annotations)
+    assert all(annotation["x"] < 0 for annotation in row_label_annotations)
+    assert all(annotation["textangle"] == -90 for annotation in row_label_annotations)
+    assert "003" not in annotation_text
+    assert "006" not in annotation_text
+    assert "009" not in annotation_text
     assert len(visible_colorbars) == 1
     assert not any(trace.name in {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"} for trace in fig.data)
     for scene_name in scene_names:
@@ -839,6 +849,20 @@ def test_special_cause_matrix_export_clientside_callback_downloads_single_png():
     assert "Plotly.newPlot" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "Plotly.downloadImage" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "special_cause_reciprocal_matrix" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "special-cause-matrix-export-host" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "cleanupExistingMatrixExports" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "document.querySelectorAll" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "purgeAndRemoveHost" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Plotly.purge(exportHost)" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "document.querySelectorAll(hostSelector).forEach(purgeAndRemoveHost)" in (
+        SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    )
+    assert "purgeAndRemoveHost(host)" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK.index("cleanupExistingMatrixExports();") < (
+        SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK.index('document.createElement("div")')
+    )
+    assert "currentMatrixExportRequest" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "requestId !== currentMatrixExportRequest" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "Downloaded special_cause_reciprocal_matrix.png." in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
 
 
