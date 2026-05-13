@@ -558,14 +558,22 @@
 
 .simulation-toolbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
   padding: 0.85rem 1rem;
   border-radius: 8px;
   border: 1px solid rgba(216, 226, 236, 0.9);
   background: rgba(255, 255, 255, 0.72);
   box-shadow: 0 8px 18px rgba(20, 44, 68, 0.05);
+}
+
+.simulation-toolbar-status-group {
+  display: grid;
+  gap: 0.2rem;
+  margin-left: auto;
+  text-align: right;
 }
 
 .simulation-toolbar-button {

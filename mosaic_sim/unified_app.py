@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from functools import lru_cache
 import json
 import math
@@ -15,6 +16,7 @@ from typing import Any, Callable
 import plotly.graph_objects as go
 from dash import ALL, MATCH, Dash, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
+from plotly.subplots import make_subplots
 
 from specular_reflection_sim import (
     BeamConfig as SpecularBeamConfig,
@@ -78,6 +80,9 @@ DEFAULT_POWDER_VIEW = "single-crystal"
 SPECULAR_MODE = "specular-view"
 SPECIAL_CAUSE_RECIPROCAL_MODE = "special-cause-reciprocal"
 SPECIAL_CAUSE_DEFAULT_THETA_I_DEG = 5.0
+SPECIAL_CAUSE_MATRIX_THETA_DEG = (5.0, 10.0, 15.0)
+SPECIAL_CAUSE_MATRIX_L_VALUES = (3, 6, 9)
+SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX = 1800
 POWDER_SPHERE_SELECTION_KEY = "sphere_selection"
 POWDER_RING_SELECTION_KEY = "ring_selection"
 POWDER_CYLINDER_SELECTION_KEY = "cylinder_selection"
@@ -398,6 +403,80 @@ PNG_EXPORT_CLIENTSIDE_CALLBACK = """
             const filename = filenames[modeValue] || "simulation";
             downloadSingleView(filename);
             return "Saving " + filename + ".png...";
+        }
+        """
+
+SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
+        function(figureSpec) {
+            const statusNode = document.getElementById("export-special-cause-matrix-status");
+            const setStatus = (message) => {
+                if (statusNode) {
+                    statusNode.textContent = message;
+                }
+                return message;
+            };
+
+            if (!figureSpec) {
+                return window.dash_clientside.no_update;
+            }
+            if (figureSpec.error) {
+                return setStatus("Matrix export failed: " + figureSpec.error);
+            }
+            if (!figureSpec.data || !figureSpec.layout || !window.Plotly) {
+                return setStatus("Matrix export failed.");
+            }
+
+            const exportWidth = 1800;
+            const exportHeight = 1800;
+            const host = document.createElement("div");
+            host.style.position = "fixed";
+            host.style.left = "-10000px";
+            host.style.top = "0";
+            host.style.width = exportWidth + "px";
+            host.style.height = exportHeight + "px";
+            host.style.background = "white";
+            host.style.pointerEvents = "none";
+            document.body.appendChild(host);
+
+            const cleanup = () => {
+                try {
+                    Plotly.purge(host);
+                } catch (purgeErr) {
+                    console.error(purgeErr);
+                }
+                host.remove();
+            };
+
+            const downloadMatrix = async () => {
+                try {
+                    await Plotly.newPlot(
+                        host,
+                        figureSpec.data,
+                        figureSpec.layout,
+                        {
+                            displaylogo: false,
+                            displayModeBar: false,
+                            responsive: false,
+                            staticPlot: true,
+                        }
+                    );
+                    await Plotly.downloadImage(host, {
+                        format: "png",
+                        filename: "special_cause_reciprocal_matrix",
+                        width: exportWidth,
+                        height: exportHeight,
+                    });
+                    setStatus("Downloaded special_cause_reciprocal_matrix.png.");
+                } catch (err) {
+                    console.error(err);
+                    setStatus("Matrix export failed. Please retry.");
+                } finally {
+                    cleanup();
+                }
+            };
+
+            downloadMatrix();
+            return "Saving special_cause_reciprocal_matrix.png...";
         }
         """
 
@@ -929,6 +1008,83 @@ def _build_special_cause_reciprocal_adapter(values: dict[str, Any]) -> go.Figure
         return _message_figure("Special Cause Reciprocal", str(exc))
 
 
+def _scene_name_for_matrix_cell(row: int, col: int) -> str:
+    scene_index = (row - 1) * len(SPECIAL_CAUSE_MATRIX_THETA_DEG) + col
+    return "scene" if scene_index == 1 else f"scene{scene_index}"
+
+
+def _build_special_cause_matrix_cell(values: dict[str, Any], *, L: int, theta_deg: float) -> go.Figure:
+    cell_values = dict(values)
+    cell_values.update({"H": 0, "K": 0, "L": L})
+    params = _normalize_hkl_mosaic_values(cell_values)
+    return build_special_cause_reciprocal_figure(
+        *params,
+        wavelength_bandwidth_pct=cell_values.get("wavelength_bandwidth_pct"),
+        ewald_shell_sample_count=cell_values.get("ewald_shell_sample_count"),
+        theta_i=math.radians(theta_deg),
+        center_bragg_only=bool(cell_values.get("center_bragg_only", False)),
+    )
+
+
+def _build_special_cause_matrix_figure(
+    values: dict[str, Any],
+    *,
+    camera: dict[str, Any] | None = None,
+) -> go.Figure:
+    """Return a fixed 3x3 special-cause reciprocal comparison figure."""
+
+    fig = make_subplots(
+        rows=len(SPECIAL_CAUSE_MATRIX_L_VALUES),
+        cols=len(SPECIAL_CAUSE_MATRIX_THETA_DEG),
+        specs=[
+            [{"type": "scene"} for _ in SPECIAL_CAUSE_MATRIX_THETA_DEG]
+            for _ in SPECIAL_CAUSE_MATRIX_L_VALUES
+        ],
+        column_titles=[f"θᵢ = {theta:g}°" for theta in SPECIAL_CAUSE_MATRIX_THETA_DEG],
+        row_titles=[f"00{L}" for L in SPECIAL_CAUSE_MATRIX_L_VALUES],
+        horizontal_spacing=0.01,
+        vertical_spacing=0.03,
+    )
+
+    for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
+        for col, theta_deg in enumerate(SPECIAL_CAUSE_MATRIX_THETA_DEG, start=1):
+            cell_fig = _build_special_cause_matrix_cell(values, L=L, theta_deg=theta_deg)
+            show_cell_colorbar = row == 1 and col == 1
+            for trace in cell_fig.data:
+                trace_copy = copy.deepcopy(trace)
+                if getattr(trace_copy, "name", "") == "Bragg sphere":
+                    trace_copy.showscale = show_cell_colorbar
+                    trace_copy.cmin = 0.0
+                    trace_copy.cmax = 1.0
+                    if show_cell_colorbar:
+                        trace_copy.colorbar = dict(
+                            title="Mosaic<br>Intensity",
+                            x=1.02,
+                            len=0.72,
+                        )
+                fig.add_trace(trace_copy, row=row, col=col)
+
+            scene_name = _scene_name_for_matrix_cell(row, col)
+            scene_layout = cell_fig.layout.scene.to_plotly_json()
+            if camera:
+                scene_layout["camera"] = camera
+            fig.update_layout({scene_name: scene_layout})
+
+    fig.update_layout(
+        title=dict(
+            text="Special Cause Reciprocal Matrix",
+            x=0.5,
+            xanchor="center",
+        ),
+        showlegend=False,
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        margin=dict(l=24, r=90, b=24, t=88),
+        width=SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
+        height=SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
+    )
+    return fig
+
 def _build_fibrous_adapter(values: dict[str, Any]) -> go.Figure:
     try:
         params = normalize_cylinder_params(
@@ -1102,6 +1258,12 @@ def _specular_companion_style(mode: str) -> dict[str, Any]:
     if mode != SPECULAR_MODE:
         style["display"] = "none"
     return style
+
+
+def _special_cause_matrix_export_style(mode: str) -> dict[str, Any]:
+    if mode == SPECIAL_CAUSE_RECIPROCAL_MODE:
+        return {}
+    return {"display": "none"}
 
 
 def _specular_companion_camera_key(mode: str) -> str:
@@ -1748,6 +1910,7 @@ def build_unified_app(
             dcc.Store(id="simulation-camera-state", data={}),
             dcc.Store(id="simulation-summary-text", data=initial_summary),
             dcc.Store(id="powder-selector-sync", data={}),
+            dcc.Store(id="special-cause-matrix-export-figure", data=None, storage_type="memory"),
             html.Div(
                 [
                     html.Div(
@@ -1823,9 +1986,26 @@ def build_unified_app(
                                         title="Download the current visualization as a PNG",
                                         className="simulation-toolbar-button",
                                     ),
+                                    html.Button(
+                                        "Save 3x3 Matrix",
+                                        id="export-special-cause-matrix-button",
+                                        n_clicks=0,
+                                        title="Download a 3x3 special-cause comparison using the current camera",
+                                        className="simulation-toolbar-button",
+                                        style=_special_cause_matrix_export_style(mode),
+                                    ),
                                     html.Div(
-                                        id="export-png-status",
-                                        className="simulation-toolbar-status",
+                                        [
+                                            html.Div(
+                                                id="export-png-status",
+                                                className="simulation-toolbar-status",
+                                            ),
+                                            html.Div(
+                                                id="export-special-cause-matrix-status",
+                                                className="simulation-toolbar-status",
+                                            ),
+                                        ],
+                                        className="simulation-toolbar-status-group",
                                     ),
                                 ],
                                 className="simulation-toolbar",
@@ -2027,6 +2207,43 @@ def build_unified_app(
         return _shell_class_names(_resolve_mode(mode_value))
 
     @app.callback(
+        Output("export-special-cause-matrix-button", "style"),
+        Input("simulation-mode", "value"),
+    )
+    def render_special_cause_matrix_export_button(mode_value):  # pragma: no cover - UI callback
+        return _special_cause_matrix_export_style(_resolve_mode(mode_value))
+
+    @app.callback(
+        Output("special-cause-matrix-export-figure", "data"),
+        Input("export-special-cause-matrix-button", "n_clicks"),
+        State("simulation-mode", "value"),
+        State("simulation-state", "data"),
+        State("simulation-camera-state", "data"),
+        State("simulation-figure", "relayoutData"),
+        prevent_initial_call=True,
+    )
+    def prepare_special_cause_matrix_export(
+        n_clicks,
+        mode_value,
+        state_value,
+        camera_state_value,
+        relayout_data,
+    ):  # pragma: no cover - UI callback
+        mode_key = _resolve_mode(mode_value)
+        if not n_clicks or mode_key != SPECIAL_CAUSE_RECIPROCAL_MODE:
+            raise PreventUpdate
+
+        values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
+        camera_state = dict(camera_state_value or {})
+        camera = camera_state.get(mode_key) or extract_scene_camera(relayout_data)
+        try:
+            figure_data = _build_special_cause_matrix_figure(values, camera=camera).to_plotly_json()
+            figure_data["export_request"] = n_clicks
+            return figure_data
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+    @app.callback(
         Output("simulation-specular-companion-card", "style"),
         Input("simulation-mode", "value"),
         prevent_initial_call=True,
@@ -2178,6 +2395,12 @@ def build_unified_app(
         Output("export-png-status", "children"),
         Input("export-png-button", "n_clicks"),
         State("simulation-mode", "value"),
+        prevent_initial_call=True,
+    )
+    app.clientside_callback(
+        SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK,
+        Output("export-special-cause-matrix-status", "children"),
+        Input("special-cause-matrix-export-figure", "data"),
         prevent_initial_call=True,
     )
     app.clientside_callback(

@@ -9,6 +9,7 @@ import mosaic_sim.unified_app as unified_app
 from mosaic_sim.unified_app import (
     PNG_EXPORT_CLIENTSIDE_CALLBACK,
     POWDER_QR_CLIENTSIDE_CALLBACK,
+    SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK,
     SIMULATION_SPECS,
     _updated_mode_state,
     _updated_powder_selection_state,
@@ -583,6 +584,49 @@ def test_unified_special_cause_center_bragg_callback_preserves_boolean_state():
     assert updated_state["special-cause-reciprocal"]["center_bragg_only"] is True
 
 
+def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_colorbar():
+    camera = {
+        "eye": {"x": 1.25, "y": 1.1, "z": 0.85},
+        "up": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "center": {"x": 0.0, "y": 0.0, "z": 0.0},
+    }
+
+    fig = unified_app._build_special_cause_matrix_figure(
+        {
+            "sigma_deg": 0.8,
+            "Gamma_deg": 5.0,
+            "eta": 0.5,
+            "wavelength_bandwidth_pct": 5.0,
+            "ewald_shell_sample_count": 3,
+            "center_bragg_only": True,
+        },
+        camera=camera,
+    )
+    layout_json = fig.to_plotly_json()["layout"]
+    scene_names = sorted(
+        [name for name in layout_json if name.startswith("scene")],
+        key=lambda name: int(name[5:] or "1"),
+    )
+    annotations = " ".join(annotation["text"] for annotation in layout_json["annotations"])
+    visible_colorbars = [
+        trace
+        for trace in fig.data
+        if getattr(trace, "type", "") == "surface" and getattr(trace, "showscale", False)
+    ]
+
+    assert scene_names == ["scene", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9"]
+    assert "θᵢ = 5°" in annotations
+    assert "θᵢ = 10°" in annotations
+    assert "θᵢ = 15°" in annotations
+    assert "003" in annotations
+    assert "006" in annotations
+    assert "009" in annotations
+    assert len(visible_colorbars) == 1
+    assert not any(trace.name in {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"} for trace in fig.data)
+    for scene_name in scene_names:
+        assert layout_json[scene_name]["camera"] == camera
+
+
 def test_unified_specular_sliders_only_keep_theta_i_live():
     app = build_unified_app(initial_mode="specular-view")
 
@@ -692,6 +736,73 @@ def test_unified_app_mosaic_png_export_downloads_panel_files():
     assert "Preparing Mosaic View downloads..." in scripts
 
 
+def test_unified_app_special_cause_matrix_export_button_is_mode_scoped():
+    special_app = build_unified_app(initial_mode="special-cause-reciprocal")
+    detector_app = build_unified_app(initial_mode="detector-view")
+
+    special_button = _find_component_by_id(special_app.layout, "export-special-cause-matrix-button")
+    detector_button = _find_component_by_id(detector_app.layout, "export-special-cause-matrix-button")
+    special_matrix_store = _find_component_by_id(special_app.layout, "special-cause-matrix-export-figure")
+    style_callback = _callback_by_output(special_app, "export-special-cause-matrix-button.style")
+
+    assert special_button.children == "Save 3x3 Matrix"
+    assert special_button.title == "Download a 3x3 special-cause comparison using the current camera"
+    assert isinstance(special_matrix_store, dcc.Store)
+    assert special_matrix_store.storage_type == "memory"
+    assert special_button.style == {}
+    assert detector_button.style.get("display") == "none"
+    assert style_callback("special-cause-reciprocal") == {}
+    assert style_callback("detector-view") == {"display": "none"}
+
+
+def test_unified_app_special_cause_matrix_export_callback_uses_current_state_and_camera(monkeypatch):
+    app = build_unified_app(initial_mode="special-cause-reciprocal")
+    callback = _callback_by_output(app, "special-cause-matrix-export-figure.data")
+    state = app.layout.children[0].data
+    state["special-cause-reciprocal"] = dict(state["special-cause-reciprocal"])
+    state["special-cause-reciprocal"]["ewald_shell_sample_count"] = 3
+    state["special-cause-reciprocal"]["center_bragg_only"] = True
+    camera = {
+        "eye": {"x": 1.35, "y": 1.05, "z": 0.75},
+        "up": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "center": {"x": 0.0, "y": 0.0, "z": 0.0},
+    }
+    captured = {}
+
+    class FakeFigure:
+        def to_plotly_json(self):
+            return {
+                "data": [{"name": "Bragg sphere"}],
+                "layout": {"scene": {"camera": captured["camera"]}},
+            }
+
+    def fake_build_special_cause_matrix_figure(values, *, camera=None):
+        captured["values"] = values
+        captured["camera"] = camera
+        return FakeFigure()
+
+    monkeypatch.setattr(
+        unified_app,
+        "_build_special_cause_matrix_figure",
+        fake_build_special_cause_matrix_figure,
+    )
+
+    figure_data = callback(
+        1,
+        "special-cause-reciprocal",
+        state,
+        {"special-cause-reciprocal": camera},
+        None,
+    )
+
+    assert captured["values"]["ewald_shell_sample_count"] == 3
+    assert captured["values"]["center_bragg_only"] is True
+    assert captured["camera"] == camera
+    assert figure_data["data"] == [{"name": "Bragg sphere"}]
+    assert figure_data["layout"]["scene"]["camera"] == camera
+    assert figure_data["export_request"] == 1
+
+
 def test_unified_app_specular_png_export_hooks_new_mode():
     app = build_unified_app(initial_mode="specular-view")
     scripts = "\n".join(app._inline_scripts)
@@ -722,6 +833,13 @@ def test_png_export_callback_targets_rendered_plotly_figure_and_powder_exports()
     assert 'trace?.xaxis === "x2" && trace?.yaxis === "y2"' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert 'Downloaded Single, 3D, 2D, and Cylinder views.' in PNG_EXPORT_CLIENTSIDE_CALLBACK
     assert 'Downloaded reciprocal space, detector view, and centered integration.' in PNG_EXPORT_CLIENTSIDE_CALLBACK
+
+
+def test_special_cause_matrix_export_clientside_callback_downloads_single_png():
+    assert "Plotly.newPlot" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Plotly.downloadImage" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "special_cause_reciprocal_matrix" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Downloaded special_cause_reciprocal_matrix.png." in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
 
 
 def test_powder_qr_clientside_callback_updates_ring_and_cylinder_modes():
