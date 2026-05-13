@@ -370,7 +370,6 @@ def test_build_special_cause_reciprocal_figure_uses_physical_bragg_and_ewald_geo
 
 def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_bandwidth():
     fig = detector_module.build_special_cause_reciprocal_figure()
-    layers = ewald_bandwidth_layers(K_MAG, 5.0)
 
     assert "HKL = (0, 0, 3)" in fig.layout.title.text
     assert "λ bandwidth = 5.00%" in fig.layout.title.text
@@ -378,7 +377,7 @@ def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_ba
     assert any(trace.name == "Ewald shell outer" for trace in fig.data)
     assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
     assert not any(trace.name == "Ewald sphere" for trace in fig.data)
-    assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == len(layers)
+    assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == 99
 
 
 def test_build_special_cause_reciprocal_figure_uses_requested_ewald_shell_sample_count():
@@ -548,16 +547,29 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_lines()
         wavelength_bandwidth_pct=5.0,
     )
 
-    layers = ewald_bandwidth_layers(K_MAG, 5.0)
+    layers = ewald_bandwidth_layers(
+        K_MAG,
+        5.0,
+        layer_count=detector_module.SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT,
+    )
     overlap_traces = _traces_by_name(fig, "Bragg/Ewald overlap")
 
-    assert len(overlap_traces) == len(layers)
+    assert len(overlap_traces) == detector_module.SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT
     assert {trace.type for trace in overlap_traces} == {"scatter3d"}
     assert {trace.mode for trace in overlap_traces} == {"lines"}
     assert {trace.opacity for trace in overlap_traces} == {1.0}
-    assert {trace.line.color for trace in overlap_traces} == {"rgb(0,128,0)"}
     assert {trace.line.width for trace in overlap_traces} == {INTERSECTION_LINE_WIDTH}
-    assert all("rgba" not in trace.line.color.lower() for trace in overlap_traces)
+    bragg_surface = _trace_by_name(fig, "Bragg sphere")
+    bragg_x = np.asarray(bragg_surface.x, dtype=float).ravel()
+    bragg_y = np.asarray(bragg_surface.y, dtype=float).ravel()
+    bragg_z = np.asarray(bragg_surface.z, dtype=float).ravel()
+    for trace in overlap_traces:
+        line_color = np.asarray(trace.line.color, dtype=float)
+        assert line_color.shape == np.asarray(trace.x, dtype=float).shape
+        assert tuple(tuple(stop) for stop in trace.line.colorscale) == ((0.0, "pink"), (1.0, "purple"))
+        assert trace.line.cmin == pytest.approx(0.0)
+        assert trace.line.cmax == pytest.approx(1.0)
+        assert trace.line.showscale is False
 
     d_hkl = d_hex(0, 0, 12, a_hex, c_hex)
     g_mag = 2.0 * math.pi / d_hkl
@@ -570,9 +582,21 @@ def test_build_special_cause_reciprocal_figure_renders_bandwidth_overlap_lines()
             *intersection_circle(g_mag, layer.k_mag, K_MAG),
             theta_i,
         )
+        expected_intensity = mosaic_intensity(
+            np.concatenate((expected_overlap[0].ravel(), bragg_x)),
+            np.concatenate((expected_overlap[1].ravel(), bragg_y)),
+            np.concatenate((expected_overlap[2].ravel(), bragg_z)),
+            0,
+            0,
+            12,
+            np.deg2rad(0.8),
+            np.deg2rad(5.0),
+            0.5,
+        )[: expected_overlap[0].size]
         np.testing.assert_allclose(np.asarray(trace.x, dtype=float), expected_overlap[0])
         np.testing.assert_allclose(np.asarray(trace.y, dtype=float), expected_overlap[1])
         np.testing.assert_allclose(np.asarray(trace.z, dtype=float), expected_overlap[2])
+        np.testing.assert_allclose(np.asarray(trace.line.color, dtype=float), expected_intensity)
 
 
 def test_build_detector_app_seeds_inputs_and_figure_from_initial_values():

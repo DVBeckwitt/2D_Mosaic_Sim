@@ -392,7 +392,7 @@ def test_unified_special_cause_reciprocal_controls_are_grouped_for_browser_scann
     )
     assert isinstance(sample_input, dcc.Input)
     assert sample_input.type == "number"
-    assert sample_input.value == 7
+    assert sample_input.value == 99
     assert sample_input.step == 2
     assert sample_input.min == 3
     assert sample_input.max == 101

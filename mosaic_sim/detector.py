@@ -24,7 +24,6 @@ from .common import (
 )
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .geometry import (
-    EWALD_BANDWIDTH_LAYER_COUNT,
     ewald_bandwidth_k_bounds,
     ewald_bandwidth_layers,
     intersection_circle,
@@ -45,7 +44,7 @@ DEFAULT_THETA_DEG = 5.0
 DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 0.0
 SPECIAL_CAUSE_DEFAULT_L = 3
 SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT = 5.0
-SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT = EWALD_BANDWIDTH_LAYER_COUNT
+SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT = 99
 SPECIAL_CAUSE_MIN_EWALD_SHELL_SAMPLE_COUNT = 3
 SPECIAL_CAUSE_MAX_EWALD_SHELL_SAMPLE_COUNT = 101
 THETA_MIN_DEG = 5.0
@@ -71,7 +70,7 @@ SPECIAL_CAUSE_OVERLAP_BAND_POINTS = 200
 SPECIAL_CAUSE_BRAGG_SURFACE_OPACITY = 1.0
 SPECIAL_CAUSE_SURFACE_OPACITY = 0.3
 SPECIAL_CAUSE_INTERSECTION_OPACITY = 1.0
-SPECIAL_CAUSE_OVERLAP_LINE_COLOR = "rgb(0,128,0)"
+SPECIAL_CAUSE_OVERLAP_LINE_COLORSCALE = [[0.0, "pink"], [1.0, "purple"]]
 
 
 @dataclass(frozen=True)
@@ -669,6 +668,9 @@ def build_special_cause_reciprocal_figure(
         Gamma,
         eta,
     )
+    bragg_x_flat = bragg_x.ravel()
+    bragg_y_flat = bragg_y.ravel()
+    bragg_z_flat = bragg_z.ravel()
 
     fig = go.Figure()
     fig.add_trace(
@@ -713,6 +715,24 @@ def build_special_cause_reciprocal_figure(
             K_MAG,
         )
         ring_x, ring_y, ring_z = rot_x(ring_x, ring_y, ring_z, theta_i)
+        if ring_x.size:
+            combined_x = np.concatenate((ring_x.ravel(), bragg_x_flat))
+            combined_y = np.concatenate((ring_y.ravel(), bragg_y_flat))
+            combined_z = np.concatenate((ring_z.ravel(), bragg_z_flat))
+            combined_intensity = mosaic_intensity(
+                combined_x,
+                combined_y,
+                combined_z,
+                H,
+                K,
+                L,
+                sigma,
+                Gamma,
+                eta,
+            )
+            ring_intensity = combined_intensity[: ring_x.size].reshape(ring_x.shape)
+        else:
+            ring_intensity = np.array([], dtype=float)
         fig.add_trace(
             go.Scatter3d(
                 x=ring_x,
@@ -721,7 +741,11 @@ def build_special_cause_reciprocal_figure(
                 mode="lines",
                 opacity=SPECIAL_CAUSE_INTERSECTION_OPACITY,
                 line=dict(
-                    color=SPECIAL_CAUSE_OVERLAP_LINE_COLOR,
+                    color=ring_intensity,
+                    colorscale=SPECIAL_CAUSE_OVERLAP_LINE_COLORSCALE,
+                    cmin=0.0,
+                    cmax=1.0,
+                    showscale=False,
                     width=INTERSECTION_LINE_WIDTH,
                 ),
                 showlegend=False,
