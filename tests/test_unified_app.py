@@ -619,6 +619,16 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
         for trace in fig.data
         if getattr(trace, "type", "") == "surface" and getattr(trace, "showscale", False)
     ]
+    trace_names = [getattr(trace, "name", "") for trace in fig.data]
+    trace_text = " ".join(
+        str(text)
+        for trace in fig.data
+        for text in (
+            getattr(trace, "text", [])
+            if isinstance(getattr(trace, "text", []), (list, tuple))
+            else [getattr(trace, "text", "")]
+        )
+    )
 
     assert scene_names == ["scene", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7", "scene8", "scene9"]
     assert "θᵢ = 5°" in annotation_text
@@ -632,7 +642,13 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
     assert "006" not in annotation_text
     assert "009" not in annotation_text
     assert len(visible_colorbars) == 1
-    assert not any(trace.name in {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"} for trace in fig.data)
+    assert "Bragg sphere" in trace_names
+    assert "Bragg/Ewald overlap" in trace_names
+    assert "Bragg/Ewald overlap band" in trace_names
+    assert not any(name in {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"} for name in trace_names)
+    assert not any(getattr(trace, "type", "") == "cone" for trace in fig.data)
+    assert "kᵢ" not in trace_text
+    assert "θᵢ" not in trace_text
     for scene_name in scene_names:
         assert layout_json[scene_name]["camera"] == camera
 
