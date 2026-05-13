@@ -54,12 +54,34 @@ def _traces_by_name(fig, name: str):
     return [trace for trace in fig.data if getattr(trace, "name", "") == name]
 
 
+def _trace_text_values(fig) -> list[tuple[str, ...]]:
+    text_values: list[tuple[str, ...]] = []
+    for trace in fig.data:
+        text = getattr(trace, "text", None)
+        if text is None:
+            continue
+        if isinstance(text, str):
+            text_values.append((text,))
+        else:
+            text_values.append(tuple(text))
+    return text_values
+
+
 def _trace_radius_from_center(trace, center: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
     center_x, center_y, center_z = np.asarray(center, dtype=float).ravel()
     return np.sqrt(
         (np.asarray(trace.x, dtype=float) - center_x) ** 2
         + (np.asarray(trace.y, dtype=float) - center_y) ** 2
         + (np.asarray(trace.z, dtype=float) - center_z) ** 2
+    )
+
+
+def _has_theta_arc(trace) -> bool:
+    line = getattr(trace, "line", None)
+    return (
+        isinstance(getattr(line, "color", None), str)
+        and line.color == "magenta"
+        and getattr(line, "dash", None) == "dot"
     )
 
 
@@ -378,6 +400,51 @@ def test_build_special_cause_reciprocal_figure_defaults_to_requested_peak_and_ba
     assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
     assert not any(trace.name == "Ewald sphere" for trace in fig.data)
     assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == 99
+
+
+def test_build_special_cause_reciprocal_figure_default_keeps_incident_geometry_helpers():
+    fig = detector_module.build_special_cause_reciprocal_figure()
+
+    assert any(trace.type == "cone" for trace in fig.data)
+    assert ("kᵢ",) in _trace_text_values(fig)
+    assert ("θᵢ",) in _trace_text_values(fig)
+    assert any(_has_theta_arc(trace) for trace in fig.data)
+
+
+def test_build_special_cause_reciprocal_figure_can_center_bragg_view_without_incident_helpers():
+    fig = detector_module.build_special_cause_reciprocal_figure(center_bragg_only=True)
+    trace_names = [trace.name for trace in fig.data]
+
+    bragg_surface = _trace_by_name(fig, "Bragg sphere")
+    bragg_intensity = np.asarray(bragg_surface.surfacecolor, dtype=float)
+    overlap_traces = _traces_by_name(fig, "Bragg/Ewald overlap")
+
+    assert bragg_surface.showscale is True
+    assert np.ptp(bragg_intensity) > 0.0
+    assert "Bragg/Ewald overlap band" in trace_names
+    assert len(overlap_traces) == detector_module.SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT
+    assert all(
+        np.asarray(trace.line.color, dtype=float).shape == np.asarray(trace.x, dtype=float).shape
+        for trace in overlap_traces
+    )
+    assert "Ewald sphere" not in trace_names
+    assert "Ewald shell inner" not in trace_names
+    assert "Ewald shell outer" not in trace_names
+    assert not any(trace.type == "cone" for trace in fig.data)
+    assert ("kᵢ",) not in _trace_text_values(fig)
+    assert ("θᵢ",) not in _trace_text_values(fig)
+    assert not any(_has_theta_arc(trace) for trace in fig.data)
+
+
+def test_build_special_cause_reciprocal_figure_center_bragg_view_hides_mono_ewald_sphere():
+    fig = detector_module.build_special_cause_reciprocal_figure(
+        center_bragg_only=True,
+        wavelength_bandwidth_pct=0.0,
+    )
+
+    assert any(trace.name == "Bragg sphere" for trace in fig.data)
+    assert len(_traces_by_name(fig, "Bragg/Ewald overlap")) == 1
+    assert not any(trace.name == "Ewald sphere" for trace in fig.data)
 
 
 def test_build_special_cause_reciprocal_figure_uses_requested_ewald_shell_sample_count():

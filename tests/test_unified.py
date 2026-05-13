@@ -89,6 +89,18 @@ def test_build_unified_figure_uses_special_cause_reciprocal_mode():
     assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
 
 
+def test_build_unified_figure_passes_special_cause_center_bragg_option():
+    fig = build_unified_figure(mode="special-cause-reciprocal", center_bragg_only=True)
+
+    assert any(trace.name == "Bragg sphere" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap band" for trace in fig.data)
+    assert any(trace.name == "Bragg/Ewald overlap" for trace in fig.data)
+    assert not any(trace.name == "Ewald sphere" for trace in fig.data)
+    assert not any(trace.name == "Ewald shell inner" for trace in fig.data)
+    assert not any(trace.name == "Ewald shell outer" for trace in fig.data)
+    assert not any(trace.type == "cone" for trace in fig.data)
+
+
 def test_build_unified_figure_uses_special_cause_ewald_shell_sample_count():
     fig = build_unified_figure(
         mode="special-cause-reciprocal",

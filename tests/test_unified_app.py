@@ -373,19 +373,43 @@ def test_unified_special_cause_reciprocal_controls_are_grouped_for_browser_scann
     assert mode_selector.value == "special-cause-reciprocal"
     assert "HKL = (0, 0, 3)" in graph.figure.layout.title.text
     assert "λ bandwidth = 5.00%" in graph.figure.layout.title.text
-    assert _control_section_titles(app) == ["Incident Angle", "Reflection", "Mosaic Envelope", "Ewald Sampling"]
+    assert _control_section_titles(app) == [
+        "Incident Angle",
+        "Reflection",
+        "Mosaic Envelope",
+        "Ewald Sampling",
+    ]
     assert _find_component_by_id(
         _control_section(app, "Reflection"),
         {"type": "simulation-control", "key": "L"},
     ).value == 3
-    assert _find_component_by_id(
+    theta_slider = _find_component_by_id(
         _control_section(app, "Incident Angle"),
-        {"type": "simulation-control", "key": "theta_i_deg"},
-    ).value == pytest.approx(5.0)
+        {"type": "simulation-hybrid-slider", "key": "theta_i_deg"},
+    )
+    theta_input = _find_component_by_id(
+        _control_section(app, "Incident Angle"),
+        {"type": "simulation-hybrid-input", "key": "theta_i_deg"},
+    )
+    assert isinstance(theta_slider, dcc.Slider)
+    assert isinstance(theta_input, dcc.Input)
+    assert theta_slider.value == pytest.approx(5.0)
+    assert theta_slider.step == pytest.approx(0.25)
+    assert theta_slider.updatemode == "drag"
+    assert theta_input.type == "number"
+    assert theta_input.value == pytest.approx(5.0)
+    assert theta_input.step == "any"
     assert _find_component_by_id(
         _control_section(app, "Mosaic Envelope"),
         {"type": "simulation-hybrid-input", "key": "wavelength_bandwidth_pct"},
     ).value == pytest.approx(5.0)
+    center_bragg_toggle = _find_component_by_id(
+        _control_section(app, "Incident Angle"),
+        {"type": "simulation-control", "key": "center_bragg_only"},
+    )
+    assert isinstance(center_bragg_toggle, dcc.Checklist)
+    assert center_bragg_toggle.value == []
+    assert "Hide Ewald + angle helpers" in _render_component_text(_control_section(app, "Incident Angle"))
     sample_input = _find_component_by_id(
         _control_section(app, "Ewald Sampling"),
         {"type": "simulation-control", "key": "ewald_shell_sample_count"},
@@ -523,6 +547,40 @@ def test_unified_special_cause_ewald_sample_callback_preserves_state_value():
     )
 
     assert updated_state["special-cause-reciprocal"]["ewald_shell_sample_count"] == 13
+
+
+def test_unified_special_cause_theta_i_callback_preserves_exact_typed_value():
+    app = build_unified_app(initial_mode="special-cause-reciprocal")
+    state = app.layout.children[0].data
+
+    updated_state = _updated_mode_state(
+        "special-cause-reciprocal",
+        [],
+        [7.13],
+        [],
+        [{"type": "simulation-hybrid-input", "key": "theta_i_deg"}],
+        state,
+        {"type": "simulation-hybrid-input", "key": "theta_i_deg"},
+    )
+
+    assert updated_state["special-cause-reciprocal"]["theta_i_deg"] == pytest.approx(7.13)
+
+
+def test_unified_special_cause_center_bragg_callback_preserves_boolean_state():
+    app = build_unified_app(initial_mode="special-cause-reciprocal")
+    state = app.layout.children[0].data
+
+    updated_state = _updated_mode_state(
+        "special-cause-reciprocal",
+        [["enabled"]],
+        [],
+        [{"type": "simulation-control", "key": "center_bragg_only"}],
+        [],
+        state,
+        {"type": "simulation-control", "key": "center_bragg_only"},
+    )
+
+    assert updated_state["special-cause-reciprocal"]["center_bragg_only"] is True
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():

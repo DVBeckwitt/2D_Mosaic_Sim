@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 import threading
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 import plotly.graph_objects as go
@@ -565,7 +565,7 @@ class ControlSpec:
     min: float | None = None
     max: float | None = None
     options: tuple[tuple[str, Any], ...] = ()
-    input_step: float | int | None = None
+    input_step: float | int | str | None = None
     updatemode: str | None = None
 
 
@@ -695,11 +695,26 @@ def _mosaic_theta_hkl_controls(
 
 
 def _special_cause_reciprocal_controls() -> tuple[ControlSpec, ...]:
-    return _mosaic_theta_hkl_controls(
+    controls = _mosaic_theta_hkl_controls(
         default_theta_i_deg=SPECIAL_CAUSE_DEFAULT_THETA_I_DEG,
         default_L=SPECIAL_CAUSE_DEFAULT_L,
         default_wavelength_bandwidth_pct=SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
-    ) + (
+    )
+    theta_control = replace(
+        controls[0],
+        component="slider_input",
+        input_step="any",
+        updatemode="drag",
+    )
+    return (
+        theta_control,
+        *controls[1:],
+        ControlSpec(
+            "center_bragg_only",
+            "Hide Ewald + angle helpers",
+            "checklist",
+            False,
+        ),
         ControlSpec(
             "ewald_shell_sample_count",
             "Ewald samples (odd)",
@@ -717,9 +732,13 @@ _MOSAIC_CONTROL_SECTIONS = (
     ("Reflection", ("H", "K", "L")),
     ("Mosaic Envelope", ("sigma_deg", "Gamma_deg", "eta", "wavelength_bandwidth_pct")),
 )
-_SPECIAL_CAUSE_CONTROL_SECTIONS = _MOSAIC_CONTROL_SECTIONS + (
+_SPECIAL_CAUSE_CONTROL_SECTIONS = (
+    ("Incident Angle", ("theta_i_deg", "center_bragg_only")),
+    ("Reflection", ("H", "K", "L")),
+    ("Mosaic Envelope", ("sigma_deg", "Gamma_deg", "eta", "wavelength_bandwidth_pct")),
     ("Ewald Sampling", ("ewald_shell_sample_count",)),
 )
+_CHECKLIST_CONTROL_KEYS = frozenset({"center_bragg_only"})
 
 
 @lru_cache(maxsize=1)
@@ -819,11 +838,11 @@ def _updated_mode_state(
             pairs = []
         for control_id, value in pairs:
             if control_id["key"] == triggered_id.get("key"):
-                mode_state[control_id["key"]] = value
+                mode_state[control_id["key"]] = _normalize_control_state_value(control_id["key"], value)
                 break
     else:
         for control_id, value in zip(control_ids, values, strict=True):
-            mode_state[control_id["key"]] = value
+            mode_state[control_id["key"]] = _normalize_control_state_value(control_id["key"], value)
         for control_id, value in zip(hybrid_ids, hybrid_values, strict=True):
             mode_state[control_id["key"]] = value
 
@@ -835,6 +854,12 @@ def _updated_mode_state(
     if next_state == current_state:
         return None
     return next_state
+
+
+def _normalize_control_state_value(control_key: str, value: Any) -> Any:
+    if control_key in _CHECKLIST_CONTROL_KEYS:
+        return bool(value)
+    return value
 
 
 def _normalize_hkl_mosaic_values(values: dict[str, Any]) -> tuple[int, int, int, float, float, float]:
@@ -898,6 +923,7 @@ def _build_special_cause_reciprocal_adapter(values: dict[str, Any]) -> go.Figure
             wavelength_bandwidth_pct=values.get("wavelength_bandwidth_pct"),
             ewald_shell_sample_count=values.get("ewald_shell_sample_count"),
             theta_i=math.radians(theta_deg),
+            center_bragg_only=bool(values.get("center_bragg_only", False)),
         )
     except ValueError as exc:
         return _message_figure("Special Cause Reciprocal", str(exc))
@@ -1539,6 +1565,15 @@ def _build_control(control: ControlSpec, value: Any) -> html.Div:
             options=[{"label": label, "value": option_value} for label, option_value in control.options],
             value=value,
             clearable=False,
+        )
+    elif control.component == "checklist":
+        component = dcc.Checklist(
+            id=control_id,
+            options=[{"label": "Enabled", "value": "enabled"}],
+            value=["enabled"] if bool(value) else [],
+            className="simulation-control-checklist",
+            labelClassName="simulation-control-check-option",
+            inputClassName="simulation-control-check-input",
         )
     elif control.component == "slider":
         midpoint = 0.5 * (float(control.min) + float(control.max))

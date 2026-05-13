@@ -370,9 +370,29 @@
   width: 5.5rem;
 }
 
+.simulation-control-checklist {
+  display: flex;
+  min-height: 2.15rem;
+  align-items: center;
+}
+
+.simulation-control-check-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--specular-text);
+  cursor: pointer;
+}
+
+.simulation-control-check-input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
 .specular-control-row input,
 .simulation-control-pair input,
-.simulation-control input,
+.simulation-control input:not([type="checkbox"]),
 .simulation-mode-card .Select-control,
 .simulation-mode-card .Select-menu-outer {
   border: 1px solid rgba(191, 210, 226, 0.9);
@@ -384,7 +404,7 @@
 
 .specular-control-row input:focus,
 .simulation-control-pair input:focus,
-.simulation-control input:focus {
+.simulation-control input:not([type="checkbox"]):focus {
   outline: 2px solid rgba(15, 108, 189, 0.18);
   border-color: rgba(15, 108, 189, 0.55);
 }

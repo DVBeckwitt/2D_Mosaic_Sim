@@ -632,6 +632,7 @@ def build_special_cause_reciprocal_figure(
     wavelength_bandwidth_pct: float | None = SPECIAL_CAUSE_DEFAULT_WAVELENGTH_BANDWIDTH_PCT,
     ewald_shell_sample_count: float | int | None = SPECIAL_CAUSE_DEFAULT_EWALD_SHELL_SAMPLE_COUNT,
     theta_i: float = np.deg2rad(DEFAULT_THETA_DEG),
+    center_bragg_only: bool = False,
     camera: dict[str, Any] | None = None,
 ) -> go.Figure:
     """Return the detector reciprocal-space geometry as a one-panel figure."""
@@ -760,15 +761,17 @@ def build_special_cause_reciprocal_figure(
     )
     if wavelength_bandwidth_pct == 0.0:
         for layer in ewald_layers:
-            add_ewald_surface(layer.k_mag, "Ewald sphere")
+            if not center_bragg_only:
+                add_ewald_surface(layer.k_mag, "Ewald sphere")
             add_overlap_line(layer.k_mag)
     else:
         k_min, k_max = ewald_bandwidth_k_bounds(K_MAG, wavelength_bandwidth_pct)
-        for name, ewald_radius in (
-            ("Ewald shell inner", k_min),
-            ("Ewald shell outer", k_max),
-        ):
-            add_ewald_surface(ewald_radius, name)
+        if not center_bragg_only:
+            for name, ewald_radius in (
+                ("Ewald shell inner", k_min),
+                ("Ewald shell outer", k_max),
+            ):
+                add_ewald_surface(ewald_radius, name)
 
         band_rows: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
         for ewald_radius in np.linspace(k_min, k_max, SPECIAL_CAUSE_OVERLAP_BAND_K_SAMPLES):
@@ -809,71 +812,72 @@ def build_special_cause_reciprocal_figure(
         for layer in ewald_layers:
             add_overlap_line(layer.k_mag)
 
-    k_head = np.array(
-        rot_x(np.array([0.0]), np.array([K_MAG]), np.array([0.0]), theta_i),
-        dtype=float,
-    ).ravel()
-    fig.add_trace(
-        go.Scatter3d(
-            x=[k_head[0], 0.0],
-            y=[k_head[1], 0.0],
-            z=[k_head[2], 0.0],
-            mode="lines",
-            line=dict(color="black", width=K_VECTOR_LINE_WIDTH),
-            showlegend=False,
+    if not center_bragg_only:
+        k_head = np.array(
+            rot_x(np.array([0.0]), np.array([K_MAG]), np.array([0.0]), theta_i),
+            dtype=float,
+        ).ravel()
+        fig.add_trace(
+            go.Scatter3d(
+                x=[k_head[0], 0.0],
+                y=[k_head[1], 0.0],
+                z=[k_head[2], 0.0],
+                mode="lines",
+                line=dict(color="black", width=K_VECTOR_LINE_WIDTH),
+                showlegend=False,
+            )
         )
-    )
-    fig.add_trace(
-        go.Cone(
-            x=[0.0],
-            y=[0.0],
-            z=[0.0],
-            u=[-k_head[0]],
-            v=[-k_head[1]],
-            w=[-k_head[2]],
-            anchor="tip",
-            sizemode="absolute",
-            sizeref=K_VECTOR_CONE_SIZE,
-            colorscale=[[0, "black"], [1, "black"]],
-            showscale=False,
-            showlegend=False,
+        fig.add_trace(
+            go.Cone(
+                x=[0.0],
+                y=[0.0],
+                z=[0.0],
+                u=[-k_head[0]],
+                v=[-k_head[1]],
+                w=[-k_head[2]],
+                anchor="tip",
+                sizemode="absolute",
+                sizeref=K_VECTOR_CONE_SIZE,
+                colorscale=[[0, "black"], [1, "black"]],
+                showscale=False,
+                showlegend=False,
+            )
         )
-    )
-    fig.add_trace(
-        go.Scatter3d(
-            x=[k_head[0] * K_VECTOR_LABEL_SCALE],
-            y=[k_head[1] * K_VECTOR_LABEL_SCALE],
-            z=[k_head[2] * K_VECTOR_LABEL_SCALE],
-            mode="text",
-            text=["kᵢ"],
-            textfont=dict(size=K_VECTOR_LABEL_SIZE),
-            showlegend=False,
+        fig.add_trace(
+            go.Scatter3d(
+                x=[k_head[0] * K_VECTOR_LABEL_SCALE],
+                y=[k_head[1] * K_VECTOR_LABEL_SCALE],
+                z=[k_head[2] * K_VECTOR_LABEL_SCALE],
+                mode="text",
+                text=["kᵢ"],
+                textfont=dict(size=K_VECTOR_LABEL_SIZE),
+                showlegend=False,
+            )
         )
-    )
 
-    r_arc = 0.3 * K_MAG
-    arc_thetas = np.linspace(0.0, theta_i, 50)
-    fig.add_trace(
-        go.Scatter3d(
-            x=np.zeros_like(arc_thetas),
-            y=r_arc * np.cos(arc_thetas),
-            z=r_arc * np.sin(arc_thetas),
-            mode="lines",
-            line=dict(color="magenta", width=3, dash="dot"),
-            showlegend=False,
+        r_arc = 0.3 * K_MAG
+        arc_thetas = np.linspace(0.0, theta_i, 50)
+        fig.add_trace(
+            go.Scatter3d(
+                x=np.zeros_like(arc_thetas),
+                y=r_arc * np.cos(arc_thetas),
+                z=r_arc * np.sin(arc_thetas),
+                mode="lines",
+                line=dict(color="magenta", width=3, dash="dot"),
+                showlegend=False,
+            )
         )
-    )
-    fig.add_trace(
-        go.Scatter3d(
-            x=[0.0],
-            y=[r_arc * np.cos(theta_i / 2.0)],
-            z=[r_arc * np.sin(theta_i / 2.0)],
-            mode="text",
-            text=["θᵢ"],
-            textfont=dict(size=THETA_LABEL_SIZE),
-            showlegend=False,
+        fig.add_trace(
+            go.Scatter3d(
+                x=[0.0],
+                y=[r_arc * np.cos(theta_i / 2.0)],
+                z=[r_arc * np.sin(theta_i / 2.0)],
+                mode="text",
+                text=["θᵢ"],
+                textfont=dict(size=THETA_LABEL_SIZE),
+                showlegend=False,
+            )
         )
-    )
 
     fig.update_scenes(_detector_scene_layout(aspectmode="data"))
     fig.update_layout(
