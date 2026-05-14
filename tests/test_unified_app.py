@@ -644,13 +644,40 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
     assert len(visible_colorbars) == 1
     assert "Bragg sphere" in trace_names
     assert "Bragg/Ewald overlap" in trace_names
-    assert "Bragg/Ewald overlap band" in trace_names
+    assert "Bragg/Ewald overlap band" not in trace_names
     assert not any(name in {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"} for name in trace_names)
     assert not any(getattr(trace, "type", "") == "cone" for trace in fig.data)
     assert "kᵢ" not in trace_text
     assert "θᵢ" not in trace_text
     for scene_name in scene_names:
+        scene_traces = [
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+        ]
+        scene_trace_names = [getattr(trace, "name", "") for trace in scene_traces]
+        assert "Bragg sphere" in scene_trace_names
+        assert "Bragg/Ewald overlap" in scene_trace_names
+    for scene_name in scene_names:
         assert layout_json[scene_name]["camera"] == camera
+
+
+def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible():
+    fig = unified_app._build_special_cause_matrix_figure(
+        {
+            "sigma_deg": 0.8,
+            "Gamma_deg": 5.0,
+            "eta": 0.5,
+            "wavelength_bandwidth_pct": 5.0,
+            "ewald_shell_sample_count": 3,
+            "center_bragg_only": False,
+        },
+    )
+    trace_names = [getattr(trace, "name", "") for trace in fig.data]
+
+    assert "Bragg/Ewald overlap band" in trace_names
+    assert "Ewald shell inner" in trace_names
+    assert "Ewald shell outer" in trace_names
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():

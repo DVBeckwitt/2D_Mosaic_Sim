@@ -37,7 +37,7 @@ The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public 
 - Export quality follows the browser Plotly renderer already used by the app.
 - The generated figure spec is transient and stored in memory only.
 - A click nonce is included so repeated exports with unchanged settings still trigger downloads.
-- The exported matrix uses the current `Hide Ewald + angle helpers` state, while still fixing matrix columns and rows to the requested `theta_i` and `00L` comparison values.
+- The exported matrix uses the current `Hide Ewald + angle helpers` state, while still fixing matrix columns and rows to the requested `theta_i` and `00L` comparison values. In hide-helper matrix exports, the broad continuous overlap-band helper surface is omitted so the sampled Bragg/Ewald overlap lines remain readable.
 - Each matrix export removes any previous off-screen matrix export host before rendering the next one, then purges and removes its own host after completion.
 - Browser-managed duplicate filenames remain outside the app boundary; the app does not delete files from the user's download directory.
 - Rollback is a normal git revert of the feature commit; no migration or data cleanup is needed.

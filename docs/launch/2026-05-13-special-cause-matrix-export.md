@@ -10,7 +10,7 @@ Ready for local use as of 2026-05-13.
 - Matrix rows are `003`, `006`, and `009`.
 - Matrix row labels appear on the left side as `L = 3`, `L = 6`, and `L = 9`.
 - Keeps one mosaic-intensity color legend for the whole figure.
-- Respects the current `Hide Ewald + angle helpers` state in all nine exported panels.
+- Respects the current `Hide Ewald + angle helpers` state in all nine exported panels, omitting the broad overlap-band helper surface while keeping sampled Bragg/Ewald overlap lines visible.
 - Repeated exports remove any previous off-screen matrix export host before rendering the next one.
 
 ## Non-Goals
@@ -25,7 +25,7 @@ Ready for local use as of 2026-05-13.
 - `python -m pip check`
 - `git diff --check`
 - Local Dash health check returned HTTP 200 at `http://127.0.0.1:8050`.
-- Browser export verification with `Hide Ewald + angle helpers` enabled downloaded `special_cause_reciprocal_matrix.png`, left zero off-screen export hosts, and produced no console or page errors.
+- Browser export verification with `Hide Ewald + angle helpers` enabled downloaded `special_cause_reciprocal_matrix.png`, left zero off-screen export hosts, produced no console or page errors, and confirmed the broad pale overlap-band helper surface was absent from the exported matrix.
 
 ## CI/CD
 `.github/workflows/ci.yml` runs on pull requests, pushes to `main`, and manual dispatch. It installs the package in editable mode with dev dependencies, checks installed dependencies, compiles Python sources, runs pytest, and builds the package on Python 3.11 and 3.13.
@@ -53,4 +53,4 @@ git diff --check
 ```
 
 ## Monitoring
-For local GUI usage, monitor the browser console, Dash server output, whether repeated clicks download the latest matrix without overlapping export hosts, whether `Hide Ewald + angle helpers` still hides helpers in exported matrices, and whether `L = 3`, `L = 6`, and `L = 9` remain left-side row labels. The main risk is browser-side 3D export performance for the nine-panel figure.
+For local GUI usage, monitor the browser console, Dash server output, whether repeated clicks download the latest matrix without overlapping export hosts, whether `Hide Ewald + angle helpers` still hides helpers and the broad overlap-band helper surface in exported matrices, and whether `L = 3`, `L = 6`, and `L = 9` remain left-side row labels. The main risk is browser-side 3D export performance for the nine-panel figure.

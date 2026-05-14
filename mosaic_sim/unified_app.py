@@ -1063,12 +1063,15 @@ def _build_special_cause_matrix_figure(
         vertical_spacing=0.03,
     )
 
+    hide_export_helpers = bool(values.get("center_bragg_only", False))
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         for col, theta_deg in enumerate(SPECIAL_CAUSE_MATRIX_THETA_DEG, start=1):
             cell_fig = _build_special_cause_matrix_cell(values, L=L, theta_deg=theta_deg)
             show_cell_colorbar = row == 1 and col == 1
             for trace in cell_fig.data:
                 trace_copy = copy.deepcopy(trace)
+                if hide_export_helpers and getattr(trace_copy, "name", "") == "Bragg/Ewald overlap band":
+                    continue
                 if getattr(trace_copy, "name", "") == "Bragg sphere":
                     trace_copy.showscale = show_cell_colorbar
                     trace_copy.cmin = 0.0
