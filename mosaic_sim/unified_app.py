@@ -13,6 +13,7 @@ import webbrowser
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
+import numpy as np
 import plotly.graph_objects as go
 from dash import ALL, MATCH, Dash, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
@@ -83,6 +84,13 @@ SPECIAL_CAUSE_DEFAULT_THETA_I_DEG = 5.0
 SPECIAL_CAUSE_MATRIX_THETA_DEG = (5.0, 10.0, 15.0)
 SPECIAL_CAUSE_MATRIX_L_VALUES = (3, 6, 9)
 SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX = 1800
+SPECIAL_CAUSE_MATRIX_HIDE_SCALE_PADDING = 1.08
+SPECIAL_CAUSE_MATRIX_OBLIQUE_HELPER_OPACITY = 0.04
+SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COUNT = 12
+SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COLOR = "rgba(64, 220, 235, 0.42)"
+SPECIAL_CAUSE_MATRIX_OVERLAP_WIREFRAME_COLOR = "rgba(214, 60, 130, 0.55)"
+SPECIAL_CAUSE_MATRIX_BRAGG_WIREFRAME_COLOR = "rgba(35, 35, 35, 0.9)"
+SPECIAL_CAUSE_MATRIX_OBLIQUE_BRAGG_COLORSCALE = [[0, "rgb(70,70,70)"], [1, "rgb(255,0,0)"]]
 POWDER_SPHERE_SELECTION_KEY = "sphere_selection"
 POWDER_RING_SELECTION_KEY = "ring_selection"
 POWDER_CYLINDER_SELECTION_KEY = "cylinder_selection"
@@ -1044,6 +1052,109 @@ def _build_special_cause_matrix_cell(values: dict[str, Any], *, L: int, theta_de
     )
 
 
+def _shared_special_cause_matrix_hide_range(traces: list[go.BaseTraceType]) -> list[float] | None:
+    max_extent = 0.0
+    for trace in traces:
+        for coordinate_name in ("x", "y", "z"):
+            coordinate_values = getattr(trace, coordinate_name, None)
+            if coordinate_values is None:
+                continue
+            try:
+                coordinate_array = np.asarray(coordinate_values, dtype=float)
+            except (TypeError, ValueError):
+                continue
+            if coordinate_array.size == 0:
+                continue
+            finite_values = coordinate_array[np.isfinite(coordinate_array)]
+            if finite_values.size:
+                max_extent = max(max_extent, float(np.max(np.abs(finite_values))))
+
+    if max_extent <= 0.0 or not math.isfinite(max_extent):
+        return None
+    padded_extent = max_extent * SPECIAL_CAUSE_MATRIX_HIDE_SCALE_PADDING
+    return [-padded_extent, padded_extent]
+
+
+def _apply_special_cause_matrix_hide_scale(scene_layout: dict[str, Any], axis_range: list[float]) -> None:
+    scene_layout["aspectmode"] = "cube"
+    for axis_name in ("xaxis", "yaxis", "zaxis"):
+        axis_layout = dict(scene_layout.get(axis_name, {}))
+        axis_layout["range"] = list(axis_range)
+        scene_layout[axis_name] = axis_layout
+
+
+_SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES = frozenset(
+    {"Ewald shell inner", "Ewald shell outer", "Ewald sphere", "Bragg/Ewald overlap band"}
+)
+_SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES = frozenset(
+    {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"}
+)
+
+
+def _special_cause_matrix_visible_trace_order(trace: go.BaseTraceType) -> int:
+    trace_name = getattr(trace, "name", "")
+    if trace_name in _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES:
+        return 0
+    if trace_name == "Bragg sphere":
+        return 1
+    return 2
+
+
+def _special_cause_matrix_surface_wireframe_trace(
+    trace: go.BaseTraceType,
+    *,
+    color: str,
+    width: float,
+) -> go.BaseTraceType:
+    try:
+        x = np.asarray(getattr(trace, "x"), dtype=float)
+        y = np.asarray(getattr(trace, "y"), dtype=float)
+        z = np.asarray(getattr(trace, "z"), dtype=float)
+    except (TypeError, ValueError):
+        return trace
+    if x.ndim != 2 or x.shape != y.shape or x.shape != z.shape:
+        return trace
+
+    row_indices = np.linspace(
+        0,
+        x.shape[0] - 1,
+        min(SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COUNT, x.shape[0]),
+        dtype=int,
+    )
+    col_indices = np.linspace(
+        0,
+        x.shape[1] - 1,
+        min(SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COUNT, x.shape[1]),
+        dtype=int,
+    )
+    wire_x: list[float] = []
+    wire_y: list[float] = []
+    wire_z: list[float] = []
+
+    def append_line(line_x: np.ndarray, line_y: np.ndarray, line_z: np.ndarray) -> None:
+        wire_x.extend(float(value) for value in line_x)
+        wire_y.extend(float(value) for value in line_y)
+        wire_z.extend(float(value) for value in line_z)
+        wire_x.append(math.nan)
+        wire_y.append(math.nan)
+        wire_z.append(math.nan)
+
+    for row_index in row_indices:
+        append_line(x[row_index, :], y[row_index, :], z[row_index, :])
+    for col_index in col_indices:
+        append_line(x[:, col_index], y[:, col_index], z[:, col_index])
+
+    return go.Scatter3d(
+        x=wire_x,
+        y=wire_y,
+        z=wire_z,
+        mode="lines",
+        line=dict(color=color, width=width),
+        showlegend=False,
+        name=getattr(trace, "name", None),
+    )
+
+
 def _build_special_cause_matrix_figure(
     values: dict[str, Any],
     *,
@@ -1064,24 +1175,72 @@ def _build_special_cause_matrix_figure(
     )
 
     hide_export_helpers = bool(values.get("center_bragg_only", False))
+    hide_export_traces: list[go.BaseTraceType] = []
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         for col, theta_deg in enumerate(SPECIAL_CAUSE_MATRIX_THETA_DEG, start=1):
             cell_fig = _build_special_cause_matrix_cell(values, L=L, theta_deg=theta_deg)
             show_cell_colorbar = row == 1 and col == 1
+            cell_traces: list[go.BaseTraceType] = []
             for trace in cell_fig.data:
                 trace_copy = copy.deepcopy(trace)
-                if hide_export_helpers and getattr(trace_copy, "name", "") == "Bragg/Ewald overlap band":
+                trace_name = getattr(trace_copy, "name", "")
+                supplemental_traces: list[go.BaseTraceType] = []
+                if hide_export_helpers and trace_name == "Bragg/Ewald overlap band":
                     continue
-                if getattr(trace_copy, "name", "") == "Bragg sphere":
+                if (
+                    not hide_export_helpers
+                    and col > 1
+                    and trace_name in _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES
+                ):
+                    trace_copy.opacity = SPECIAL_CAUSE_MATRIX_OBLIQUE_HELPER_OPACITY
+                    if trace_name in _SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES:
+                        trace_copy = _special_cause_matrix_surface_wireframe_trace(
+                            trace_copy,
+                            color=SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COLOR,
+                            width=1,
+                        )
+                    elif trace_name == "Bragg/Ewald overlap band":
+                        trace_copy = _special_cause_matrix_surface_wireframe_trace(
+                            trace_copy,
+                            color=SPECIAL_CAUSE_MATRIX_OVERLAP_WIREFRAME_COLOR,
+                            width=2,
+                        )
+                if trace_name == "Bragg sphere":
                     trace_copy.showscale = show_cell_colorbar
                     trace_copy.cmin = 0.0
                     trace_copy.cmax = 1.0
+                    if not hide_export_helpers and col > 1:
+                        trace_copy.colorscale = SPECIAL_CAUSE_MATRIX_OBLIQUE_BRAGG_COLORSCALE
+                        trace_copy.lighting = dict(
+                            ambient=1.0,
+                            diffuse=0.0,
+                            specular=0.0,
+                            roughness=1.0,
+                            fresnel=0.0,
+                        )
+                        bragg_outline = _special_cause_matrix_surface_wireframe_trace(
+                            trace_copy,
+                            color=SPECIAL_CAUSE_MATRIX_BRAGG_WIREFRAME_COLOR,
+                            width=2,
+                        )
+                        if bragg_outline is not trace_copy:
+                            bragg_outline.name = "Bragg sphere outline"
+                            supplemental_traces.append(bragg_outline)
                     if show_cell_colorbar:
                         trace_copy.colorbar = dict(
                             title="Mosaic<br>Intensity",
                             x=1.02,
                             len=0.72,
                         )
+                cell_traces.append(trace_copy)
+                cell_traces.extend(supplemental_traces)
+
+            if not hide_export_helpers:
+                cell_traces = sorted(cell_traces, key=_special_cause_matrix_visible_trace_order)
+
+            for trace_copy in cell_traces:
+                if hide_export_helpers:
+                    hide_export_traces.append(trace_copy)
                 fig.add_trace(trace_copy, row=row, col=col)
 
             scene_name = _scene_name_for_matrix_cell(row, col)
@@ -1089,6 +1248,16 @@ def _build_special_cause_matrix_figure(
             if camera:
                 scene_layout["camera"] = camera
             fig.update_layout({scene_name: scene_layout})
+
+    if hide_export_helpers:
+        axis_range = _shared_special_cause_matrix_hide_range(hide_export_traces)
+        if axis_range is not None:
+            for row in range(1, len(SPECIAL_CAUSE_MATRIX_L_VALUES) + 1):
+                for col in range(1, len(SPECIAL_CAUSE_MATRIX_THETA_DEG) + 1):
+                    scene_name = _scene_name_for_matrix_cell(row, col)
+                    scene_layout = getattr(fig.layout, scene_name).to_plotly_json()
+                    _apply_special_cause_matrix_hide_scale(scene_layout, axis_range)
+                    fig.update_layout({scene_name: scene_layout})
 
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         scene_layout = getattr(fig.layout, _scene_name_for_matrix_cell(row, 1))

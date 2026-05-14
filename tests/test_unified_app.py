@@ -3,6 +3,7 @@ from pathlib import Path
 from dash import dcc, html
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
+import numpy as np
 import pytest
 
 import mosaic_sim.unified_app as unified_app
@@ -660,6 +661,21 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
         assert "Bragg/Ewald overlap" in scene_trace_names
     for scene_name in scene_names:
         assert layout_json[scene_name]["camera"] == camera
+    shared_scene_ranges = []
+    for scene_name in scene_names:
+        scene_layout = layout_json[scene_name]
+        assert scene_layout["aspectmode"] == "cube"
+        scene_ranges = tuple(tuple(scene_layout[axis]["range"]) for axis in ("xaxis", "yaxis", "zaxis"))
+        assert scene_ranges[0] == scene_ranges[1] == scene_ranges[2]
+        shared_scene_ranges.append(scene_ranges)
+    assert len(set(shared_scene_ranges)) == 1
+    largest_visible_coordinate = max(
+        float(np.max(np.abs(np.asarray(getattr(trace, coordinate_name), dtype=float))))
+        for trace in fig.data
+        for coordinate_name in ("x", "y", "z")
+        if getattr(trace, coordinate_name, None) is not None
+    )
+    assert 0.85 <= largest_visible_coordinate / shared_scene_ranges[0][0][1] <= 0.95
 
 
 def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible():
@@ -674,10 +690,93 @@ def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible
         },
     )
     trace_names = [getattr(trace, "name", "") for trace in fig.data]
+    layout_json = fig.to_plotly_json()["layout"]
 
     assert "Bragg/Ewald overlap band" in trace_names
     assert "Ewald shell inner" in trace_names
     assert "Ewald shell outer" in trace_names
+    for scene_name in ("scene2", "scene3", "scene5", "scene6", "scene8", "scene9"):
+        scene_trace_positions = [
+            (index, getattr(trace, "name", ""))
+            for index, trace in enumerate(fig.data)
+            if getattr(trace, "scene", "scene") == scene_name
+        ]
+        bragg_position = next(index for index, name in scene_trace_positions if name == "Bragg sphere")
+        outline_position = next(index for index, name in scene_trace_positions if name == "Bragg sphere outline")
+        assert outline_position > bragg_position
+        helper_surface_positions = [
+            index
+            for index, name in scene_trace_positions
+            if name in {"Ewald shell inner", "Ewald shell outer", "Bragg/Ewald overlap band"}
+        ]
+        assert helper_surface_positions
+        assert max(helper_surface_positions) < bragg_position
+        helper_surface_traces = [
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") in {"Ewald shell inner", "Ewald shell outer", "Bragg/Ewald overlap band"}
+        ]
+        assert helper_surface_traces
+        for trace in helper_surface_traces:
+            assert trace.type == "scatter3d"
+            assert trace.mode == "lines"
+            assert len(trace.x) == len(trace.y) == len(trace.z)
+            assert any(np.isfinite(np.asarray(trace.x, dtype=float)))
+        bragg_trace = next(
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") == "Bragg sphere"
+        )
+        assert bragg_trace.lighting.ambient == 1.0
+        assert bragg_trace.lighting.diffuse == 0.0
+        assert bragg_trace.colorscale[0][1] == "rgb(70,70,70)"
+        bragg_outline = next(
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") == "Bragg sphere outline"
+        )
+        assert bragg_outline.type == "scatter3d"
+        assert bragg_outline.mode == "lines"
+        assert any(np.isfinite(np.asarray(bragg_outline.x, dtype=float)))
+        ewald_surfaces = [
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") in {"Ewald shell inner", "Ewald shell outer"}
+        ]
+        assert ewald_surfaces
+    for scene_name in ("scene", "scene4", "scene7"):
+        helper_surface_opacities = [
+            float(getattr(trace, "opacity", 1.0))
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") in {"Ewald shell inner", "Ewald shell outer", "Bragg/Ewald overlap band"}
+        ]
+        assert max(helper_surface_opacities) > 0.05
+        assert all(
+            getattr(trace, "type", None) == "surface"
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") in {"Ewald shell inner", "Ewald shell outer"}
+        )
+        bragg_trace = next(
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") == "Bragg sphere"
+        )
+        assert bragg_trace.lighting.ambient is None
+        assert bragg_trace.colorscale[0][1] != "rgb(70,70,70)"
+        assert not any(
+            getattr(trace, "name", "") == "Bragg sphere outline"
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+        )
+    assert "range" not in layout_json["scene"]["xaxis"]
+    assert layout_json["scene"]["aspectmode"] == "data"
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():
