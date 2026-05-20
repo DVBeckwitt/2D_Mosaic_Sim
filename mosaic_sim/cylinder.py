@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import plotly.graph_objects as go
 
-from .common import build_error_figure, normalize_peak_params
+from .common import build_error_figure, flat_surface_lighting, normalize_peak_params
 from .constants import a_hex, c_hex, K_MAG, INTERSECTION_LINE_WIDTH, d_hex
 from .detector import extract_scene_camera
 from .geometry import (
@@ -231,6 +231,7 @@ def build_cylinder_figure(
                        surfacecolor=I_surface,
                        colorscale=[[0, "rgba(128,128,128,0.25)"],
                                    [1, "rgba(255,0,0,1)"]],
+                       lighting=flat_surface_lighting(),
                        showscale=True,
                        colorbar=dict(title="Mosaic<br>Intensity"),
                        name="Bragg sphere")
@@ -246,6 +247,7 @@ def build_cylinder_figure(
                 y=Ew_y,
                 z=Ew_z,
                 opacity=layer.opacity,
+                lighting=flat_surface_lighting(),
                 colorscale="Blues",
                 showscale=False,
                 showlegend=not ewald_indices,
@@ -453,6 +455,7 @@ def build_cylinder_figure(
                         z=Bz,
                         surfacecolor=I_surface,
                         colorscale=bragg.colorscale,
+                        lighting=flat_surface_lighting(),
                         showscale=False,
                     ),
                     go.Surface(

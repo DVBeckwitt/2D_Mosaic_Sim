@@ -15,6 +15,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.colors import qualitative
 
+from .common import flat_surface_lighting
 from .geometry import rot_x, sphere
 
 
@@ -429,6 +430,7 @@ def build_mono_figure(
             y=Ew_y0,
             z=Ew_z0,
             opacity=EWALD_DEFAULT_OPACITY,
+            lighting=flat_surface_lighting(),
             colorscale="Blues",
             showscale=False,
             name="Ewald sphere",
@@ -583,6 +585,7 @@ def build_mono_figure(
                     opacity=sphere_opacity,
                     surfacecolor=np.full_like(sx, g_val),
                     colorscale=[[0, color], [1, color]],
+                    lighting=flat_surface_lighting(),
                     showscale=False,
                     name=f"|G| = {g_val:.3f} Å⁻¹",
                     visible=False,
@@ -1038,6 +1041,7 @@ def build_mono_figure(
                         y=By,
                         z=Bz,
                         opacity=EWALD_DEFAULT_OPACITY,
+                        lighting=flat_surface_lighting(),
                         colorscale="Blues",
                         showscale=False,
                     ),

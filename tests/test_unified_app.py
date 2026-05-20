@@ -79,6 +79,14 @@ def _render_component_text(component) -> str:
     return _render_component_text(getattr(component, "children", None))
 
 
+def _assert_flat_surface_lighting(trace) -> None:
+    assert trace.lighting.ambient == pytest.approx(1.0)
+    assert trace.lighting.diffuse == pytest.approx(0.0)
+    assert trace.lighting.specular == pytest.approx(0.0)
+    assert trace.lighting.roughness == pytest.approx(1.0)
+    assert trace.lighting.fresnel == pytest.approx(0.0)
+
+
 def _callback_by_output(app, output_key: str):
     for key, value in app.callback_map.items():
         if key == output_key or output_key in key:
@@ -646,7 +654,25 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
     assert "Bragg sphere" in trace_names
     assert "Bragg/Ewald overlap" in trace_names
     assert "Bragg/Ewald overlap band" not in trace_names
-    assert not any(name in {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"} for name in trace_names)
+    ewald_trace_names = {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"}
+    top_left_trace_names = [
+        getattr(trace, "name", "")
+        for trace in fig.data
+        if getattr(trace, "scene", "scene") == "scene"
+    ]
+    other_trace_names = [
+        getattr(trace, "name", "")
+        for trace in fig.data
+        if getattr(trace, "scene", "scene") != "scene"
+    ]
+    top_left_ewald_names = {
+        name for name in top_left_trace_names if name in ewald_trace_names
+    }
+    other_ewald_names = {
+        name for name in other_trace_names if name in ewald_trace_names
+    }
+    assert {"Ewald shell inner", "Ewald shell outer"} <= top_left_ewald_names
+    assert not other_ewald_names
     assert not any(getattr(trace, "type", "") == "cone" for trace in fig.data)
     assert "kᵢ" not in trace_text
     assert "θᵢ" not in trace_text
@@ -691,6 +717,10 @@ def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible
     )
     trace_names = [getattr(trace, "name", "") for trace in fig.data]
     layout_json = fig.to_plotly_json()["layout"]
+    scene_names = sorted(
+        [name for name in layout_json if name.startswith("scene")],
+        key=lambda name: int(name[5:] or "1"),
+    )
 
     assert "Bragg/Ewald overlap band" in trace_names
     assert "Ewald shell inner" in trace_names
@@ -729,8 +759,7 @@ def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible
             if getattr(trace, "scene", "scene") == scene_name
             and getattr(trace, "name", "") == "Bragg sphere"
         )
-        assert bragg_trace.lighting.ambient == 1.0
-        assert bragg_trace.lighting.diffuse == 0.0
+        _assert_flat_surface_lighting(bragg_trace)
         assert bragg_trace.colorscale[0][1] == "rgb(70,70,70)"
         bragg_outline = next(
             trace
@@ -768,15 +797,35 @@ def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible
             if getattr(trace, "scene", "scene") == scene_name
             and getattr(trace, "name", "") == "Bragg sphere"
         )
-        assert bragg_trace.lighting.ambient is None
+        _assert_flat_surface_lighting(bragg_trace)
         assert bragg_trace.colorscale[0][1] != "rgb(70,70,70)"
+        for ewald_trace in (
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") in {"Ewald shell inner", "Ewald shell outer"}
+        ):
+            _assert_flat_surface_lighting(ewald_trace)
         assert not any(
             getattr(trace, "name", "") == "Bragg sphere outline"
             for trace in fig.data
             if getattr(trace, "scene", "scene") == scene_name
         )
-    assert "range" not in layout_json["scene"]["xaxis"]
-    assert layout_json["scene"]["aspectmode"] == "data"
+    shared_scene_ranges = []
+    for scene_name in scene_names:
+        scene_layout = layout_json[scene_name]
+        assert scene_layout["aspectmode"] == "cube"
+        scene_ranges = tuple(tuple(scene_layout[axis]["range"]) for axis in ("xaxis", "yaxis", "zaxis"))
+        assert scene_ranges[0] == scene_ranges[1] == scene_ranges[2]
+        shared_scene_ranges.append(scene_ranges)
+    assert len(set(shared_scene_ranges)) == 1
+    largest_visible_coordinate = max(
+        float(np.max(np.abs(np.asarray(getattr(trace, coordinate_name), dtype=float))))
+        for trace in fig.data
+        for coordinate_name in ("x", "y", "z")
+        if getattr(trace, coordinate_name, None) is not None
+    )
+    assert 0.85 <= largest_visible_coordinate / shared_scene_ranges[0][0][1] <= 0.95
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():

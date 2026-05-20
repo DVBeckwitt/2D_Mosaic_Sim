@@ -11,6 +11,18 @@ import plotly.graph_objects as go
 PeakDefaults = tuple[int, int, int, float, float, float]
 
 
+def flat_surface_lighting() -> dict[str, float]:
+    """Return Plotly surface lighting settings without directional shading."""
+
+    return {
+        "ambient": 1.0,
+        "diffuse": 0.0,
+        "specular": 0.0,
+        "roughness": 1.0,
+        "fresnel": 0.0,
+    }
+
+
 @dataclass(frozen=True)
 class PeakFigureParams:
     """Normalized HKL and pseudo-Voigt controls used by multiple viewers."""

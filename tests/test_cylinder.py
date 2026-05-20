@@ -15,6 +15,14 @@ from mosaic_sim.cylinder import (
 from mosaic_sim.geometry import ewald_bandwidth_layers
 
 
+def _assert_flat_surface_lighting(trace) -> None:
+    assert trace.lighting.ambient == pytest.approx(1.0)
+    assert trace.lighting.diffuse == pytest.approx(0.0)
+    assert trace.lighting.specular == pytest.approx(0.0)
+    assert trace.lighting.roughness == pytest.approx(1.0)
+    assert trace.lighting.fresnel == pytest.approx(0.0)
+
+
 def test_normalize_cylinder_params_uses_defaults_and_converts_units():
     params = normalize_cylinder_params(
         defaults=(1, 2, 3, 0.9, 4.1, 0.25),
@@ -72,6 +80,24 @@ def test_build_cylinder_figure_applies_explicit_camera():
     assert fig.layout.scene.camera.eye.x == pytest.approx(1.6)
     assert fig.layout.scene.camera.eye.y == pytest.approx(1.0)
     assert fig.layout.scene.camera.eye.z == pytest.approx(0.7)
+
+
+def test_build_cylinder_figure_flattens_bragg_and_ewald_surface_lighting():
+    fig = build_cylinder_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+    )
+
+    bragg_trace = next(trace for trace in fig.data if trace.name == "Bragg sphere")
+    ewald_trace = next(trace for trace in fig.data if trace.name == "Ewald sphere")
+
+    _assert_flat_surface_lighting(bragg_trace)
+    _assert_flat_surface_lighting(ewald_trace)
+    _assert_flat_surface_lighting(fig.frames[0].data[0])
 
 
 def test_build_cylinder_figure_uses_single_toggle_buttons_without_legend_overlap():

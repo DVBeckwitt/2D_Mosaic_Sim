@@ -54,6 +54,14 @@ def _traces_by_name(fig, name: str):
     return [trace for trace in fig.data if getattr(trace, "name", "") == name]
 
 
+def _assert_flat_surface_lighting(trace) -> None:
+    assert trace.lighting.ambient == pytest.approx(1.0)
+    assert trace.lighting.diffuse == pytest.approx(0.0)
+    assert trace.lighting.specular == pytest.approx(0.0)
+    assert trace.lighting.roughness == pytest.approx(1.0)
+    assert trace.lighting.fresnel == pytest.approx(0.0)
+
+
 def _trace_text_values(fig) -> list[tuple[str, ...]]:
     text_values: list[tuple[str, ...]] = []
     for trace in fig.data:
@@ -166,6 +174,35 @@ def test_build_detector_figure_supports_fixed_theta_without_animation_ui():
     assert len(fig.layout.sliders) == 0
     assert len(fig.layout.updatemenus) == 0
     assert fig.layout.uirevision == DETECTOR_CAMERA_UIREVISION
+
+
+def test_build_detector_figure_flattens_bragg_and_ewald_surface_lighting():
+    fig = build_detector_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+    )
+
+    _assert_flat_surface_lighting(fig.data[0])
+    _assert_flat_surface_lighting(_trace_by_name(fig, "Ewald sphere"))
+    _assert_flat_surface_lighting(fig.frames[0].data[0])
+
+
+def test_build_detector_companion_figure_flattens_bragg_and_ewald_surface_lighting():
+    fig = detector_module.build_detector_companion_figure(
+        H=0,
+        K=0,
+        L=12,
+        sigma=np.deg2rad(0.8),
+        Gamma=np.deg2rad(5.0),
+        eta=0.5,
+    )
+
+    _assert_flat_surface_lighting(fig.data[0])
+    _assert_flat_surface_lighting(fig.data[1])
 
 
 def test_build_detector_figure_locks_detector_and_centered_scaling_to_global_max():
@@ -484,6 +521,20 @@ def test_build_special_cause_reciprocal_figure_shows_bragg_mosaic_with_transpare
     assert all(bragg_surface.opacity > trace.opacity for trace in auxiliary_surfaces)
     assert {trace.opacity for trace in opaque_intersections} == {1.0}
     assert "rgba" not in str(bragg_surface.colorscale).lower()
+
+
+def test_build_special_cause_reciprocal_figure_flattens_bragg_and_ewald_surface_lighting():
+    fig = detector_module.build_special_cause_reciprocal_figure()
+
+    for trace_name in ("Bragg sphere", "Ewald shell inner", "Ewald shell outer"):
+        _assert_flat_surface_lighting(_trace_by_name(fig, trace_name))
+
+
+def test_build_special_cause_reciprocal_figure_flattens_mono_ewald_surface_lighting():
+    fig = detector_module.build_special_cause_reciprocal_figure(wavelength_bandwidth_pct=0.0)
+
+    for trace_name in ("Bragg sphere", "Ewald sphere"):
+        _assert_flat_surface_lighting(_trace_by_name(fig, trace_name))
 
 
 def test_build_special_cause_reciprocal_figure_keeps_geometry_stable_when_mosaic_changes():

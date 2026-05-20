@@ -84,7 +84,7 @@ SPECIAL_CAUSE_DEFAULT_THETA_I_DEG = 5.0
 SPECIAL_CAUSE_MATRIX_THETA_DEG = (5.0, 10.0, 15.0)
 SPECIAL_CAUSE_MATRIX_L_VALUES = (3, 6, 9)
 SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX = 1800
-SPECIAL_CAUSE_MATRIX_HIDE_SCALE_PADDING = 1.08
+SPECIAL_CAUSE_MATRIX_SCALE_PADDING = 1.08
 SPECIAL_CAUSE_MATRIX_OBLIQUE_HELPER_OPACITY = 0.04
 SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COUNT = 12
 SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COLOR = "rgba(64, 220, 235, 0.42)"
@@ -1052,7 +1052,7 @@ def _build_special_cause_matrix_cell(values: dict[str, Any], *, L: int, theta_de
     )
 
 
-def _shared_special_cause_matrix_hide_range(traces: list[go.BaseTraceType]) -> list[float] | None:
+def _shared_special_cause_matrix_axis_range(traces: list[go.BaseTraceType]) -> list[float] | None:
     max_extent = 0.0
     for trace in traces:
         for coordinate_name in ("x", "y", "z"):
@@ -1071,11 +1071,11 @@ def _shared_special_cause_matrix_hide_range(traces: list[go.BaseTraceType]) -> l
 
     if max_extent <= 0.0 or not math.isfinite(max_extent):
         return None
-    padded_extent = max_extent * SPECIAL_CAUSE_MATRIX_HIDE_SCALE_PADDING
+    padded_extent = max_extent * SPECIAL_CAUSE_MATRIX_SCALE_PADDING
     return [-padded_extent, padded_extent]
 
 
-def _apply_special_cause_matrix_hide_scale(scene_layout: dict[str, Any], axis_range: list[float]) -> None:
+def _apply_special_cause_matrix_shared_scale(scene_layout: dict[str, Any], axis_range: list[float]) -> None:
     scene_layout["aspectmode"] = "cube"
     for axis_name in ("xaxis", "yaxis", "zaxis"):
         axis_layout = dict(scene_layout.get(axis_name, {}))
@@ -1175,10 +1175,19 @@ def _build_special_cause_matrix_figure(
     )
 
     hide_export_helpers = bool(values.get("center_bragg_only", False))
-    hide_export_traces: list[go.BaseTraceType] = []
+    top_left_visible_trace_names = {
+        "Bragg sphere",
+        "Bragg/Ewald overlap",
+        *_SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES,
+    }
+    matrix_scale_traces: list[go.BaseTraceType] = []
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         for col, theta_deg in enumerate(SPECIAL_CAUSE_MATRIX_THETA_DEG, start=1):
-            cell_fig = _build_special_cause_matrix_cell(values, L=L, theta_deg=theta_deg)
+            top_left_ewald_export = hide_export_helpers and row == 1 and col == 1
+            cell_values = (
+                {**values, "center_bragg_only": False} if top_left_ewald_export else values
+            )
+            cell_fig = _build_special_cause_matrix_cell(cell_values, L=L, theta_deg=theta_deg)
             show_cell_colorbar = row == 1 and col == 1
             cell_traces: list[go.BaseTraceType] = []
             for trace in cell_fig.data:
@@ -1186,6 +1195,8 @@ def _build_special_cause_matrix_figure(
                 trace_name = getattr(trace_copy, "name", "")
                 supplemental_traces: list[go.BaseTraceType] = []
                 if hide_export_helpers and trace_name == "Bragg/Ewald overlap band":
+                    continue
+                if top_left_ewald_export and trace_name not in top_left_visible_trace_names:
                     continue
                 if (
                     not hide_export_helpers
@@ -1239,8 +1250,7 @@ def _build_special_cause_matrix_figure(
                 cell_traces = sorted(cell_traces, key=_special_cause_matrix_visible_trace_order)
 
             for trace_copy in cell_traces:
-                if hide_export_helpers:
-                    hide_export_traces.append(trace_copy)
+                matrix_scale_traces.append(trace_copy)
                 fig.add_trace(trace_copy, row=row, col=col)
 
             scene_name = _scene_name_for_matrix_cell(row, col)
@@ -1249,15 +1259,14 @@ def _build_special_cause_matrix_figure(
                 scene_layout["camera"] = camera
             fig.update_layout({scene_name: scene_layout})
 
-    if hide_export_helpers:
-        axis_range = _shared_special_cause_matrix_hide_range(hide_export_traces)
-        if axis_range is not None:
-            for row in range(1, len(SPECIAL_CAUSE_MATRIX_L_VALUES) + 1):
-                for col in range(1, len(SPECIAL_CAUSE_MATRIX_THETA_DEG) + 1):
-                    scene_name = _scene_name_for_matrix_cell(row, col)
-                    scene_layout = getattr(fig.layout, scene_name).to_plotly_json()
-                    _apply_special_cause_matrix_hide_scale(scene_layout, axis_range)
-                    fig.update_layout({scene_name: scene_layout})
+    axis_range = _shared_special_cause_matrix_axis_range(matrix_scale_traces)
+    if axis_range is not None:
+        for row in range(1, len(SPECIAL_CAUSE_MATRIX_L_VALUES) + 1):
+            for col in range(1, len(SPECIAL_CAUSE_MATRIX_THETA_DEG) + 1):
+                scene_name = _scene_name_for_matrix_cell(row, col)
+                scene_layout = getattr(fig.layout, scene_name).to_plotly_json()
+                _apply_special_cause_matrix_shared_scale(scene_layout, axis_range)
+                fig.update_layout({scene_name: scene_layout})
 
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         scene_layout = getattr(fig.layout, _scene_name_for_matrix_cell(row, 1))

@@ -10,7 +10,7 @@ Ready for local use as of 2026-05-13.
 - Matrix rows are `003`, `006`, and `009`.
 - Matrix row labels appear on the left side as `L = 3`, `L = 6`, and `L = 9`.
 - Keeps one mosaic-intensity color legend for the whole figure.
-- Respects the current `Hide Ewald + angle helpers` state in all nine exported panels, omitting the broad overlap-band helper surface while keeping sampled Bragg/Ewald overlap lines visible and using one shared hide-mode scene scale so the largest `L = 9` sphere fills its panel.
+- Respects the current `Hide Ewald + angle helpers` state in exported panels, omitting the broad overlap-band helper surface while keeping sampled Bragg/Ewald overlap lines visible. The top-left reference panel still includes Ewald sphere/shell geometry even when helpers are hidden, and all panels use one shared hide-mode scene scale so the largest `L = 9` sphere fills its panel.
 - Keeps helper-visible `theta_i = 10°` and `15°` panels legible by rendering Ewald shell and broad overlap helpers as wireframes and adding a Bragg sphere outline in those columns.
 - Repeated exports remove any previous off-screen matrix export host before rendering the next one.
 
@@ -55,4 +55,4 @@ git diff --check
 ```
 
 ## Monitoring
-For local GUI usage, monitor the browser console, Dash server output, whether repeated clicks download the latest matrix without overlapping export hosts, whether `Hide Ewald + angle helpers` still hides helpers and the broad overlap-band helper surface in exported matrices, whether the biggest hidden-helper sphere still fills its panel without clipping, whether helper-visible `10°` and `15°` matrix cells continue to show the full Bragg sphere outline with Ewald helpers present, and whether `L = 3`, `L = 6`, and `L = 9` remain left-side row labels. The main risk is browser-side 3D export performance for the nine-panel figure.
+For local GUI usage, monitor the browser console, Dash server output, whether repeated clicks download the latest matrix without overlapping export hosts, whether `Hide Ewald + angle helpers` still hides helpers and the broad overlap-band helper surface in exported matrices except for the top-left Ewald sphere/shell reference, whether the biggest hidden-helper sphere still fills its panel without clipping, whether helper-visible `10°` and `15°` matrix cells continue to show the full Bragg sphere outline with Ewald helpers present, and whether `L = 3`, `L = 6`, and `L = 9` remain left-side row labels. The main risk is browser-side 3D export performance for the nine-panel figure.
