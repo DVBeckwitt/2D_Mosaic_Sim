@@ -7,14 +7,14 @@ Accepted
 2026-05-13
 
 ## Context
-`Special Cause Reciprocal` needs a one-click export that captures the current camera and non-matrix settings as one 3x3 figure. Columns vary `theta_i` across `5°`, `10°`, and `15°`; rows vary the reciprocal peak across `003`, `006`, and `009`; all panels share one mosaic-intensity color legend.
+`Special Cause Reciprocal` needs a one-click export that captures current non-matrix settings as one 3x3 figure using a reference `L = 9` matrix view. Columns vary `theta_i` across `5°`, `10°`, and `15°`; rows vary the reciprocal peak across `003`, `006`, and `009`; all panels share one mosaic-intensity color legend.
 
 The app already exports PNGs from rendered Plotly.js figures in the browser. A server-side Plotly/Kaleido PNG export was tested as an alternative, but a reduced nine-scene smoke case timed out locally, making it too slow and brittle for this interactive workflow.
 
 ## Decision
 Build the 3x3 comparison as a Plotly subplot figure on the Dash server, pass that figure spec through an in-memory `dcc.Store`, then render it off-screen in the browser with Plotly.js and download it with `Plotly.downloadImage`.
 
-The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public Python function signature, console entry point, CLI argument, or existing Dash component ID was removed.
+The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public Python function signature, console entry point, CLI argument, or existing Dash component ID was removed. The matrix builder does not accept a camera override because the matrix export is defined by the reference view rather than the live single-view camera.
 
 ## Alternatives Considered
 
@@ -30,14 +30,15 @@ The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public 
 
 ### Static precomputed matrix
 - Pros: Fastest download.
-- Cons: Would ignore current camera and settings.
-- Rejected: User needs to choose the perspective and other settings before saving.
+- Cons: Would ignore current settings.
+- Rejected: User needs the current non-matrix settings reflected before saving.
 
 ## Consequences
 - Export quality follows the browser Plotly renderer already used by the app.
 - The generated figure spec is transient and stored in memory only.
 - A click nonce is included so repeated exports with unchanged settings still trigger downloads.
-- The exported matrix uses the current `Hide Ewald + angle helpers` state, while still fixing matrix columns and rows to the requested `theta_i` and `00L` comparison values. In hide-helper matrix exports, the broad continuous overlap-band helper surface is omitted so the sampled Bragg/Ewald overlap lines remain readable, but the top-left reference panel still includes the Ewald sphere/shell geometry. All nine scenes use one shared visible-trace scale so the largest `L = 9` sphere fills its panel while smaller rows remain proportionally smaller. In helper-visible matrix exports, the `10°` and `15°` columns avoid stacked transparent helper surfaces by converting Ewald shell and broad overlap helper surfaces to wireframe traces, then add a high-contrast Bragg outline so Plotly's 3D export keeps the full Bragg sphere visible.
+- The exported matrix uses the current `Hide Ewald + angle helpers` state, while still fixing matrix columns and rows to the requested `theta_i` and `00L` comparison values. In hide-helper matrix exports, the broad continuous overlap-band helper surface is omitted so the sampled Bragg/Ewald overlap lines remain readable, but the top-left reference panel still includes the Ewald sphere/shell geometry. All nine scenes use one shared `L = 9` Bragg reference scale so the largest Bragg sphere fills its panel while smaller rows remain proportionally smaller. In helper-visible matrix exports, the `10°` and `15°` columns avoid stacked transparent helper surfaces by converting Ewald shell and broad overlap helper surfaces to wireframe traces, then add a high-contrast Bragg outline so Plotly's 3D export keeps the full Bragg sphere visible.
+- Single-view camera state remains available for normal plot interactions and single-figure PNG export, but matrix export does not read or persist it.
 - Each matrix export removes any previous off-screen matrix export host before rendering the next one, then purges and removes its own host after completion.
 - Browser-managed duplicate filenames remain outside the app boundary; the app does not delete files from the user's download directory.
 - Rollback is a normal git revert of the feature commit; no migration or data cleanup is needed.

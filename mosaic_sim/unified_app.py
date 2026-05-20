@@ -1157,8 +1157,6 @@ def _special_cause_matrix_surface_wireframe_trace(
 
 def _build_special_cause_matrix_figure(
     values: dict[str, Any],
-    *,
-    camera: dict[str, Any] | None = None,
 ) -> go.Figure:
     """Return a fixed 3x3 special-cause reciprocal comparison figure."""
 
@@ -1181,6 +1179,8 @@ def _build_special_cause_matrix_figure(
         *_SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES,
     }
     matrix_scale_traces: list[go.BaseTraceType] = []
+    reference_scale_traces: list[go.BaseTraceType] = []
+    reference_l_value = max(SPECIAL_CAUSE_MATRIX_L_VALUES)
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         for col, theta_deg in enumerate(SPECIAL_CAUSE_MATRIX_THETA_DEG, start=1):
             top_left_ewald_export = hide_export_helpers and row == 1 and col == 1
@@ -1243,6 +1243,8 @@ def _build_special_cause_matrix_figure(
                             x=1.02,
                             len=0.72,
                         )
+                    if L == reference_l_value:
+                        reference_scale_traces.append(trace_copy)
                 cell_traces.append(trace_copy)
                 cell_traces.extend(supplemental_traces)
 
@@ -1255,11 +1257,11 @@ def _build_special_cause_matrix_figure(
 
             scene_name = _scene_name_for_matrix_cell(row, col)
             scene_layout = cell_fig.layout.scene.to_plotly_json()
-            if camera:
-                scene_layout["camera"] = camera
             fig.update_layout({scene_name: scene_layout})
 
-    axis_range = _shared_special_cause_matrix_axis_range(matrix_scale_traces)
+    axis_range = _shared_special_cause_matrix_axis_range(
+        reference_scale_traces
+    ) or _shared_special_cause_matrix_axis_range(matrix_scale_traces)
     if axis_range is not None:
         for row in range(1, len(SPECIAL_CAUSE_MATRIX_L_VALUES) + 1):
             for col in range(1, len(SPECIAL_CAUSE_MATRIX_THETA_DEG) + 1):
@@ -2205,7 +2207,7 @@ def build_unified_app(
                                         "Save 3x3 Matrix",
                                         id="export-special-cause-matrix-button",
                                         n_clicks=0,
-                                        title="Download a 3x3 special-cause comparison using the current camera",
+                                        title="Download a 3x3 special-cause comparison using the reference L = 9 view",
                                         className="simulation-toolbar-button",
                                         style=_special_cause_matrix_export_style(mode),
                                     ),
@@ -2433,26 +2435,20 @@ def build_unified_app(
         Input("export-special-cause-matrix-button", "n_clicks"),
         State("simulation-mode", "value"),
         State("simulation-state", "data"),
-        State("simulation-camera-state", "data"),
-        State("simulation-figure", "relayoutData"),
         prevent_initial_call=True,
     )
     def prepare_special_cause_matrix_export(
         n_clicks,
         mode_value,
         state_value,
-        camera_state_value,
-        relayout_data,
     ):  # pragma: no cover - UI callback
         mode_key = _resolve_mode(mode_value)
         if not n_clicks or mode_key != SPECIAL_CAUSE_RECIPROCAL_MODE:
             raise PreventUpdate
 
         values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
-        camera_state = dict(camera_state_value or {})
-        camera = camera_state.get(mode_key) or extract_scene_camera(relayout_data)
         try:
-            figure_data = _build_special_cause_matrix_figure(values, camera=camera).to_plotly_json()
+            figure_data = _build_special_cause_matrix_figure(values).to_plotly_json()
             figure_data["export_request"] = n_clicks
             return figure_data
         except ValueError as exc:
