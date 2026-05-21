@@ -87,6 +87,97 @@ def _assert_flat_surface_lighting(trace) -> None:
     assert trace.lighting.fresnel == pytest.approx(0.0)
 
 
+def _assert_flat_surface_lighting_dict(lighting) -> None:
+    assert lighting["ambient"] == pytest.approx(1.0)
+    assert lighting["diffuse"] == pytest.approx(0.0)
+    assert lighting["specular"] == pytest.approx(0.0)
+    assert lighting["roughness"] == pytest.approx(1.0)
+    assert lighting["fresnel"] == pytest.approx(0.0)
+
+
+def _trace_max_abs_coordinate(trace) -> float:
+    max_coordinate = 0.0
+    for coordinate_name in ("x", "y", "z"):
+        coordinate_values = getattr(trace, coordinate_name, None)
+        if coordinate_values is None:
+            continue
+        coordinate_array = np.asarray(coordinate_values, dtype=float)
+        finite_values = coordinate_array[np.isfinite(coordinate_array)]
+        if finite_values.size:
+            max_coordinate = max(max_coordinate, float(np.max(np.abs(finite_values))))
+    return max_coordinate
+
+
+def _trace_center_and_extent(trace) -> tuple[np.ndarray, float]:
+    minima = []
+    maxima = []
+    for coordinate_name in ("x", "y", "z"):
+        coordinate_values = getattr(trace, coordinate_name, None)
+        assert coordinate_values is not None
+        coordinate_array = np.asarray(coordinate_values, dtype=float)
+        finite_values = coordinate_array[np.isfinite(coordinate_array)]
+        assert finite_values.size
+        minima.append(float(np.min(finite_values)))
+        maxima.append(float(np.max(finite_values)))
+
+    minimum_array = np.array(minima, dtype=float)
+    maximum_array = np.array(maxima, dtype=float)
+    center = (minimum_array + maximum_array) / 2.0
+    extent = float(np.max(np.maximum(maximum_array - center, center - minimum_array)))
+    return center, extent
+
+
+def _matrix_scene_names(layout_json):
+    return sorted(
+        [name for name in layout_json if name.startswith("scene")],
+        key=lambda name: int(name[5:] or "1"),
+    )
+
+
+def _assert_shared_matrix_scene_scale(layout_json, scene_names):
+    shared_scene_ranges = []
+    expected_range = (
+        -unified_app.SPECIAL_CAUSE_MATRIX_SCALE_PADDING,
+        unified_app.SPECIAL_CAUSE_MATRIX_SCALE_PADDING,
+    )
+    for scene_name in scene_names:
+        scene_layout = layout_json[scene_name]
+        assert scene_layout["aspectmode"] == "cube"
+        assert scene_layout["camera"] == unified_app.SPECIAL_CAUSE_MATRIX_CAMERA
+        scene_ranges = tuple(tuple(scene_layout[axis]["range"]) for axis in ("xaxis", "yaxis", "zaxis"))
+        assert scene_ranges[0] == scene_ranges[1] == scene_ranges[2]
+        assert scene_ranges[0] == pytest.approx(expected_range)
+        assert all(scene_layout[axis]["autorange"] is False for axis in ("xaxis", "yaxis", "zaxis"))
+        shared_scene_ranges.append(scene_ranges)
+    assert len(set(shared_scene_ranges)) == 1
+    return shared_scene_ranges
+
+
+def _assert_largest_bragg_fills_shared_range(fig, shared_scene_ranges) -> None:
+    largest_bragg_coordinate = max(
+        _trace_max_abs_coordinate(trace)
+        for trace in fig.data
+        if getattr(trace, "name", "") == "Bragg sphere"
+    )
+    assert 0.94 <= largest_bragg_coordinate / shared_scene_ranges[0][0][1] <= 0.99
+
+
+def _assert_bragg_rows_centered_and_proportional(fig, scene_names) -> None:
+    reference_l = max(unified_app.SPECIAL_CAUSE_MATRIX_L_VALUES)
+    column_count = len(unified_app.SPECIAL_CAUSE_MATRIX_THETA_DEG)
+    for scene_index, scene_name in enumerate(scene_names):
+        L = unified_app.SPECIAL_CAUSE_MATRIX_L_VALUES[scene_index // column_count]
+        bragg_trace = next(
+            trace
+            for trace in fig.data
+            if getattr(trace, "scene", "scene") == scene_name
+            and getattr(trace, "name", "") == "Bragg sphere"
+        )
+        center, extent = _trace_center_and_extent(bragg_trace)
+        assert center == pytest.approx(np.zeros(3), abs=1e-12)
+        assert extent == pytest.approx(L / reference_l, rel=1e-6)
+
+
 def _callback_by_output(app, output_key: str):
     for key, value in app.callback_map.items():
         if key == output_key or output_key in key:
@@ -594,12 +685,6 @@ def test_unified_special_cause_center_bragg_callback_preserves_boolean_state():
 
 
 def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_colorbar():
-    camera = {
-        "eye": {"x": 1.25, "y": 1.1, "z": 0.85},
-        "up": {"x": 0.0, "y": 0.0, "z": 1.0},
-        "center": {"x": 0.0, "y": 0.0, "z": 0.0},
-    }
-
     fig = unified_app._build_special_cause_matrix_figure(
         {
             "sigma_deg": 0.8,
@@ -609,13 +694,9 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
             "ewald_shell_sample_count": 3,
             "center_bragg_only": True,
         },
-        camera=camera,
     )
     layout_json = fig.to_plotly_json()["layout"]
-    scene_names = sorted(
-        [name for name in layout_json if name.startswith("scene")],
-        key=lambda name: int(name[5:] or "1"),
-    )
+    scene_names = _matrix_scene_names(layout_json)
     annotations = layout_json["annotations"]
     annotation_text = " ".join(annotation["text"] for annotation in annotations)
     row_label_annotations = [
@@ -655,24 +736,7 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
     assert "Bragg/Ewald overlap" in trace_names
     assert "Bragg/Ewald overlap band" not in trace_names
     ewald_trace_names = {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"}
-    top_left_trace_names = [
-        getattr(trace, "name", "")
-        for trace in fig.data
-        if getattr(trace, "scene", "scene") == "scene"
-    ]
-    other_trace_names = [
-        getattr(trace, "name", "")
-        for trace in fig.data
-        if getattr(trace, "scene", "scene") != "scene"
-    ]
-    top_left_ewald_names = {
-        name for name in top_left_trace_names if name in ewald_trace_names
-    }
-    other_ewald_names = {
-        name for name in other_trace_names if name in ewald_trace_names
-    }
-    assert {"Ewald shell inner", "Ewald shell outer"} <= top_left_ewald_names
-    assert not other_ewald_names
+    assert not any(name in ewald_trace_names for name in trace_names)
     assert not any(getattr(trace, "type", "") == "cone" for trace in fig.data)
     assert "kᵢ" not in trace_text
     assert "θᵢ" not in trace_text
@@ -685,23 +749,9 @@ def test_special_cause_matrix_figure_builds_fixed_angle_and_peak_grid_with_one_c
         scene_trace_names = [getattr(trace, "name", "") for trace in scene_traces]
         assert "Bragg sphere" in scene_trace_names
         assert "Bragg/Ewald overlap" in scene_trace_names
-    for scene_name in scene_names:
-        assert layout_json[scene_name]["camera"] == camera
-    shared_scene_ranges = []
-    for scene_name in scene_names:
-        scene_layout = layout_json[scene_name]
-        assert scene_layout["aspectmode"] == "cube"
-        scene_ranges = tuple(tuple(scene_layout[axis]["range"]) for axis in ("xaxis", "yaxis", "zaxis"))
-        assert scene_ranges[0] == scene_ranges[1] == scene_ranges[2]
-        shared_scene_ranges.append(scene_ranges)
-    assert len(set(shared_scene_ranges)) == 1
-    largest_visible_coordinate = max(
-        float(np.max(np.abs(np.asarray(getattr(trace, coordinate_name), dtype=float))))
-        for trace in fig.data
-        for coordinate_name in ("x", "y", "z")
-        if getattr(trace, coordinate_name, None) is not None
-    )
-    assert 0.85 <= largest_visible_coordinate / shared_scene_ranges[0][0][1] <= 0.95
+    shared_scene_ranges = _assert_shared_matrix_scene_scale(layout_json, scene_names)
+    _assert_largest_bragg_fills_shared_range(fig, shared_scene_ranges)
+    _assert_bragg_rows_centered_and_proportional(fig, scene_names)
 
 
 def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible():
@@ -717,10 +767,7 @@ def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible
     )
     trace_names = [getattr(trace, "name", "") for trace in fig.data]
     layout_json = fig.to_plotly_json()["layout"]
-    scene_names = sorted(
-        [name for name in layout_json if name.startswith("scene")],
-        key=lambda name: int(name[5:] or "1"),
-    )
+    scene_names = _matrix_scene_names(layout_json)
 
     assert "Bragg/Ewald overlap band" in trace_names
     assert "Ewald shell inner" in trace_names
@@ -811,21 +858,9 @@ def test_special_cause_matrix_figure_keeps_overlap_band_when_helpers_are_visible
             for trace in fig.data
             if getattr(trace, "scene", "scene") == scene_name
         )
-    shared_scene_ranges = []
-    for scene_name in scene_names:
-        scene_layout = layout_json[scene_name]
-        assert scene_layout["aspectmode"] == "cube"
-        scene_ranges = tuple(tuple(scene_layout[axis]["range"]) for axis in ("xaxis", "yaxis", "zaxis"))
-        assert scene_ranges[0] == scene_ranges[1] == scene_ranges[2]
-        shared_scene_ranges.append(scene_ranges)
-    assert len(set(shared_scene_ranges)) == 1
-    largest_visible_coordinate = max(
-        float(np.max(np.abs(np.asarray(getattr(trace, coordinate_name), dtype=float))))
-        for trace in fig.data
-        for coordinate_name in ("x", "y", "z")
-        if getattr(trace, coordinate_name, None) is not None
-    )
-    assert 0.85 <= largest_visible_coordinate / shared_scene_ranges[0][0][1] <= 0.95
+    shared_scene_ranges = _assert_shared_matrix_scene_scale(layout_json, scene_names)
+    _assert_largest_bragg_fills_shared_range(fig, shared_scene_ranges)
+    _assert_bragg_rows_centered_and_proportional(fig, scene_names)
 
 
 def test_unified_specular_sliders_only_keep_theta_i_live():
@@ -947,7 +982,7 @@ def test_unified_app_special_cause_matrix_export_button_is_mode_scoped():
     style_callback = _callback_by_output(special_app, "export-special-cause-matrix-button.style")
 
     assert special_button.children == "Save 3x3 Matrix"
-    assert special_button.title == "Download a 3x3 special-cause comparison using the current camera"
+    assert special_button.title == "Download a 3x3 special-cause comparison using the reference L = 9 view"
     assert isinstance(special_matrix_store, dcc.Store)
     assert special_matrix_store.storage_type == "memory"
     assert special_button.style == {}
@@ -956,52 +991,89 @@ def test_unified_app_special_cause_matrix_export_button_is_mode_scoped():
     assert style_callback("detector-view") == {"display": "none"}
 
 
-def test_unified_app_special_cause_matrix_export_callback_uses_current_state_and_camera(monkeypatch):
+def test_unified_app_special_cause_matrix_export_callback_uses_reference_matrix_view(monkeypatch):
     app = build_unified_app(initial_mode="special-cause-reciprocal")
     callback = _callback_by_output(app, "special-cause-matrix-export-figure.data")
     state = app.layout.children[0].data
     state["special-cause-reciprocal"] = dict(state["special-cause-reciprocal"])
     state["special-cause-reciprocal"]["ewald_shell_sample_count"] = 3
     state["special-cause-reciprocal"]["center_bragg_only"] = True
-    camera = {
-        "eye": {"x": 1.35, "y": 1.05, "z": 0.75},
-        "up": {"x": 0.0, "y": 0.0, "z": 1.0},
-        "center": {"x": 0.0, "y": 0.0, "z": 0.0},
-    }
     captured = {}
 
-    class FakeFigure:
-        def to_plotly_json(self):
-            return {
-                "data": [{"name": "Bragg sphere"}],
-                "layout": {"scene": {"camera": captured["camera"]}},
-            }
-
-    def fake_build_special_cause_matrix_figure(values, *, camera=None):
+    def fake_build_special_cause_matrix_export_spec(values):
         captured["values"] = values
-        captured["camera"] = camera
-        return FakeFigure()
+        return {
+            "kind": "special-cause-matrix-sprite-composite",
+            "sprites": [{"L": 9, "theta_deg": 5.0, "figure": {"data": [], "layout": {}}}],
+        }
 
     monkeypatch.setattr(
         unified_app,
-        "_build_special_cause_matrix_figure",
-        fake_build_special_cause_matrix_figure,
+        "_build_special_cause_matrix_export_spec",
+        fake_build_special_cause_matrix_export_spec,
     )
 
     figure_data = callback(
         1,
         "special-cause-reciprocal",
         state,
-        {"special-cause-reciprocal": camera},
-        None,
     )
 
     assert captured["values"]["ewald_shell_sample_count"] == 3
     assert captured["values"]["center_bragg_only"] is True
-    assert captured["camera"] == camera
-    assert figure_data["data"] == [{"name": "Bragg sphere"}]
-    assert figure_data["layout"]["scene"]["camera"] == camera
+    assert figure_data["kind"] == "special-cause-matrix-sprite-composite"
+    assert figure_data["sprites"] == [{"L": 9, "theta_deg": 5.0, "figure": {"data": [], "layout": {}}}]
     assert figure_data["export_request"] == 1
+
+
+@pytest.mark.parametrize("center_bragg_only", [True, False])
+def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_labels(center_bragg_only):
+    spec = unified_app._build_special_cause_matrix_export_spec(
+        {
+            "sigma_deg": 0.8,
+            "Gamma_deg": 5.0,
+            "eta": 0.5,
+            "wavelength_bandwidth_pct": 5.0,
+            "ewald_shell_sample_count": 3,
+            "center_bragg_only": center_bragg_only,
+        }
+    )
+
+    assert spec["kind"] == "special-cause-matrix-sprite-composite"
+    assert spec["theta_values"] == [5.0, 10.0, 15.0]
+    assert spec["L_values"] == [3, 6, 9]
+    assert len(spec["sprites"]) == 9
+    assert all("figure" in sprite for sprite in spec["sprites"])
+    assert "data" not in spec
+    assert "layout" not in spec
+
+    for sprite in spec["sprites"]:
+        figure = sprite["figure"]
+        layout = figure["layout"]
+        assert "title" not in layout
+        assert "annotations" not in layout
+        assert layout["showlegend"] is False
+        assert layout["paper_bgcolor"] == "rgba(0,0,0,0)"
+        assert layout["plot_bgcolor"] == "rgba(0,0,0,0)"
+        assert layout["scene"]["camera"] == unified_app.SPECIAL_CAUSE_MATRIX_CAMERA
+        assert layout["scene"]["xaxis"]["visible"] is False
+        assert layout["scene"]["yaxis"]["visible"] is False
+        assert layout["scene"]["zaxis"]["visible"] is False
+        assert all(trace.get("showscale", False) is False for trace in figure["data"])
+        assert all("colorbar" not in trace for trace in figure["data"])
+        bragg_traces = [trace for trace in figure["data"] if trace.get("name") == "Bragg sphere"]
+        assert len(bragg_traces) == 1
+        _assert_flat_surface_lighting_dict(bragg_traces[0]["lighting"])
+    l9_sprites = [sprite for sprite in spec["sprites"] if sprite["L"] == 9]
+    assert all(sprite["relative_extent"] == pytest.approx(1.0) for sprite in l9_sprites)
+    for theta_deg in spec["theta_values"]:
+        column_extents = [
+            sprite["relative_extent"]
+            for sprite in spec["sprites"]
+            if sprite["theta_deg"] == theta_deg
+        ]
+        assert column_extents == sorted(column_extents)
+        assert column_extents[0] < column_extents[1] < column_extents[2]
 
 
 def test_unified_app_specular_png_export_hooks_new_mode():
@@ -1036,9 +1108,15 @@ def test_png_export_callback_targets_rendered_plotly_figure_and_powder_exports()
     assert 'Downloaded reciprocal space, detector view, and centered integration.' in PNG_EXPORT_CLIENTSIDE_CALLBACK
 
 
-def test_special_cause_matrix_export_clientside_callback_downloads_single_png():
+def test_special_cause_matrix_export_clientside_callback_composes_cropped_sprites():
     assert "Plotly.newPlot" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "Plotly.downloadImage" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Plotly.toImage" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "cropSpriteToContent" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "composeSpecialCauseMatrixCanvas" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "downloadCanvasAsPng" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "targetL9ExtentPx" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "relative_extent" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Plotly.downloadImage" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "special_cause_reciprocal_matrix" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "special-cause-matrix-export-host" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "cleanupExistingMatrixExports" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
