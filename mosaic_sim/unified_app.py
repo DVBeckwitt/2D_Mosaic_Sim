@@ -605,9 +605,15 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                     let minY = height;
                     let maxX = -1;
                     let maxY = -1;
-                    queue[tail] = start;
-                    tail += 1;
-                    mask[start] = 0;
+                    const enqueueMasked = (index) => {
+                        if (!mask[index]) {
+                            return;
+                        }
+                        mask[index] = 0;
+                        queue[tail] = index;
+                        tail += 1;
+                    };
+                    enqueueMasked(start);
 
                     while (head < tail) {
                         const current = queue[head];
@@ -620,29 +626,17 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                         maxX = Math.max(maxX, x);
                         maxY = Math.max(maxY, y);
 
-                        const left = current - 1;
-                        const right = current + 1;
-                        const up = current - width;
-                        const down = current + width;
-                        if (x > 0 && mask[left]) {
-                            mask[left] = 0;
-                            queue[tail] = left;
-                            tail += 1;
+                        if (x > 0) {
+                            enqueueMasked(current - 1);
                         }
-                        if (x < width - 1 && mask[right]) {
-                            mask[right] = 0;
-                            queue[tail] = right;
-                            tail += 1;
+                        if (x < width - 1) {
+                            enqueueMasked(current + 1);
                         }
-                        if (y > 0 && mask[up]) {
-                            mask[up] = 0;
-                            queue[tail] = up;
-                            tail += 1;
+                        if (y > 0) {
+                            enqueueMasked(current - width);
                         }
-                        if (y < height - 1 && mask[down]) {
-                            mask[down] = 0;
-                            queue[tail] = down;
-                            tail += 1;
+                        if (y < height - 1) {
+                            enqueueMasked(current + width);
                         }
                     }
                     return {count, x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1};
