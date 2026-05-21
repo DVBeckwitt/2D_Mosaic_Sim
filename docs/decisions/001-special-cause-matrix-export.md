@@ -14,7 +14,7 @@ The app already exports PNGs from rendered Plotly.js figures in the browser. A s
 A previous browser export path rendered one nine-subplot Plotly figure. That kept labels and the colorbar simple, but the saved PNG was dominated by subplot whitespace, scene padding, and 3D camera margins. The matrix export needs to size the visible sphere content, not the 3D axes around it.
 
 ## Decision
-Build the 3x3 comparison as browser-composited sphere sprites. The Dash server returns an in-memory export spec containing nine label-free, transparent Plotly visual sprite figures, nine matching Bragg-only anchor figures for regression coverage, and matrix metadata. The browser renders each visual sprite off-screen with Plotly.js, converts it to a PNG data URL, crops the visual sprite to visible content, measures the centered non-cyan Bragg footprint from that sprite image, scales and centers the final placement from that Bragg footprint, clips drawing to each cell, and draws the final 2D matrix canvas with the title, row labels, column labels, and a single colorbar.
+Build the 3x3 comparison as browser-composited sphere sprites. The Dash server returns an in-memory export spec containing nine label-free, transparent Plotly visual sprite figures and matrix metadata. The browser renders each visual sprite off-screen with Plotly.js, converts it to a PNG data URL, crops the visual sprite to visible content, measures the centered non-cyan Bragg footprint from that sprite image, scales and centers the final placement from that Bragg footprint, clips drawing to each cell, and draws the final 2D matrix canvas with the title, row labels, column labels, and a single colorbar.
 
 The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public Python function signature, console entry point, CLI argument, or existing Dash component ID was removed. The active export spec does not expose a camera override because the matrix export is defined by the reference view rather than the live single-view camera. The old subplot matrix builder can remain as a private helper/test surface, but it is no longer the normal save path.
 
@@ -49,6 +49,7 @@ The visible interface remains a mode-scoped `Save 3x3 Matrix` button. No public 
 - Each matrix export removes any previous off-screen matrix export host before rendering the next one, then purges and removes its own host after completion.
 - The final matrix colorbar, title, and row/column labels are drawn once on the composite canvas and never participate in sprite cropping or sprite scaling.
 - The old subplot matrix builder is retained only as private test/debug support and is not the active save path.
+- The earlier private Bragg-anchor export-spec field was removed in follow-up cleanup because browser placement measures the visual sprite image directly, avoiding unused serialization payload.
 - Full diagnostic image dumps for raw and cropped sprites are a future support feature; the current browser callback supports optional final-composite debug boxes and placement metadata for cell, full-sprite, and scaled Bragg-bbox geometry.
 - Browser-managed duplicate filenames remain outside the app boundary; the app does not delete files from the user's download directory.
 - Rollback is a normal git revert of the feature commit; no migration or data cleanup is needed.

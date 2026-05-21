@@ -1044,7 +1044,7 @@ def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_lab
     assert spec["bragg_cell_fill_fraction"] >= 0.80
     assert spec["preserve_relative_l_scale"] is False
     assert all("figure" in sprite for sprite in spec["sprites"])
-    assert all("bragg_anchor_figure" in sprite for sprite in spec["sprites"])
+    assert all("bragg_anchor_figure" not in sprite for sprite in spec["sprites"])
     assert "data" not in spec
     assert "layout" not in spec
 
@@ -1065,24 +1065,6 @@ def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_lab
         bragg_traces = [trace for trace in figure["data"] if trace.get("name") == "Bragg sphere"]
         assert len(bragg_traces) == 1
         _assert_flat_surface_lighting(bragg_traces[0]["lighting"])
-        anchor_figure = sprite["bragg_anchor_figure"]
-        anchor_layout = anchor_figure["layout"]
-        assert "title" not in anchor_layout
-        assert "annotations" not in anchor_layout
-        assert anchor_layout["showlegend"] is False
-        assert anchor_layout["paper_bgcolor"] == "rgba(0,0,0,0)"
-        assert anchor_layout["plot_bgcolor"] == "rgba(0,0,0,0)"
-        assert anchor_layout["scene"]["camera"] == unified_app.SPECIAL_CAUSE_MATRIX_CAMERA
-        assert anchor_layout["scene"]["xaxis"]["visible"] is False
-        assert anchor_layout["scene"]["yaxis"]["visible"] is False
-        assert anchor_layout["scene"]["zaxis"]["visible"] is False
-        assert all(trace.get("showscale", False) is False for trace in anchor_figure["data"])
-        assert all("colorbar" not in trace for trace in anchor_figure["data"])
-        anchor_trace_names = {trace.get("name") for trace in anchor_figure["data"]}
-        assert anchor_trace_names <= {"Bragg sphere", "Bragg sphere outline"}
-        assert "Bragg sphere" in anchor_trace_names
-        assert all("Ewald" not in str(name) for name in anchor_trace_names)
-        assert all("overlap" not in str(name).lower() for name in anchor_trace_names)
     l9_sprites = [sprite for sprite in spec["sprites"] if sprite["L"] == 9]
     assert all(sprite["relative_extent"] == pytest.approx(1.0) for sprite in l9_sprites)
     for theta_deg in spec["theta_values"]:

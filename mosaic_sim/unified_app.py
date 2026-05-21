@@ -18,7 +18,6 @@ import plotly.graph_objects as go
 from dash import ALL, MATCH, Dash, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
-from plotly.utils import PlotlyJSONEncoder
 
 from specular_reflection_sim import (
     BeamConfig as SpecularBeamConfig,
@@ -1649,9 +1648,6 @@ _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES = frozenset(
 _SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES = frozenset(
     {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"}
 )
-_SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES = frozenset(
-    {"Bragg sphere", "Bragg sphere outline"}
-)
 
 
 def _special_cause_matrix_visible_trace_order(trace: go.BaseTraceType) -> int:
@@ -1864,20 +1860,6 @@ def _special_cause_matrix_sprite_figure(
     return fig
 
 
-def _special_cause_matrix_bragg_anchor_figure(
-    sprite_figure_json: dict[str, Any],
-) -> dict[str, Any]:
-    anchor_data = [
-        json.loads(json.dumps(trace, cls=PlotlyJSONEncoder))
-        for trace in sprite_figure_json.get("data", [])
-        if trace.get("name") in _SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES
-    ]
-    anchor_layout = json.loads(
-        json.dumps(sprite_figure_json.get("layout", {}), cls=PlotlyJSONEncoder)
-    )
-    return {"data": anchor_data, "layout": anchor_layout}
-
-
 def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str, Any]:
     """Return sprite figures and metadata for browser-side matrix compositing."""
 
@@ -1894,7 +1876,6 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
             axis_range=axis_range,
         )
         sprite_figure_json = sprite_figure.to_plotly_json()
-        bragg_anchor_figure = _special_cause_matrix_bragg_anchor_figure(sprite_figure_json)
         sprites.append(
             {
                 "row": cell.row,
@@ -1903,7 +1884,6 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
                 "theta_deg": float(SPECIAL_CAUSE_MATRIX_THETA_DEG[cell.col - 1]),
                 "relative_extent": cell.bragg_extent / reference_extent,
                 "figure": sprite_figure_json,
-                "bragg_anchor_figure": bragg_anchor_figure,
             }
         )
 
