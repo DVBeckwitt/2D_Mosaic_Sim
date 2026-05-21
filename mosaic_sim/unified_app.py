@@ -1535,11 +1535,9 @@ def _build_special_cause_matrix_cells(
             for trace in cell_fig.data:
                 trace_copy = copy.deepcopy(trace)
                 trace_name = getattr(trace_copy, "name", "")
-                supplemental_traces: list[go.BaseTraceType] = []
+                bragg_outline: go.BaseTraceType | None = None
 
-                if hide_export_helpers and trace_name in _SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES:
-                    continue
-                if hide_export_helpers and trace_name == "Bragg/Ewald overlap band":
+                if hide_export_helpers and trace_name in _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES:
                     continue
                 if (
                     not hide_export_helpers
@@ -1573,7 +1571,8 @@ def _build_special_cause_matrix_cells(
                         )
                         if bragg_outline is not trace_copy:
                             bragg_outline.name = "Bragg sphere outline"
-                            supplemental_traces.append(bragg_outline)
+                        else:
+                            bragg_outline = None
                     if show_cell_colorbar:
                         trace_copy.colorbar = dict(
                             title="Mosaic<br>Intensity",
@@ -1581,7 +1580,8 @@ def _build_special_cause_matrix_cells(
                             len=0.72,
                         )
                 cell_traces.append(trace_copy)
-                cell_traces.extend(supplemental_traces)
+                if bragg_outline is not None:
+                    cell_traces.append(bragg_outline)
 
             if not hide_export_helpers:
                 cell_traces = sorted(cell_traces, key=_special_cause_matrix_visible_trace_order)

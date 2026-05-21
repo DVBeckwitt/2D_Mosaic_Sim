@@ -79,20 +79,18 @@ def _render_component_text(component) -> str:
     return _render_component_text(getattr(component, "children", None))
 
 
-def _assert_flat_surface_lighting(trace) -> None:
-    assert trace.lighting.ambient == pytest.approx(1.0)
-    assert trace.lighting.diffuse == pytest.approx(0.0)
-    assert trace.lighting.specular == pytest.approx(0.0)
-    assert trace.lighting.roughness == pytest.approx(1.0)
-    assert trace.lighting.fresnel == pytest.approx(0.0)
-
-
-def _assert_flat_surface_lighting_dict(lighting) -> None:
-    assert lighting["ambient"] == pytest.approx(1.0)
-    assert lighting["diffuse"] == pytest.approx(0.0)
-    assert lighting["specular"] == pytest.approx(0.0)
-    assert lighting["roughness"] == pytest.approx(1.0)
-    assert lighting["fresnel"] == pytest.approx(0.0)
+def _assert_flat_surface_lighting(trace_or_lighting) -> None:
+    lighting = getattr(trace_or_lighting, "lighting", trace_or_lighting)
+    expected_values = {
+        "ambient": 1.0,
+        "diffuse": 0.0,
+        "specular": 0.0,
+        "roughness": 1.0,
+        "fresnel": 0.0,
+    }
+    for key, expected_value in expected_values.items():
+        actual_value = lighting[key] if isinstance(lighting, dict) else getattr(lighting, key)
+        assert actual_value == pytest.approx(expected_value)
 
 
 def _trace_max_abs_coordinate(trace) -> float:
@@ -1063,7 +1061,7 @@ def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_lab
         assert all("colorbar" not in trace for trace in figure["data"])
         bragg_traces = [trace for trace in figure["data"] if trace.get("name") == "Bragg sphere"]
         assert len(bragg_traces) == 1
-        _assert_flat_surface_lighting_dict(bragg_traces[0]["lighting"])
+        _assert_flat_surface_lighting(bragg_traces[0]["lighting"])
     l9_sprites = [sprite for sprite in spec["sprites"] if sprite["L"] == 9]
     assert all(sprite["relative_extent"] == pytest.approx(1.0) for sprite in l9_sprites)
     for theta_deg in spec["theta_values"]:
