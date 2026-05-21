@@ -87,6 +87,8 @@ SPECIAL_CAUSE_MATRIX_L_VALUES = (3, 6, 9)
 SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX = 1800
 SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX = 1400
 SPECIAL_CAUSE_MATRIX_EXPORT_KIND = "special-cause-matrix-sprite-composite"
+SPECIAL_CAUSE_MATRIX_BRAGG_CELL_FILL_FRACTION = 0.82
+SPECIAL_CAUSE_MATRIX_PRESERVE_RELATIVE_L_SCALE = False
 SPECIAL_CAUSE_MATRIX_SCALE_PADDING = 1.04
 SPECIAL_CAUSE_MATRIX_CAMERA = {
     "eye": {"x": 1.25, "y": 1.25, "z": 1.25},
@@ -561,33 +563,56 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 };
             };
 
+            const relativeBbox = (innerBbox, outerBbox) => ({
+                x: innerBbox.x - outerBbox.x,
+                y: innerBbox.y - outerBbox.y,
+                width: innerBbox.width,
+                height: innerBbox.height,
+            });
+
             const renderSprite = async (sprite) => {
                 const spriteHost = document.createElement("div");
                 spriteHost.style.width = renderPx + "px";
                 spriteHost.style.height = renderPx + "px";
                 spriteHost.style.background = "transparent";
                 host.appendChild(spriteHost);
-                await Plotly.newPlot(
-                    spriteHost,
-                    sprite.figure?.data || [],
-                    sprite.figure?.layout || {},
-                    {
-                        displaylogo: false,
-                        displayModeBar: false,
-                        responsive: false,
-                        staticPlot: true,
-                    }
-                );
-                const dataUrl = await Plotly.toImage(spriteHost, {
-                    format: "png",
-                    width: renderPx,
-                    height: renderPx,
-                });
-                const image = await loadImage(dataUrl);
-                const cropped = cropSpriteToContent(image);
-                Plotly.purge(spriteHost);
-                spriteHost.remove();
-                return {...sprite, cropped};
+                const plotConfig = {
+                    displaylogo: false,
+                    displayModeBar: false,
+                    responsive: false,
+                    staticPlot: true,
+                };
+                const renderFigureImage = async (figure) => {
+                    await Plotly.newPlot(
+                        spriteHost,
+                        figure?.data || [],
+                        figure?.layout || {},
+                        plotConfig
+                    );
+                    const dataUrl = await Plotly.toImage(spriteHost, {
+                        format: "png",
+                        width: renderPx,
+                        height: renderPx,
+                    });
+                    return loadImage(dataUrl);
+                };
+                try {
+                    const fullImage = await renderFigureImage(sprite.figure);
+                    const cropped = cropSpriteToContent(fullImage);
+                    const fullBbox = cropped.bbox;
+                    const braggAnchorImage = await renderFigureImage(sprite.bragg_anchor_figure || sprite.figure);
+                    const braggBbox = cropSpriteToContent(braggAnchorImage, 1, 0).bbox;
+                    return {
+                        ...sprite,
+                        cropped,
+                        fullBbox,
+                        braggBbox,
+                        braggBboxInCrop: relativeBbox(braggBbox, fullBbox),
+                    };
+                } finally {
+                    Plotly.purge(spriteHost);
+                    spriteHost.remove();
+                }
             };
 
             const drawText = (ctx, text, x, y, options = {}) => {
@@ -630,7 +655,14 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 const gridHeight = exportHeight - gridY - bottomMargin;
                 const cellWidth = gridWidth / thetaValues.length;
                 const cellHeight = gridHeight / lValues.length;
-                const targetL9ExtentPx = 0.88 * Math.min(cellWidth, cellHeight);
+                const braggCellFillFraction = Number(figureSpec.bragg_cell_fill_fraction) || 0.82;
+                const preserveRelativeLScale = Boolean(figureSpec.preserve_relative_l_scale);
+                const placements = [];
+                if (figureSpec.debug_layout) {
+                    window.__specialCauseMatrixDebug = {placements};
+                } else {
+                    delete window.__specialCauseMatrixDebug;
+                }
 
                 drawText(
                     ctx,
@@ -658,41 +690,77 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                     );
                 });
 
-                const maxL = Math.max(...lValues);
                 thetaValues.forEach((thetaDeg, colIndex) => {
                     const columnSprites = renderedSprites.filter(
                         (sprite) => Number(sprite.theta_deg) === Number(thetaDeg)
                     );
-                    const l9Sprite = columnSprites.find((sprite) => Number(sprite.L) === maxL);
-                    const l9Extent = l9Sprite
-                        ? Math.max(l9Sprite.cropped.width, l9Sprite.cropped.height)
-                        : 1;
-                    const columnScale = targetL9ExtentPx / Math.max(1, l9Extent);
                     columnSprites.forEach((sprite) => {
                         const rowIndex = lValues.indexOf(Number(sprite.L));
                         if (rowIndex < 0) {
                             return;
                         }
                         const crop = sprite.cropped;
+                        const bragg = sprite.braggBboxInCrop || {
+                            x: 0,
+                            y: 0,
+                            width: crop.width,
+                            height: crop.height,
+                        };
                         const relativeExtent = Number(sprite.relative_extent) || 1;
-                        const targetExtent = targetL9ExtentPx * relativeExtent;
-                        const spriteExtent = Math.max(1, crop.width, crop.height);
-                        const scale = Number.isFinite(relativeExtent)
-                            ? targetExtent / spriteExtent
-                            : columnScale;
+                        const relativeScale = preserveRelativeLScale && Number.isFinite(relativeExtent)
+                            ? relativeExtent
+                            : 1;
+                        const targetBraggExtentPx = (
+                            braggCellFillFraction * Math.min(cellWidth, cellHeight) * relativeScale
+                        );
+                        const braggExtent = Math.max(1, bragg.width, bragg.height);
+                        const scale = targetBraggExtentPx / braggExtent;
                         const drawWidth = crop.width * scale;
                         const drawHeight = crop.height * scale;
                         const cellX = gridX + colIndex * cellWidth;
                         const cellY = gridY + rowIndex * cellHeight;
-                        const drawX = cellX + (cellWidth - drawWidth) / 2;
-                        const drawY = cellY + (cellHeight - drawHeight) / 2;
+                        const braggCenterInCropX = bragg.x + bragg.width / 2;
+                        const braggCenterInCropY = bragg.y + bragg.height / 2;
+                        const cellCenterX = cellX + cellWidth / 2;
+                        const cellCenterY = cellY + cellHeight / 2;
+                        const drawX = cellCenterX - braggCenterInCropX * scale;
+                        const drawY = cellCenterY - braggCenterInCropY * scale;
+                        const scaledBraggX = drawX + bragg.x * scale;
+                        const scaledBraggY = drawY + bragg.y * scale;
+                        const scaledBraggWidth = bragg.width * scale;
+                        const scaledBraggHeight = bragg.height * scale;
+                        const braggFillFraction = (
+                            Math.max(scaledBraggWidth, scaledBraggHeight) /
+                            Math.min(cellWidth, cellHeight)
+                        );
+                        if (figureSpec.debug_layout) {
+                            placements.push({
+                                L: Number(sprite.L),
+                                theta_deg: Number(sprite.theta_deg),
+                                cellWidth,
+                                cellHeight,
+                                braggWidth: bragg.width,
+                                braggHeight: bragg.height,
+                                scale,
+                                scaledBraggWidth,
+                                scaledBraggHeight,
+                                braggFillFraction,
+                            });
+                        }
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(cellX, cellY, cellWidth, cellHeight);
+                        ctx.clip();
                         ctx.drawImage(crop.canvas, drawX, drawY, drawWidth, drawHeight);
+                        ctx.restore();
                         if (figureSpec.debug_layout) {
                             ctx.save();
                             ctx.strokeStyle = "rgba(35, 35, 35, 0.35)";
                             ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
                             ctx.strokeStyle = "rgba(214, 60, 130, 0.8)";
                             ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
+                            ctx.strokeStyle = "rgba(42, 126, 255, 0.9)";
+                            ctx.strokeRect(scaledBraggX, scaledBraggY, scaledBraggWidth, scaledBraggHeight);
                             ctx.restore();
                         }
                     });
@@ -1453,6 +1521,9 @@ _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES = frozenset(
 _SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES = frozenset(
     {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"}
 )
+_SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES = frozenset(
+    {"Bragg sphere", "Bragg sphere outline"}
+)
 
 
 def _special_cause_matrix_visible_trace_order(trace: go.BaseTraceType) -> int:
@@ -1665,6 +1736,18 @@ def _special_cause_matrix_sprite_figure(
     return fig
 
 
+def _special_cause_matrix_bragg_anchor_figure(
+    sprite_figure_json: dict[str, Any],
+) -> dict[str, Any]:
+    anchor_figure = copy.deepcopy(sprite_figure_json)
+    anchor_figure["data"] = [
+        trace
+        for trace in anchor_figure.get("data", [])
+        if trace.get("name") in _SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES
+    ]
+    return anchor_figure
+
+
 def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str, Any]:
     """Return sprite figures and metadata for browser-side matrix compositing."""
 
@@ -1680,6 +1763,8 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
             coordinate_scale=coordinate_scale,
             axis_range=axis_range,
         )
+        sprite_figure_json = sprite_figure.to_plotly_json()
+        bragg_anchor_figure = _special_cause_matrix_bragg_anchor_figure(sprite_figure_json)
         sprites.append(
             {
                 "row": cell.row,
@@ -1687,7 +1772,8 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
                 "L": cell.L,
                 "theta_deg": float(SPECIAL_CAUSE_MATRIX_THETA_DEG[cell.col - 1]),
                 "relative_extent": cell.bragg_extent / reference_extent,
-                "figure": sprite_figure.to_plotly_json(),
+                "figure": sprite_figure_json,
+                "bragg_anchor_figure": bragg_anchor_figure,
             }
         )
 
@@ -1699,6 +1785,8 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
         "theta_values": [float(theta) for theta in SPECIAL_CAUSE_MATRIX_THETA_DEG],
         "L_values": list(SPECIAL_CAUSE_MATRIX_L_VALUES),
         "sprites": sprites,
+        "bragg_cell_fill_fraction": SPECIAL_CAUSE_MATRIX_BRAGG_CELL_FILL_FRACTION,
+        "preserve_relative_l_scale": SPECIAL_CAUSE_MATRIX_PRESERVE_RELATIVE_L_SCALE,
         "debug_layout": False,
     }
 
