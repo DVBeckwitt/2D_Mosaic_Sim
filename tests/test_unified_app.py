@@ -1133,7 +1133,12 @@ def test_special_cause_matrix_export_clientside_callback_composes_cropped_sprite
     assert "cropSpriteToContent" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "composeSpecialCauseMatrixCanvas" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "downloadCanvasAsPng" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "bragg_anchor_figure" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "braggFootprintBboxFromImage" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "cyanHelperPixel" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "centerIndex" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "consumeComponent" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Plotly.react" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "hasRenderedSpriteFigure" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "relativeBbox" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "braggBbox" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "braggBboxInCrop" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK

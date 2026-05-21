@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 from dash import ALL, MATCH, Dash, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
+from plotly.utils import PlotlyJSONEncoder
 
 from specular_reflection_sim import (
     BeamConfig as SpecularBeamConfig,
@@ -570,49 +571,182 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 height: innerBbox.height,
             });
 
-            const renderSprite = async (sprite) => {
-                const spriteHost = document.createElement("div");
+            const braggFootprintBboxFromImage = (image) => {
+                const sourceCanvas = document.createElement("canvas");
+                sourceCanvas.width = image.naturalWidth || image.width;
+                sourceCanvas.height = image.naturalHeight || image.height;
+                const width = sourceCanvas.width;
+                const height = sourceCanvas.height;
+                const sourceCtx = sourceCanvas.getContext("2d", {willReadFrequently: true});
+                sourceCtx.clearRect(0, 0, width, height);
+                sourceCtx.drawImage(image, 0, 0);
+                const pixels = sourceCtx.getImageData(0, 0, width, height).data;
+                const mask = new Uint8Array(width * height);
+
+                for (let index = 0; index < width * height; index += 1) {
+                    const offset = index * 4;
+                    const red = pixels[offset];
+                    const green = pixels[offset + 1];
+                    const blue = pixels[offset + 2];
+                    const alpha = pixels[offset + 3];
+                    const nonWhitePixel = red < 245 || green < 245 || blue < 245;
+                    const cyanHelperPixel = blue > red + 12 && green > red + 6;
+                    if (alpha > 24 && nonWhitePixel && !cyanHelperPixel) {
+                        mask[index] = 1;
+                    }
+                }
+
+                const queue = new Int32Array(width * height);
+                const consumeComponent = (start) => {
+                    let head = 0;
+                    let tail = 0;
+                    let count = 0;
+                    let minX = width;
+                    let minY = height;
+                    let maxX = -1;
+                    let maxY = -1;
+                    queue[tail] = start;
+                    tail += 1;
+                    mask[start] = 0;
+
+                    while (head < tail) {
+                        const current = queue[head];
+                        head += 1;
+                        count += 1;
+                        const y = Math.floor(current / width);
+                        const x = current - y * width;
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+
+                        const left = current - 1;
+                        const right = current + 1;
+                        const up = current - width;
+                        const down = current + width;
+                        if (x > 0 && mask[left]) {
+                            mask[left] = 0;
+                            queue[tail] = left;
+                            tail += 1;
+                        }
+                        if (x < width - 1 && mask[right]) {
+                            mask[right] = 0;
+                            queue[tail] = right;
+                            tail += 1;
+                        }
+                        if (y > 0 && mask[up]) {
+                            mask[up] = 0;
+                            queue[tail] = up;
+                            tail += 1;
+                        }
+                        if (y < height - 1 && mask[down]) {
+                            mask[down] = 0;
+                            queue[tail] = down;
+                            tail += 1;
+                        }
+                    }
+                    return {count, x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1};
+                };
+                const padComponent = (component) => {
+                    const padPx = 4;
+                    const paddedX = Math.max(0, component.x - padPx);
+                    const paddedY = Math.max(0, component.y - padPx);
+                    const paddedRight = Math.min(width - 1, component.x + component.width - 1 + padPx);
+                    const paddedBottom = Math.min(height - 1, component.y + component.height - 1 + padPx);
+                    return {
+                        x: paddedX,
+                        y: paddedY,
+                        width: paddedRight - paddedX + 1,
+                        height: paddedBottom - paddedY + 1,
+                    };
+                };
+                const centerX = Math.floor(width / 2);
+                const centerY = Math.floor(height / 2);
+                const centerIndex = centerY * width + centerX;
+                if (mask[centerIndex]) {
+                    return padComponent(consumeComponent(centerIndex));
+                }
+
+                let best = null;
+                let bestDistance = Number.POSITIVE_INFINITY;
+                for (let start = 0; start < mask.length; start += 1) {
+                    if (!mask[start]) {
+                        continue;
+                    }
+                    const component = consumeComponent(start);
+                    if (component.count < 32) {
+                        continue;
+                    }
+                    const componentCenterX = component.x + component.width / 2;
+                    const componentCenterY = component.y + component.height / 2;
+                    const distance =
+                        (componentCenterX - centerX) ** 2 + (componentCenterY - centerY) ** 2;
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = component;
+                    }
+                }
+
+                if (!best) {
+                    return cropSpriteToContent(image, 1, 0).bbox;
+                }
+                return padComponent(best);
+            };
+
+            const spriteHost = document.createElement("div");
+            spriteHost.style.background = "transparent";
+            host.appendChild(spriteHost);
+            const plotConfig = {
+                displaylogo: false,
+                displayModeBar: false,
+                responsive: false,
+                staticPlot: true,
+            };
+            let hasRenderedSpriteFigure = false;
+            const renderFigureImage = async (figure) => {
                 spriteHost.style.width = renderPx + "px";
                 spriteHost.style.height = renderPx + "px";
-                spriteHost.style.background = "transparent";
-                host.appendChild(spriteHost);
-                const plotConfig = {
-                    displaylogo: false,
-                    displayModeBar: false,
-                    responsive: false,
-                    staticPlot: true,
+                const layout = {
+                    ...(figure?.layout || {}),
+                    width: renderPx,
+                    height: renderPx,
                 };
-                const renderFigureImage = async (figure) => {
+                if (hasRenderedSpriteFigure) {
+                    await Plotly.react(
+                        spriteHost,
+                        figure?.data || [],
+                        layout,
+                        plotConfig
+                    );
+                } else {
                     await Plotly.newPlot(
                         spriteHost,
                         figure?.data || [],
-                        figure?.layout || {},
+                        layout,
                         plotConfig
                     );
-                    const dataUrl = await Plotly.toImage(spriteHost, {
-                        format: "png",
-                        width: renderPx,
-                        height: renderPx,
-                    });
-                    return loadImage(dataUrl);
-                };
-                try {
-                    const fullImage = await renderFigureImage(sprite.figure);
-                    const cropped = cropSpriteToContent(fullImage);
-                    const fullBbox = cropped.bbox;
-                    const braggAnchorImage = await renderFigureImage(sprite.bragg_anchor_figure || sprite.figure);
-                    const braggBbox = cropSpriteToContent(braggAnchorImage, 1, 0).bbox;
-                    return {
-                        ...sprite,
-                        cropped,
-                        fullBbox,
-                        braggBbox,
-                        braggBboxInCrop: relativeBbox(braggBbox, fullBbox),
-                    };
-                } finally {
-                    Plotly.purge(spriteHost);
-                    spriteHost.remove();
                 }
+                hasRenderedSpriteFigure = true;
+                const dataUrl = await Plotly.toImage(spriteHost, {
+                    format: "png",
+                    width: renderPx,
+                    height: renderPx,
+                });
+                return loadImage(dataUrl);
+            };
+
+            const renderSprite = async (sprite) => {
+                const fullImage = await renderFigureImage(sprite.figure);
+                const cropped = cropSpriteToContent(fullImage);
+                const fullBbox = cropped.bbox;
+                const braggBbox = braggFootprintBboxFromImage(fullImage);
+                return {
+                    ...sprite,
+                    cropped,
+                    fullBbox,
+                    braggBbox,
+                    braggBboxInCrop: relativeBbox(braggBbox, fullBbox),
+                };
             };
 
             const drawText = (ctx, text, x, y, options = {}) => {
@@ -1739,13 +1873,15 @@ def _special_cause_matrix_sprite_figure(
 def _special_cause_matrix_bragg_anchor_figure(
     sprite_figure_json: dict[str, Any],
 ) -> dict[str, Any]:
-    anchor_figure = copy.deepcopy(sprite_figure_json)
-    anchor_figure["data"] = [
-        trace
-        for trace in anchor_figure.get("data", [])
+    anchor_data = [
+        json.loads(json.dumps(trace, cls=PlotlyJSONEncoder))
+        for trace in sprite_figure_json.get("data", [])
         if trace.get("name") in _SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES
     ]
-    return anchor_figure
+    anchor_layout = json.loads(
+        json.dumps(sprite_figure_json.get("layout", {}), cls=PlotlyJSONEncoder)
+    )
+    return {"data": anchor_data, "layout": anchor_layout}
 
 
 def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str, Any]:
