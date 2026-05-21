@@ -46,6 +46,7 @@ from specular_reflection_sim import (
     specular_signature_from_values,
 )
 
+from .common import flat_surface_lighting
 from .cylinder import build_cylinder_figure, normalize_cylinder_params
 from .detector import (
     DEFAULT_THETA_DEG,
@@ -1564,13 +1565,7 @@ def _build_special_cause_matrix_cells(
                     trace_copy.cmax = 1.0
                     if not hide_export_helpers and col > 1:
                         trace_copy.colorscale = SPECIAL_CAUSE_MATRIX_OBLIQUE_BRAGG_COLORSCALE
-                        trace_copy.lighting = dict(
-                            ambient=1.0,
-                            diffuse=0.0,
-                            specular=0.0,
-                            roughness=1.0,
-                            fresnel=0.0,
-                        )
+                        trace_copy.lighting = flat_surface_lighting()
                         bragg_outline = _special_cause_matrix_surface_wireframe_trace(
                             trace_copy,
                             color=SPECIAL_CAUSE_MATRIX_BRAGG_WIREFRAME_COLOR,
@@ -1639,6 +1634,7 @@ def _special_cause_matrix_sprite_figure(
             scale=coordinate_scale,
         )
         if getattr(trace_copy, "name", "") == "Bragg sphere":
+            trace_copy.lighting = flat_surface_lighting()
             trace_copy.showscale = False
             trace_copy.colorbar = None
         fig.add_trace(trace_copy)

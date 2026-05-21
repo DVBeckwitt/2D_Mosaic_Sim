@@ -87,6 +87,14 @@ def _assert_flat_surface_lighting(trace) -> None:
     assert trace.lighting.fresnel == pytest.approx(0.0)
 
 
+def _assert_flat_surface_lighting_dict(lighting) -> None:
+    assert lighting["ambient"] == pytest.approx(1.0)
+    assert lighting["diffuse"] == pytest.approx(0.0)
+    assert lighting["specular"] == pytest.approx(0.0)
+    assert lighting["roughness"] == pytest.approx(1.0)
+    assert lighting["fresnel"] == pytest.approx(0.0)
+
+
 def _trace_max_abs_coordinate(trace) -> float:
     max_coordinate = 0.0
     for coordinate_name in ("x", "y", "z"):
@@ -1018,7 +1026,8 @@ def test_unified_app_special_cause_matrix_export_callback_uses_reference_matrix_
     assert figure_data["export_request"] == 1
 
 
-def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_labels():
+@pytest.mark.parametrize("center_bragg_only", [True, False])
+def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_labels(center_bragg_only):
     spec = unified_app._build_special_cause_matrix_export_spec(
         {
             "sigma_deg": 0.8,
@@ -1026,7 +1035,7 @@ def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_lab
             "eta": 0.5,
             "wavelength_bandwidth_pct": 5.0,
             "ewald_shell_sample_count": 3,
-            "center_bragg_only": True,
+            "center_bragg_only": center_bragg_only,
         }
     )
 
@@ -1052,6 +1061,9 @@ def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_lab
         assert layout["scene"]["zaxis"]["visible"] is False
         assert all(trace.get("showscale", False) is False for trace in figure["data"])
         assert all("colorbar" not in trace for trace in figure["data"])
+        bragg_traces = [trace for trace in figure["data"] if trace.get("name") == "Bragg sphere"]
+        assert len(bragg_traces) == 1
+        _assert_flat_surface_lighting_dict(bragg_traces[0]["lighting"])
     l9_sprites = [sprite for sprite in spec["sprites"] if sprite["L"] == 9]
     assert all(sprite["relative_extent"] == pytest.approx(1.0) for sprite in l9_sprites)
     for theta_deg in spec["theta_values"]:
