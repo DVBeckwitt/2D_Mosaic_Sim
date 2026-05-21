@@ -84,7 +84,14 @@ SPECIAL_CAUSE_DEFAULT_THETA_I_DEG = 5.0
 SPECIAL_CAUSE_MATRIX_THETA_DEG = (5.0, 10.0, 15.0)
 SPECIAL_CAUSE_MATRIX_L_VALUES = (3, 6, 9)
 SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX = 1800
-SPECIAL_CAUSE_MATRIX_SCALE_PADDING = 1.08
+SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX = 1400
+SPECIAL_CAUSE_MATRIX_EXPORT_KIND = "special-cause-matrix-sprite-composite"
+SPECIAL_CAUSE_MATRIX_SCALE_PADDING = 1.04
+SPECIAL_CAUSE_MATRIX_CAMERA = {
+    "eye": {"x": 1.25, "y": 1.25, "z": 1.25},
+    "center": {"x": 0.0, "y": 0.0, "z": 0.0},
+    "up": {"x": 0.0, "y": 0.0, "z": 1.0},
+}
 SPECIAL_CAUSE_MATRIX_OBLIQUE_HELPER_OPACITY = 0.04
 SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COUNT = 12
 SPECIAL_CAUSE_MATRIX_EWALD_WIREFRAME_COLOR = "rgba(64, 220, 235, 0.42)"
@@ -427,6 +434,13 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
             const purgeAndRemoveHost = (exportHost) => {
                 try {
                     if (window.Plotly) {
+                        exportHost.querySelectorAll?.(".js-plotly-plot")?.forEach((plotNode) => {
+                            try {
+                                Plotly.purge(plotNode);
+                            } catch (plotPurgeErr) {
+                                console.error(plotPurgeErr);
+                            }
+                        });
                         Plotly.purge(exportHost);
                     }
                 } catch (purgeErr) {
@@ -450,42 +464,300 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
             if (figureSpec.error) {
                 return setStatus("Matrix export failed: " + figureSpec.error);
             }
-            if (!figureSpec.data || !figureSpec.layout || !window.Plotly) {
+            if (
+                figureSpec.kind !== "special-cause-matrix-sprite-composite" ||
+                !Array.isArray(figureSpec.sprites) ||
+                !window.Plotly
+            ) {
                 return setStatus("Matrix export failed.");
             }
 
-            const exportWidth = 1800;
-            const exportHeight = 1800;
+            const exportWidth = figureSpec.export_width || 1800;
+            const exportHeight = figureSpec.export_height || 1800;
+            const renderPx = figureSpec.render_px || 1400;
             const host = document.createElement("div");
             host.dataset.specialCauseMatrixExportHost = "true";
             host.style.position = "fixed";
             host.style.left = "-10000px";
             host.style.top = "0";
-            host.style.width = exportWidth + "px";
-            host.style.height = exportHeight + "px";
-            host.style.background = "white";
+            host.style.width = renderPx + "px";
+            host.style.height = renderPx + "px";
+            host.style.background = "transparent";
             host.style.pointerEvents = "none";
             document.body.appendChild(host);
 
+            const loadImage = (dataUrl) => new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = reject;
+                image.src = dataUrl;
+            });
+
+            const cropSpriteToContent = (image, alphaThreshold = 1, padPx = 24) => {
+                const sourceCanvas = document.createElement("canvas");
+                sourceCanvas.width = image.naturalWidth || image.width;
+                sourceCanvas.height = image.naturalHeight || image.height;
+                const sourceCtx = sourceCanvas.getContext("2d", {willReadFrequently: true});
+                sourceCtx.clearRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+                sourceCtx.drawImage(image, 0, 0);
+                const imageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+                const pixels = imageData.data;
+                let minX = sourceCanvas.width;
+                let minY = sourceCanvas.height;
+                let maxX = -1;
+                let maxY = -1;
+
+                for (let y = 0; y < sourceCanvas.height; y += 1) {
+                    for (let x = 0; x < sourceCanvas.width; x += 1) {
+                        const offset = (y * sourceCanvas.width + x) * 4;
+                        const red = pixels[offset];
+                        const green = pixels[offset + 1];
+                        const blue = pixels[offset + 2];
+                        const alpha = pixels[offset + 3];
+                        const visibleAlpha = alpha > alphaThreshold;
+                        const nonWhitePixel = red < 248 || green < 248 || blue < 248;
+                        if (visibleAlpha && (alpha < 250 || nonWhitePixel)) {
+                            minX = Math.min(minX, x);
+                            minY = Math.min(minY, y);
+                            maxX = Math.max(maxX, x);
+                            maxY = Math.max(maxY, y);
+                        }
+                    }
+                }
+
+                if (maxX < minX || maxY < minY) {
+                    minX = 0;
+                    minY = 0;
+                    maxX = sourceCanvas.width - 1;
+                    maxY = sourceCanvas.height - 1;
+                }
+
+                minX = Math.max(0, minX - padPx);
+                minY = Math.max(0, minY - padPx);
+                maxX = Math.min(sourceCanvas.width - 1, maxX + padPx);
+                maxY = Math.min(sourceCanvas.height - 1, maxY + padPx);
+                const cropWidth = maxX - minX + 1;
+                const cropHeight = maxY - minY + 1;
+                const croppedCanvas = document.createElement("canvas");
+                croppedCanvas.width = cropWidth;
+                croppedCanvas.height = cropHeight;
+                croppedCanvas.getContext("2d").drawImage(
+                    sourceCanvas,
+                    minX,
+                    minY,
+                    cropWidth,
+                    cropHeight,
+                    0,
+                    0,
+                    cropWidth,
+                    cropHeight
+                );
+                return {
+                    canvas: croppedCanvas,
+                    width: cropWidth,
+                    height: cropHeight,
+                    bbox: {x: minX, y: minY, width: cropWidth, height: cropHeight},
+                };
+            };
+
+            const renderSprite = async (sprite) => {
+                const spriteHost = document.createElement("div");
+                spriteHost.style.width = renderPx + "px";
+                spriteHost.style.height = renderPx + "px";
+                spriteHost.style.background = "transparent";
+                host.appendChild(spriteHost);
+                await Plotly.newPlot(
+                    spriteHost,
+                    sprite.figure?.data || [],
+                    sprite.figure?.layout || {},
+                    {
+                        displaylogo: false,
+                        displayModeBar: false,
+                        responsive: false,
+                        staticPlot: true,
+                    }
+                );
+                const dataUrl = await Plotly.toImage(spriteHost, {
+                    format: "png",
+                    width: renderPx,
+                    height: renderPx,
+                });
+                const image = await loadImage(dataUrl);
+                const cropped = cropSpriteToContent(image);
+                Plotly.purge(spriteHost);
+                spriteHost.remove();
+                return {...sprite, cropped};
+            };
+
+            const drawText = (ctx, text, x, y, options = {}) => {
+                ctx.save();
+                ctx.fillStyle = options.color || "#2d4363";
+                ctx.font = options.font || "22px Arial, sans-serif";
+                ctx.textAlign = options.align || "center";
+                ctx.textBaseline = options.baseline || "middle";
+                if (options.rotate) {
+                    ctx.translate(x, y);
+                    ctx.rotate(options.rotate);
+                    ctx.fillText(text, 0, 0);
+                } else {
+                    ctx.fillText(text, x, y);
+                }
+                ctx.restore();
+            };
+
+            const composeSpecialCauseMatrixCanvas = (renderedSprites) => {
+                const thetaValues = figureSpec.theta_values || [5, 10, 15];
+                const lValues = figureSpec.L_values || [3, 6, 9];
+                const canvas = document.createElement("canvas");
+                canvas.width = exportWidth;
+                canvas.height = exportHeight;
+                const ctx = canvas.getContext("2d");
+                ctx.fillStyle = "white";
+                ctx.fillRect(0, 0, exportWidth, exportHeight);
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = "high";
+
+                const outerMargin = 46;
+                const rowLabelBand = 78;
+                const colorbarBand = 170;
+                const titleBand = 58;
+                const columnLabelBand = 54;
+                const bottomMargin = 46;
+                const gridX = outerMargin + rowLabelBand;
+                const gridY = outerMargin + titleBand + columnLabelBand;
+                const gridWidth = exportWidth - gridX - colorbarBand - outerMargin;
+                const gridHeight = exportHeight - gridY - bottomMargin;
+                const cellWidth = gridWidth / thetaValues.length;
+                const cellHeight = gridHeight / lValues.length;
+                const targetL9ExtentPx = 0.88 * Math.min(cellWidth, cellHeight);
+
+                drawText(
+                    ctx,
+                    "Special Cause Reciprocal Matrix",
+                    exportWidth / 2,
+                    outerMargin * 0.75,
+                    {font: "24px Arial, sans-serif"}
+                );
+                thetaValues.forEach((thetaDeg, colIndex) => {
+                    drawText(
+                        ctx,
+                        "θᵢ = " + thetaDeg + "°",
+                        gridX + cellWidth * (colIndex + 0.5),
+                        outerMargin + titleBand + columnLabelBand * 0.45,
+                        {font: "20px Arial, sans-serif"}
+                    );
+                });
+                lValues.forEach((lValue, rowIndex) => {
+                    drawText(
+                        ctx,
+                        "L = " + lValue,
+                        outerMargin + rowLabelBand * 0.32,
+                        gridY + cellHeight * (rowIndex + 0.5),
+                        {font: "20px Arial, sans-serif", rotate: -Math.PI / 2}
+                    );
+                });
+
+                const maxL = Math.max(...lValues);
+                thetaValues.forEach((thetaDeg, colIndex) => {
+                    const columnSprites = renderedSprites.filter(
+                        (sprite) => Number(sprite.theta_deg) === Number(thetaDeg)
+                    );
+                    const l9Sprite = columnSprites.find((sprite) => Number(sprite.L) === maxL);
+                    const l9Extent = l9Sprite
+                        ? Math.max(l9Sprite.cropped.width, l9Sprite.cropped.height)
+                        : 1;
+                    const columnScale = targetL9ExtentPx / Math.max(1, l9Extent);
+                    columnSprites.forEach((sprite) => {
+                        const rowIndex = lValues.indexOf(Number(sprite.L));
+                        if (rowIndex < 0) {
+                            return;
+                        }
+                        const crop = sprite.cropped;
+                        const relativeExtent = Number(sprite.relative_extent) || 1;
+                        const targetExtent = targetL9ExtentPx * relativeExtent;
+                        const spriteExtent = Math.max(1, crop.width, crop.height);
+                        const scale = Number.isFinite(relativeExtent)
+                            ? targetExtent / spriteExtent
+                            : columnScale;
+                        const drawWidth = crop.width * scale;
+                        const drawHeight = crop.height * scale;
+                        const cellX = gridX + colIndex * cellWidth;
+                        const cellY = gridY + rowIndex * cellHeight;
+                        const drawX = cellX + (cellWidth - drawWidth) / 2;
+                        const drawY = cellY + (cellHeight - drawHeight) / 2;
+                        ctx.drawImage(crop.canvas, drawX, drawY, drawWidth, drawHeight);
+                        if (figureSpec.debug_layout) {
+                            ctx.save();
+                            ctx.strokeStyle = "rgba(35, 35, 35, 0.35)";
+                            ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
+                            ctx.strokeStyle = "rgba(214, 60, 130, 0.8)";
+                            ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
+                            ctx.restore();
+                        }
+                    });
+                });
+
+                const colorbarX = exportWidth - outerMargin - colorbarBand * 0.42;
+                const colorbarY = gridY + gridHeight * 0.16;
+                const colorbarWidth = 30;
+                const colorbarHeight = gridHeight * 0.68;
+                const gradient = ctx.createLinearGradient(0, colorbarY + colorbarHeight, 0, colorbarY);
+                gradient.addColorStop(0, "rgb(128,128,128)");
+                gradient.addColorStop(1, "rgb(255,0,0)");
+                ctx.fillStyle = gradient;
+                ctx.fillRect(colorbarX, colorbarY, colorbarWidth, colorbarHeight);
+                drawText(
+                    ctx,
+                    "Mosaic",
+                    colorbarX + colorbarWidth / 2,
+                    colorbarY - 32,
+                    {font: "16px Arial, sans-serif"}
+                );
+                drawText(
+                    ctx,
+                    "Intensity",
+                    colorbarX + colorbarWidth / 2,
+                    colorbarY - 14,
+                    {font: "16px Arial, sans-serif"}
+                );
+                [1, 0.8, 0.6, 0.4, 0.2, 0].forEach((tick) => {
+                    const y = colorbarY + (1 - tick) * colorbarHeight;
+                    ctx.fillStyle = "#2d4363";
+                    ctx.font = "14px Arial, sans-serif";
+                    ctx.textAlign = "left";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(String(tick), colorbarX + colorbarWidth + 8, y);
+                });
+
+                return canvas;
+            };
+
+            const downloadCanvasAsPng = (canvas, filename) => new Promise((resolve, reject) => {
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error("Canvas export failed."));
+                        return;
+                    }
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = filename + ".png";
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    resolve();
+                }, "image/png");
+            });
+
             const downloadMatrix = async () => {
                 try {
-                    await Plotly.newPlot(
-                        host,
-                        figureSpec.data,
-                        figureSpec.layout,
-                        {
-                            displaylogo: false,
-                            displayModeBar: false,
-                            responsive: false,
-                            staticPlot: true,
-                        }
-                    );
-                    await Plotly.downloadImage(host, {
-                        format: "png",
-                        filename: "special_cause_reciprocal_matrix",
-                        width: exportWidth,
-                        height: exportHeight,
-                    });
+                    const renderedSprites = [];
+                    for (const sprite of figureSpec.sprites) {
+                        renderedSprites.push(await renderSprite(sprite));
+                    }
+                    const matrixCanvas = composeSpecialCauseMatrixCanvas(renderedSprites);
+                    await downloadCanvasAsPng(matrixCanvas, "special_cause_reciprocal_matrix");
                     if (ignoreStaleRequest()) {
                         return;
                     }
@@ -1075,12 +1347,103 @@ def _shared_special_cause_matrix_axis_range(traces: list[go.BaseTraceType]) -> l
     return [-padded_extent, padded_extent]
 
 
+def _special_cause_matrix_trace_bounds(
+    trace: go.BaseTraceType,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    coordinate_bounds: list[tuple[float, float]] = []
+    for coordinate_name in ("x", "y", "z"):
+        coordinate_values = getattr(trace, coordinate_name, None)
+        if coordinate_values is None:
+            return None
+        try:
+            coordinate_array = np.asarray(coordinate_values, dtype=float)
+        except (TypeError, ValueError):
+            return None
+        if coordinate_array.size == 0:
+            return None
+        finite_values = coordinate_array[np.isfinite(coordinate_array)]
+        if finite_values.size == 0:
+            return None
+        coordinate_bounds.append((float(np.min(finite_values)), float(np.max(finite_values))))
+
+    minima = np.array([bounds[0] for bounds in coordinate_bounds], dtype=float)
+    maxima = np.array([bounds[1] for bounds in coordinate_bounds], dtype=float)
+    return minima, maxima
+
+
+def _special_cause_matrix_bragg_center_and_extent(
+    traces: list[go.BaseTraceType],
+) -> tuple[np.ndarray, float] | None:
+    bragg_trace = next(
+        (trace for trace in traces if getattr(trace, "name", "") == "Bragg sphere"),
+        None,
+    )
+    if bragg_trace is None:
+        return None
+    bounds = _special_cause_matrix_trace_bounds(bragg_trace)
+    if bounds is None:
+        return None
+    minima, maxima = bounds
+    center = (minima + maxima) / 2.0
+    extent = float(np.max(np.maximum(maxima - center, center - minima)))
+    if extent <= 0.0 or not math.isfinite(extent):
+        return None
+    return center, extent
+
+
+def _special_cause_matrix_transform_trace(
+    trace: go.BaseTraceType,
+    *,
+    center: np.ndarray,
+    scale: float,
+) -> None:
+    for coordinate_name, center_value in zip(("x", "y", "z"), center):
+        coordinate_values = getattr(trace, coordinate_name, None)
+        if coordinate_values is None:
+            continue
+        try:
+            coordinate_array = np.asarray(coordinate_values, dtype=float)
+        except (TypeError, ValueError):
+            continue
+        setattr(trace, coordinate_name, (coordinate_array - float(center_value)) * scale)
+
+    for vector_name in ("u", "v", "w"):
+        vector_values = getattr(trace, vector_name, None)
+        if vector_values is None:
+            continue
+        try:
+            vector_array = np.asarray(vector_values, dtype=float)
+        except (TypeError, ValueError):
+            continue
+        setattr(trace, vector_name, vector_array * scale)
+
+    sizeref = getattr(trace, "sizeref", None)
+    if sizeref is not None:
+        try:
+            trace.sizeref = float(sizeref) * scale
+        except (TypeError, ValueError):
+            pass
+
+
 def _apply_special_cause_matrix_shared_scale(scene_layout: dict[str, Any], axis_range: list[float]) -> None:
     scene_layout["aspectmode"] = "cube"
+    scene_layout["camera"] = copy.deepcopy(SPECIAL_CAUSE_MATRIX_CAMERA)
     for axis_name in ("xaxis", "yaxis", "zaxis"):
         axis_layout = dict(scene_layout.get(axis_name, {}))
         axis_layout["range"] = list(axis_range)
+        axis_layout["autorange"] = False
         scene_layout[axis_name] = axis_layout
+
+
+@dataclass
+class _SpecialCauseMatrixCell:
+    row: int
+    col: int
+    L: int
+    scene_layout: dict[str, Any]
+    traces: list[go.BaseTraceType]
+    bragg_center: np.ndarray
+    bragg_extent: float
 
 
 _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES = frozenset(
@@ -1155,48 +1518,27 @@ def _special_cause_matrix_surface_wireframe_trace(
     )
 
 
-def _build_special_cause_matrix_figure(
+def _build_special_cause_matrix_cells(
     values: dict[str, Any],
-) -> go.Figure:
-    """Return a fixed 3x3 special-cause reciprocal comparison figure."""
-
-    fig = make_subplots(
-        rows=len(SPECIAL_CAUSE_MATRIX_L_VALUES),
-        cols=len(SPECIAL_CAUSE_MATRIX_THETA_DEG),
-        specs=[
-            [{"type": "scene"} for _ in SPECIAL_CAUSE_MATRIX_THETA_DEG]
-            for _ in SPECIAL_CAUSE_MATRIX_L_VALUES
-        ],
-        column_titles=[f"θᵢ = {theta:g}°" for theta in SPECIAL_CAUSE_MATRIX_THETA_DEG],
-        horizontal_spacing=0.01,
-        vertical_spacing=0.03,
-    )
-
+    *,
+    show_colorbar: bool,
+) -> list[_SpecialCauseMatrixCell]:
     hide_export_helpers = bool(values.get("center_bragg_only", False))
-    top_left_visible_trace_names = {
-        "Bragg sphere",
-        "Bragg/Ewald overlap",
-        *_SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES,
-    }
-    matrix_scale_traces: list[go.BaseTraceType] = []
-    reference_scale_traces: list[go.BaseTraceType] = []
-    reference_l_value = max(SPECIAL_CAUSE_MATRIX_L_VALUES)
+    matrix_cells: list[_SpecialCauseMatrixCell] = []
+
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         for col, theta_deg in enumerate(SPECIAL_CAUSE_MATRIX_THETA_DEG, start=1):
-            top_left_ewald_export = hide_export_helpers and row == 1 and col == 1
-            cell_values = (
-                {**values, "center_bragg_only": False} if top_left_ewald_export else values
-            )
-            cell_fig = _build_special_cause_matrix_cell(cell_values, L=L, theta_deg=theta_deg)
-            show_cell_colorbar = row == 1 and col == 1
+            cell_fig = _build_special_cause_matrix_cell(values, L=L, theta_deg=theta_deg)
+            show_cell_colorbar = show_colorbar and row == 1 and col == 1
             cell_traces: list[go.BaseTraceType] = []
             for trace in cell_fig.data:
                 trace_copy = copy.deepcopy(trace)
                 trace_name = getattr(trace_copy, "name", "")
                 supplemental_traces: list[go.BaseTraceType] = []
-                if hide_export_helpers and trace_name == "Bragg/Ewald overlap band":
+
+                if hide_export_helpers and trace_name in _SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES:
                     continue
-                if top_left_ewald_export and trace_name not in top_left_visible_trace_names:
+                if hide_export_helpers and trace_name == "Bragg/Ewald overlap band":
                     continue
                 if (
                     not hide_export_helpers
@@ -1243,32 +1585,162 @@ def _build_special_cause_matrix_figure(
                             x=1.02,
                             len=0.72,
                         )
-                    if L == reference_l_value:
-                        reference_scale_traces.append(trace_copy)
                 cell_traces.append(trace_copy)
                 cell_traces.extend(supplemental_traces)
 
             if not hide_export_helpers:
                 cell_traces = sorted(cell_traces, key=_special_cause_matrix_visible_trace_order)
 
-            for trace_copy in cell_traces:
-                matrix_scale_traces.append(trace_copy)
-                fig.add_trace(trace_copy, row=row, col=col)
+            bragg_geometry = _special_cause_matrix_bragg_center_and_extent(cell_traces)
+            if bragg_geometry is None:
+                bragg_center = np.zeros(3, dtype=float)
+                fallback_range = _shared_special_cause_matrix_axis_range(cell_traces)
+                bragg_extent = abs(float(fallback_range[1])) if fallback_range is not None else 1.0
+            else:
+                bragg_center, bragg_extent = bragg_geometry
 
-            scene_name = _scene_name_for_matrix_cell(row, col)
-            scene_layout = cell_fig.layout.scene.to_plotly_json()
-            fig.update_layout({scene_name: scene_layout})
+            matrix_cells.append(
+                _SpecialCauseMatrixCell(
+                    row=row,
+                    col=col,
+                    L=L,
+                    scene_layout=cell_fig.layout.scene.to_plotly_json(),
+                    traces=cell_traces,
+                    bragg_center=bragg_center,
+                    bragg_extent=bragg_extent,
+                )
+            )
 
-    axis_range = _shared_special_cause_matrix_axis_range(
-        reference_scale_traces
-    ) or _shared_special_cause_matrix_axis_range(matrix_scale_traces)
-    if axis_range is not None:
-        for row in range(1, len(SPECIAL_CAUSE_MATRIX_L_VALUES) + 1):
-            for col in range(1, len(SPECIAL_CAUSE_MATRIX_THETA_DEG) + 1):
-                scene_name = _scene_name_for_matrix_cell(row, col)
-                scene_layout = getattr(fig.layout, scene_name).to_plotly_json()
-                _apply_special_cause_matrix_shared_scale(scene_layout, axis_range)
-                fig.update_layout({scene_name: scene_layout})
+    return matrix_cells
+
+
+def _special_cause_matrix_reference_extent(matrix_cells: list[_SpecialCauseMatrixCell]) -> float:
+    reference_l_value = max(SPECIAL_CAUSE_MATRIX_L_VALUES)
+    reference_extent = max(
+        (cell.bragg_extent for cell in matrix_cells if cell.L == reference_l_value),
+        default=0.0,
+    )
+    return reference_extent if reference_extent > 0.0 and math.isfinite(reference_extent) else 1.0
+
+
+def _special_cause_matrix_sprite_figure(
+    cell: _SpecialCauseMatrixCell,
+    *,
+    coordinate_scale: float,
+    axis_range: list[float],
+    render_px: int = SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX,
+) -> go.Figure:
+    fig = go.Figure()
+    for trace in cell.traces:
+        trace_copy = copy.deepcopy(trace)
+        _special_cause_matrix_transform_trace(
+            trace_copy,
+            center=cell.bragg_center,
+            scale=coordinate_scale,
+        )
+        if getattr(trace_copy, "name", "") == "Bragg sphere":
+            trace_copy.showscale = False
+            trace_copy.colorbar = None
+        fig.add_trace(trace_copy)
+
+    scene_layout = copy.deepcopy(cell.scene_layout)
+    _apply_special_cause_matrix_shared_scale(scene_layout, axis_range)
+    scene_layout["domain"] = {"x": [0.0, 1.0], "y": [0.0, 1.0]}
+    for axis_name in ("xaxis", "yaxis", "zaxis"):
+        axis_layout = dict(scene_layout.get(axis_name, {}))
+        axis_layout.update(
+            visible=False,
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            showbackground=False,
+        )
+        scene_layout[axis_name] = axis_layout
+
+    fig.update_layout(
+        scene=scene_layout,
+        showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=0, b=0, t=0),
+        width=render_px,
+        height=render_px,
+    )
+    return fig
+
+
+def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str, Any]:
+    """Return sprite figures and metadata for browser-side matrix compositing."""
+
+    matrix_cells = _build_special_cause_matrix_cells(values, show_colorbar=False)
+    reference_extent = _special_cause_matrix_reference_extent(matrix_cells)
+    coordinate_scale = 1.0 / reference_extent
+    axis_range = [-SPECIAL_CAUSE_MATRIX_SCALE_PADDING, SPECIAL_CAUSE_MATRIX_SCALE_PADDING]
+
+    sprites = []
+    for cell in matrix_cells:
+        sprite_figure = _special_cause_matrix_sprite_figure(
+            cell,
+            coordinate_scale=coordinate_scale,
+            axis_range=axis_range,
+        )
+        sprites.append(
+            {
+                "row": cell.row,
+                "col": cell.col,
+                "L": cell.L,
+                "theta_deg": float(SPECIAL_CAUSE_MATRIX_THETA_DEG[cell.col - 1]),
+                "relative_extent": cell.bragg_extent / reference_extent,
+                "figure": sprite_figure.to_plotly_json(),
+            }
+        )
+
+    return {
+        "kind": SPECIAL_CAUSE_MATRIX_EXPORT_KIND,
+        "export_width": SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
+        "export_height": SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
+        "render_px": SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX,
+        "theta_values": [float(theta) for theta in SPECIAL_CAUSE_MATRIX_THETA_DEG],
+        "L_values": list(SPECIAL_CAUSE_MATRIX_L_VALUES),
+        "sprites": sprites,
+        "debug_layout": False,
+    }
+
+
+def _build_special_cause_matrix_figure(
+    values: dict[str, Any],
+) -> go.Figure:
+    """Return a fixed 3x3 special-cause reciprocal comparison figure."""
+
+    fig = make_subplots(
+        rows=len(SPECIAL_CAUSE_MATRIX_L_VALUES),
+        cols=len(SPECIAL_CAUSE_MATRIX_THETA_DEG),
+        specs=[
+            [{"type": "scene"} for _ in SPECIAL_CAUSE_MATRIX_THETA_DEG]
+            for _ in SPECIAL_CAUSE_MATRIX_L_VALUES
+        ],
+        column_titles=[f"θᵢ = {theta:g}°" for theta in SPECIAL_CAUSE_MATRIX_THETA_DEG],
+        horizontal_spacing=0.01,
+        vertical_spacing=0.03,
+    )
+
+    matrix_cells = _build_special_cause_matrix_cells(values, show_colorbar=True)
+    reference_extent = _special_cause_matrix_reference_extent(matrix_cells)
+    coordinate_scale = 1.0 / reference_extent
+    axis_range = [-SPECIAL_CAUSE_MATRIX_SCALE_PADDING, SPECIAL_CAUSE_MATRIX_SCALE_PADDING]
+    for cell in matrix_cells:
+        scene_name = _scene_name_for_matrix_cell(cell.row, cell.col)
+        for trace_copy in cell.traces:
+            _special_cause_matrix_transform_trace(
+                trace_copy,
+                center=cell.bragg_center,
+                scale=coordinate_scale,
+            )
+            fig.add_trace(trace_copy, row=cell.row, col=cell.col)
+
+        scene_layout = dict(cell.scene_layout)
+        _apply_special_cause_matrix_shared_scale(scene_layout, axis_range)
+        fig.update_layout({scene_name: scene_layout})
 
     for row, L in enumerate(SPECIAL_CAUSE_MATRIX_L_VALUES, start=1):
         scene_layout = getattr(fig.layout, _scene_name_for_matrix_cell(row, 1))
@@ -2448,7 +2920,7 @@ def build_unified_app(
 
         values = _merged_mode_state(mode_key, (state_value or {}).get(mode_key))
         try:
-            figure_data = _build_special_cause_matrix_figure(values).to_plotly_json()
+            figure_data = _build_special_cause_matrix_export_spec(values)
             figure_data["export_request"] = n_clicks
             return figure_data
         except ValueError as exc:
