@@ -570,122 +570,6 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 height: innerBbox.height,
             });
 
-            const braggFootprintBboxFromImage = (image) => {
-                const sourceCanvas = document.createElement("canvas");
-                sourceCanvas.width = image.naturalWidth || image.width;
-                sourceCanvas.height = image.naturalHeight || image.height;
-                const width = sourceCanvas.width;
-                const height = sourceCanvas.height;
-                const sourceCtx = sourceCanvas.getContext("2d", {willReadFrequently: true});
-                sourceCtx.clearRect(0, 0, width, height);
-                sourceCtx.drawImage(image, 0, 0);
-                const pixels = sourceCtx.getImageData(0, 0, width, height).data;
-                const mask = new Uint8Array(width * height);
-
-                for (let index = 0; index < width * height; index += 1) {
-                    const offset = index * 4;
-                    const red = pixels[offset];
-                    const green = pixels[offset + 1];
-                    const blue = pixels[offset + 2];
-                    const alpha = pixels[offset + 3];
-                    const nonWhitePixel = red < 245 || green < 245 || blue < 245;
-                    const cyanHelperPixel = blue > red + 12 && green > red + 6;
-                    if (alpha > 24 && nonWhitePixel && !cyanHelperPixel) {
-                        mask[index] = 1;
-                    }
-                }
-
-                const queue = new Int32Array(width * height);
-                const consumeComponent = (start) => {
-                    let head = 0;
-                    let tail = 0;
-                    let count = 0;
-                    let minX = width;
-                    let minY = height;
-                    let maxX = -1;
-                    let maxY = -1;
-                    const enqueueMasked = (index) => {
-                        if (!mask[index]) {
-                            return;
-                        }
-                        mask[index] = 0;
-                        queue[tail] = index;
-                        tail += 1;
-                    };
-                    enqueueMasked(start);
-
-                    while (head < tail) {
-                        const current = queue[head];
-                        head += 1;
-                        count += 1;
-                        const y = Math.floor(current / width);
-                        const x = current - y * width;
-                        minX = Math.min(minX, x);
-                        minY = Math.min(minY, y);
-                        maxX = Math.max(maxX, x);
-                        maxY = Math.max(maxY, y);
-
-                        if (x > 0) {
-                            enqueueMasked(current - 1);
-                        }
-                        if (x < width - 1) {
-                            enqueueMasked(current + 1);
-                        }
-                        if (y > 0) {
-                            enqueueMasked(current - width);
-                        }
-                        if (y < height - 1) {
-                            enqueueMasked(current + width);
-                        }
-                    }
-                    return {count, x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1};
-                };
-                const padComponent = (component) => {
-                    const padPx = 4;
-                    const paddedX = Math.max(0, component.x - padPx);
-                    const paddedY = Math.max(0, component.y - padPx);
-                    const paddedRight = Math.min(width - 1, component.x + component.width - 1 + padPx);
-                    const paddedBottom = Math.min(height - 1, component.y + component.height - 1 + padPx);
-                    return {
-                        x: paddedX,
-                        y: paddedY,
-                        width: paddedRight - paddedX + 1,
-                        height: paddedBottom - paddedY + 1,
-                    };
-                };
-                const centerX = Math.floor(width / 2);
-                const centerY = Math.floor(height / 2);
-                const centerIndex = centerY * width + centerX;
-                if (mask[centerIndex]) {
-                    return padComponent(consumeComponent(centerIndex));
-                }
-
-                let best = null;
-                let bestDistance = Number.POSITIVE_INFINITY;
-                for (let start = 0; start < mask.length; start += 1) {
-                    if (!mask[start]) {
-                        continue;
-                    }
-                    const component = consumeComponent(start);
-                    if (component.count < 32) {
-                        continue;
-                    }
-                    const componentCenterX = component.x + component.width / 2;
-                    const componentCenterY = component.y + component.height / 2;
-                    const distance =
-                        (componentCenterX - centerX) ** 2 + (componentCenterY - centerY) ** 2;
-                    if (distance < bestDistance) {
-                        bestDistance = distance;
-                        best = component;
-                    }
-                }
-
-                if (!best) {
-                    return cropSpriteToContent(image, 1, 0).bbox;
-                }
-                return padComponent(best);
-            };
-
             const spriteHost = document.createElement("div");
             spriteHost.style.background = "transparent";
             host.appendChild(spriteHost);
@@ -729,10 +613,14 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
             };
 
             const renderSprite = async (sprite) => {
+                if (!sprite.bragg_anchor_figure) {
+                    throw new Error("Missing Bragg anchor figure.");
+                }
                 const fullImage = await renderFigureImage(sprite.figure);
+                const anchorImage = await renderFigureImage(sprite.bragg_anchor_figure);
                 const cropped = cropSpriteToContent(fullImage);
                 const fullBbox = cropped.bbox;
-                const braggBbox = braggFootprintBboxFromImage(fullImage);
+                const braggBbox = cropSpriteToContent(anchorImage, 1, 0).bbox;
                 return {
                     ...sprite,
                     cropped,
@@ -1648,6 +1536,9 @@ _SPECIAL_CAUSE_MATRIX_HELPER_SURFACE_NAMES = frozenset(
 _SPECIAL_CAUSE_MATRIX_EWALD_SURFACE_NAMES = frozenset(
     {"Ewald shell inner", "Ewald shell outer", "Ewald sphere"}
 )
+_SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES = frozenset(
+    {"Bragg sphere", "Bragg sphere outline"}
+)
 
 
 def _special_cause_matrix_visible_trace_order(trace: go.BaseTraceType) -> int:
@@ -1819,16 +1710,20 @@ def _special_cause_matrix_sprite_figure(
     coordinate_scale: float,
     axis_range: list[float],
     render_px: int = SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX,
+    included_trace_names: frozenset[str] | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     for trace in cell.traces:
+        trace_name = getattr(trace, "name", "")
+        if included_trace_names is not None and trace_name not in included_trace_names:
+            continue
         trace_copy = copy.deepcopy(trace)
         _special_cause_matrix_transform_trace(
             trace_copy,
             center=cell.bragg_center,
             scale=coordinate_scale,
         )
-        if getattr(trace_copy, "name", "") == "Bragg sphere":
+        if trace_name == "Bragg sphere":
             trace_copy.lighting = flat_surface_lighting()
             trace_copy.showscale = False
             trace_copy.colorbar = None
@@ -1860,6 +1755,22 @@ def _special_cause_matrix_sprite_figure(
     return fig
 
 
+def _special_cause_matrix_bragg_anchor_figure(
+    cell: _SpecialCauseMatrixCell,
+    *,
+    coordinate_scale: float,
+    axis_range: list[float],
+    render_px: int = SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX,
+) -> go.Figure:
+    return _special_cause_matrix_sprite_figure(
+        cell,
+        coordinate_scale=coordinate_scale,
+        axis_range=axis_range,
+        render_px=render_px,
+        included_trace_names=_SPECIAL_CAUSE_MATRIX_BRAGG_ANCHOR_TRACE_NAMES,
+    )
+
+
 def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str, Any]:
     """Return sprite figures and metadata for browser-side matrix compositing."""
 
@@ -1875,6 +1786,11 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
             coordinate_scale=coordinate_scale,
             axis_range=axis_range,
         )
+        bragg_anchor_figure = _special_cause_matrix_bragg_anchor_figure(
+            cell,
+            coordinate_scale=coordinate_scale,
+            axis_range=axis_range,
+        )
         sprite_figure_json = sprite_figure.to_plotly_json()
         sprites.append(
             {
@@ -1884,6 +1800,7 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
                 "theta_deg": float(SPECIAL_CAUSE_MATRIX_THETA_DEG[cell.col - 1]),
                 "relative_extent": cell.bragg_extent / reference_extent,
                 "figure": sprite_figure_json,
+                "bragg_anchor_figure": bragg_anchor_figure.to_plotly_json(),
             }
         )
 
