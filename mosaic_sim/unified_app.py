@@ -86,7 +86,7 @@ SPECIAL_CAUSE_MATRIX_THETA_DEG = (5.0, 10.0, 15.0)
 SPECIAL_CAUSE_MATRIX_L_VALUES = (3, 6, 9)
 SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX = 1800
 SPECIAL_CAUSE_MATRIX_SPRITE_RENDER_PX = 1400
-SPECIAL_CAUSE_MATRIX_EXPORT_KIND = "special-cause-matrix-sprite-composite"
+SPECIAL_CAUSE_MATRIX_EXPORT_KIND = "special-cause-matrix-cell-bundle"
 SPECIAL_CAUSE_MATRIX_BRAGG_CELL_FILL_FRACTION = 0.82
 SPECIAL_CAUSE_MATRIX_PRESERVE_RELATIVE_L_SCALE = False
 SPECIAL_CAUSE_MATRIX_SCALE_PADDING = 1.04
@@ -468,7 +468,7 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 return setStatus("Matrix export failed: " + figureSpec.error);
             }
             if (
-                figureSpec.kind !== "special-cause-matrix-sprite-composite" ||
+                figureSpec.kind !== "special-cause-matrix-cell-bundle" ||
                 !Array.isArray(figureSpec.sprites) ||
                 !window.Plotly
             ) {
@@ -495,6 +495,181 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 image.onerror = reject;
                 image.src = dataUrl;
             });
+
+            const textEncoder = new TextEncoder();
+            const concatBytes = (parts) => {
+                const totalLength = parts.reduce((total, part) => total + part.length, 0);
+                const combined = new Uint8Array(totalLength);
+                let offset = 0;
+                parts.forEach((part) => {
+                    combined.set(part, offset);
+                    offset += part.length;
+                });
+                return combined;
+            };
+            const uint16le = (value) => {
+                const bytes = new Uint8Array(2);
+                const view = new DataView(bytes.buffer);
+                view.setUint16(0, value, true);
+                return bytes;
+            };
+            const uint32le = (value) => {
+                const bytes = new Uint8Array(4);
+                const view = new DataView(bytes.buffer);
+                view.setUint32(0, value >>> 0, true);
+                return bytes;
+            };
+            const uint32be = (value) => {
+                const bytes = new Uint8Array(4);
+                const view = new DataView(bytes.buffer);
+                view.setUint32(0, value >>> 0, false);
+                return bytes;
+            };
+            const readUint32be = (bytes, offset) => (
+                ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0
+            );
+            const makeCrcTable = () => {
+                const table = new Uint32Array(256);
+                for (let index = 0; index < 256; index += 1) {
+                    let crc = index;
+                    for (let bit = 0; bit < 8; bit += 1) {
+                        crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+                    }
+                    table[index] = crc >>> 0;
+                }
+                return table;
+            };
+            const crcTable = makeCrcTable();
+            const crc32 = (bytes) => {
+                let crc = 0xffffffff;
+                for (let index = 0; index < bytes.length; index += 1) {
+                    crc = crcTable[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+                }
+                return (crc ^ 0xffffffff) >>> 0;
+            };
+            const pngChunk = (type, payload) => {
+                const typeBytes = textEncoder.encode(type);
+                return concatBytes([
+                    uint32be(payload.length),
+                    typeBytes,
+                    payload,
+                    uint32be(crc32(concatBytes([typeBytes, payload]))),
+                ]);
+            };
+            const insertPngTextMetadata = (pngBytes, keyword, metadataText) => {
+                const pngSignatureLength = 8;
+                const textPayload = concatBytes([
+                    textEncoder.encode(keyword),
+                    new Uint8Array([0, 0, 0, 0, 0]),
+                    textEncoder.encode(metadataText),
+                ]);
+                const textChunk = pngChunk("iTXt", textPayload);
+                let offset = pngSignatureLength;
+                while (offset + 12 <= pngBytes.length) {
+                    const payloadLength = readUint32be(pngBytes, offset);
+                    const typeOffset = offset + 4;
+                    const chunkType = String.fromCharCode(
+                        pngBytes[typeOffset],
+                        pngBytes[typeOffset + 1],
+                        pngBytes[typeOffset + 2],
+                        pngBytes[typeOffset + 3]
+                    );
+                    if (chunkType === "IEND") {
+                        return concatBytes([
+                            pngBytes.slice(0, offset),
+                            textChunk,
+                            pngBytes.slice(offset),
+                        ]);
+                    }
+                    offset += 12 + payloadLength;
+                }
+                return concatBytes([pngBytes, textChunk]);
+            };
+            const canvasToPngBytes = (canvas) => new Promise((resolve, reject) => {
+                canvas.toBlob(async (blob) => {
+                    if (!blob) {
+                        reject(new Error("Canvas export failed."));
+                        return;
+                    }
+                    try {
+                        resolve(new Uint8Array(await blob.arrayBuffer()));
+                    } catch (err) {
+                        reject(err);
+                    }
+                }, "image/png");
+            });
+            const downloadBlobAsFile = (blob, filename) => {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+            const buildZipBytes = (files) => {
+                const localParts = [];
+                const centralParts = [];
+                let offset = 0;
+                files.forEach((file) => {
+                    const nameBytes = textEncoder.encode(file.name.replace(/\\\\/g, "/"));
+                    const data = file.data instanceof Uint8Array ? file.data : textEncoder.encode(String(file.data));
+                    const crc = crc32(data);
+                    const flags = 0x0800;
+                    const method = 0;
+                    const modTime = 0;
+                    const modDate = 0;
+                    const localHeader = concatBytes([
+                        uint32le(0x04034b50),
+                        uint16le(20),
+                        uint16le(flags),
+                        uint16le(method),
+                        uint16le(modTime),
+                        uint16le(modDate),
+                        uint32le(crc),
+                        uint32le(data.length),
+                        uint32le(data.length),
+                        uint16le(nameBytes.length),
+                        uint16le(0),
+                        nameBytes,
+                    ]);
+                    localParts.push(localHeader, data);
+                    centralParts.push(concatBytes([
+                        uint32le(0x02014b50),
+                        uint16le(20),
+                        uint16le(20),
+                        uint16le(flags),
+                        uint16le(method),
+                        uint16le(modTime),
+                        uint16le(modDate),
+                        uint32le(crc),
+                        uint32le(data.length),
+                        uint32le(data.length),
+                        uint16le(nameBytes.length),
+                        uint16le(0),
+                        uint16le(0),
+                        uint16le(0),
+                        uint16le(0),
+                        uint32le(0),
+                        uint32le(offset),
+                        nameBytes,
+                    ]));
+                    offset += localHeader.length + data.length;
+                });
+                const centralDirectory = concatBytes(centralParts);
+                const endRecord = concatBytes([
+                    uint32le(0x06054b50),
+                    uint16le(0),
+                    uint16le(0),
+                    uint16le(files.length),
+                    uint16le(files.length),
+                    uint32le(centralDirectory.length),
+                    uint32le(offset),
+                    uint16le(0),
+                ]);
+                return concatBytes([...localParts, centralDirectory, endRecord]);
+            };
 
             const cropSpriteToContent = (image, alphaThreshold = 1, padPx = 24) => {
                 const sourceCanvas = document.createElement("canvas");
@@ -630,235 +805,124 @@ SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK = """
                 };
             };
 
-            const drawText = (ctx, text, x, y, options = {}) => {
-                ctx.save();
-                ctx.fillStyle = options.color || "#2d4363";
-                ctx.font = options.font || "22px Arial, sans-serif";
-                ctx.textAlign = options.align || "center";
-                ctx.textBaseline = options.baseline || "middle";
-                if (options.rotate) {
-                    ctx.translate(x, y);
-                    ctx.rotate(options.rotate);
-                    ctx.fillText(text, 0, 0);
-                } else {
-                    ctx.fillText(text, x, y);
+            const numberToken = (value, width = 3) => {
+                const numericValue = Number(value);
+                const raw = Number.isInteger(numericValue)
+                    ? String(numericValue)
+                    : String(numericValue).replace(/0+$/, "").replace(/\.$/, "");
+                const parts = raw.split(".");
+                const whole = (parts[0] || "0").padStart(width, "0");
+                return parts.length > 1 ? whole + "p" + parts[1] : whole;
+            };
+            const cellFileStem = (sprite) => (
+                "special_cause_L" + numberToken(sprite.L) + "_theta" + numberToken(sprite.theta_deg)
+            );
+            const traceNamesForSprite = (sprite) => Array.from(new Set(
+                (sprite.figure?.data || [])
+                    .map((trace) => trace?.name)
+                    .filter((name) => name !== undefined && name !== null && String(name).length)
+                    .map((name) => String(name))
+            ));
+            const buildCellMetadata = (sprite, imagePath, metadataPath) => {
+                const traceNames = traceNamesForSprite(sprite);
+                return {
+                    kind: "special-cause-matrix-cell",
+                    version: 1,
+                    image_path: imagePath,
+                    metadata_path: metadataPath,
+                    row: Number(sprite.row),
+                    col: Number(sprite.col),
+                    L: Number(sprite.L),
+                    theta_deg: Number(sprite.theta_deg),
+                    relative_extent: Number(sprite.relative_extent) || 1,
+                    render_px: renderPx,
+                    crop_px: {
+                        width: sprite.cropped.width,
+                        height: sprite.cropped.height,
+                    },
+                    full_bbox_px: sprite.fullBbox,
+                    bragg_bbox_px: sprite.braggBbox,
+                    bragg_bbox_in_crop_px: sprite.braggBboxInCrop,
+                    trace_names: traceNames,
+                    has_ewald_geometry: traceNames.some((name) => name.toLowerCase().includes("ewald")),
+                    has_intersection_geometry: traceNames.some((name) => name.toLowerCase().includes("overlap")),
+                    matrix_defaults: {
+                        theta_values: figureSpec.theta_values || [5, 10, 15],
+                        L_values: figureSpec.L_values || [3, 6, 9],
+                        bragg_cell_fill_fraction: Number(figureSpec.bragg_cell_fill_fraction) || 0.82,
+                        preserve_relative_l_scale: Boolean(figureSpec.preserve_relative_l_scale),
+                        export_width: exportWidth,
+                        export_height: exportHeight,
+                    },
+                    source_values: figureSpec.source_values || {},
+                };
+            };
+            const buildSpecialCauseCellBundle = async (renderedSprites) => {
+                const files = [];
+                const cellMetadata = [];
+                for (const sprite of renderedSprites) {
+                    const stem = cellFileStem(sprite);
+                    const imagePath = "cells/" + stem + ".png";
+                    const metadataPath = "metadata/" + stem + ".json";
+                    const metadata = buildCellMetadata(sprite, imagePath, metadataPath);
+                    const metadataText = JSON.stringify(metadata, null, 2);
+                    const pngBytes = await canvasToPngBytes(sprite.cropped.canvas);
+                    const pngWithMetadata = insertPngTextMetadata(
+                        pngBytes,
+                        "special_cause_metadata",
+                        metadataText
+                    );
+                    files.push({name: imagePath, data: pngWithMetadata});
+                    files.push({name: metadataPath, data: textEncoder.encode(metadataText)});
+                    cellMetadata.push(metadata);
                 }
-                ctx.restore();
+                const manifest = {
+                    kind: "special-cause-matrix-cell-bundle",
+                    version: 1,
+                    cells: cellMetadata,
+                    theta_values: figureSpec.theta_values || [5, 10, 15],
+                    L_values: figureSpec.L_values || [3, 6, 9],
+                    render_px: renderPx,
+                    bragg_cell_fill_fraction: Number(figureSpec.bragg_cell_fill_fraction) || 0.82,
+                    preserve_relative_l_scale: Boolean(figureSpec.preserve_relative_l_scale),
+                    source_values: figureSpec.source_values || {},
+                    note: "Each PNG is cropped to the visible Bragg/intersection/Ewald graphic and contains embedded special_cause_metadata iTXt metadata.",
+                };
+                files.push({
+                    name: "special_cause_reciprocal_matrix_cells.json",
+                    data: textEncoder.encode(JSON.stringify(manifest, null, 2)),
+                });
+                return buildZipBytes(files);
             };
 
-            const composeSpecialCauseMatrixCanvas = (renderedSprites) => {
-                const thetaValues = figureSpec.theta_values || [5, 10, 15];
-                const lValues = figureSpec.L_values || [3, 6, 9];
-                const canvas = document.createElement("canvas");
-                canvas.width = exportWidth;
-                canvas.height = exportHeight;
-                const ctx = canvas.getContext("2d");
-                ctx.fillStyle = "white";
-                ctx.fillRect(0, 0, exportWidth, exportHeight);
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = "high";
-
-                const outerMargin = 46;
-                const rowLabelBand = 78;
-                const colorbarBand = 170;
-                const titleBand = 58;
-                const columnLabelBand = 54;
-                const bottomMargin = 46;
-                const gridX = outerMargin + rowLabelBand;
-                const gridY = outerMargin + titleBand + columnLabelBand;
-                const gridWidth = exportWidth - gridX - colorbarBand - outerMargin;
-                const gridHeight = exportHeight - gridY - bottomMargin;
-                const cellWidth = gridWidth / thetaValues.length;
-                const cellHeight = gridHeight / lValues.length;
-                const braggCellFillFraction = Number(figureSpec.bragg_cell_fill_fraction) || 0.82;
-                const preserveRelativeLScale = Boolean(figureSpec.preserve_relative_l_scale);
-                const placements = [];
-                if (figureSpec.debug_layout) {
-                    window.__specialCauseMatrixDebug = {placements};
-                } else {
-                    delete window.__specialCauseMatrixDebug;
-                }
-
-                drawText(
-                    ctx,
-                    "Special Cause Reciprocal Matrix",
-                    exportWidth / 2,
-                    outerMargin * 0.75,
-                    {font: "24px Arial, sans-serif"}
-                );
-                thetaValues.forEach((thetaDeg, colIndex) => {
-                    drawText(
-                        ctx,
-                        "θᵢ = " + thetaDeg + "°",
-                        gridX + cellWidth * (colIndex + 0.5),
-                        outerMargin + titleBand + columnLabelBand * 0.45,
-                        {font: "20px Arial, sans-serif"}
-                    );
-                });
-                lValues.forEach((lValue, rowIndex) => {
-                    drawText(
-                        ctx,
-                        "L = " + lValue,
-                        outerMargin + rowLabelBand * 0.32,
-                        gridY + cellHeight * (rowIndex + 0.5),
-                        {font: "20px Arial, sans-serif", rotate: -Math.PI / 2}
-                    );
-                });
-
-                thetaValues.forEach((thetaDeg, colIndex) => {
-                    const columnSprites = renderedSprites.filter(
-                        (sprite) => Number(sprite.theta_deg) === Number(thetaDeg)
-                    );
-                    columnSprites.forEach((sprite) => {
-                        const rowIndex = lValues.indexOf(Number(sprite.L));
-                        if (rowIndex < 0) {
-                            return;
-                        }
-                        const crop = sprite.cropped;
-                        const bragg = sprite.braggBboxInCrop || {
-                            x: 0,
-                            y: 0,
-                            width: crop.width,
-                            height: crop.height,
-                        };
-                        const relativeExtent = Number(sprite.relative_extent) || 1;
-                        const relativeScale = preserveRelativeLScale && Number.isFinite(relativeExtent)
-                            ? relativeExtent
-                            : 1;
-                        const targetBraggExtentPx = (
-                            braggCellFillFraction * Math.min(cellWidth, cellHeight) * relativeScale
-                        );
-                        const braggExtent = Math.max(1, bragg.width, bragg.height);
-                        const scale = targetBraggExtentPx / braggExtent;
-                        const drawWidth = crop.width * scale;
-                        const drawHeight = crop.height * scale;
-                        const cellX = gridX + colIndex * cellWidth;
-                        const cellY = gridY + rowIndex * cellHeight;
-                        const braggCenterInCropX = bragg.x + bragg.width / 2;
-                        const braggCenterInCropY = bragg.y + bragg.height / 2;
-                        const cellCenterX = cellX + cellWidth / 2;
-                        const cellCenterY = cellY + cellHeight / 2;
-                        const drawX = cellCenterX - braggCenterInCropX * scale;
-                        const drawY = cellCenterY - braggCenterInCropY * scale;
-                        const scaledBraggX = drawX + bragg.x * scale;
-                        const scaledBraggY = drawY + bragg.y * scale;
-                        const scaledBraggWidth = bragg.width * scale;
-                        const scaledBraggHeight = bragg.height * scale;
-                        const braggFillFraction = (
-                            Math.max(scaledBraggWidth, scaledBraggHeight) /
-                            Math.min(cellWidth, cellHeight)
-                        );
-                        if (figureSpec.debug_layout) {
-                            placements.push({
-                                L: Number(sprite.L),
-                                theta_deg: Number(sprite.theta_deg),
-                                cellWidth,
-                                cellHeight,
-                                braggWidth: bragg.width,
-                                braggHeight: bragg.height,
-                                scale,
-                                scaledBraggWidth,
-                                scaledBraggHeight,
-                                braggFillFraction,
-                            });
-                        }
-                        ctx.save();
-                        ctx.beginPath();
-                        ctx.rect(cellX, cellY, cellWidth, cellHeight);
-                        ctx.clip();
-                        ctx.drawImage(crop.canvas, drawX, drawY, drawWidth, drawHeight);
-                        ctx.restore();
-                        if (figureSpec.debug_layout) {
-                            ctx.save();
-                            ctx.strokeStyle = "rgba(35, 35, 35, 0.35)";
-                            ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
-                            ctx.strokeStyle = "rgba(214, 60, 130, 0.8)";
-                            ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
-                            ctx.strokeStyle = "rgba(42, 126, 255, 0.9)";
-                            ctx.strokeRect(scaledBraggX, scaledBraggY, scaledBraggWidth, scaledBraggHeight);
-                            ctx.restore();
-                        }
-                    });
-                });
-
-                const colorbarX = exportWidth - outerMargin - colorbarBand * 0.42;
-                const colorbarY = gridY + gridHeight * 0.16;
-                const colorbarWidth = 30;
-                const colorbarHeight = gridHeight * 0.68;
-                const gradient = ctx.createLinearGradient(0, colorbarY + colorbarHeight, 0, colorbarY);
-                gradient.addColorStop(0, "rgb(128,128,128)");
-                gradient.addColorStop(1, "rgb(255,0,0)");
-                ctx.fillStyle = gradient;
-                ctx.fillRect(colorbarX, colorbarY, colorbarWidth, colorbarHeight);
-                drawText(
-                    ctx,
-                    "Mosaic",
-                    colorbarX + colorbarWidth / 2,
-                    colorbarY - 32,
-                    {font: "16px Arial, sans-serif"}
-                );
-                drawText(
-                    ctx,
-                    "Intensity",
-                    colorbarX + colorbarWidth / 2,
-                    colorbarY - 14,
-                    {font: "16px Arial, sans-serif"}
-                );
-                [1, 0.8, 0.6, 0.4, 0.2, 0].forEach((tick) => {
-                    const y = colorbarY + (1 - tick) * colorbarHeight;
-                    ctx.fillStyle = "#2d4363";
-                    ctx.font = "14px Arial, sans-serif";
-                    ctx.textAlign = "left";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(String(tick), colorbarX + colorbarWidth + 8, y);
-                });
-
-                return canvas;
-            };
-
-            const downloadCanvasAsPng = (canvas, filename) => new Promise((resolve, reject) => {
-                canvas.toBlob((blob) => {
-                    if (!blob) {
-                        reject(new Error("Canvas export failed."));
-                        return;
-                    }
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement("a");
-                    link.href = url;
-                    link.download = filename + ".png";
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    setTimeout(() => URL.revokeObjectURL(url), 1000);
-                    resolve();
-                }, "image/png");
-            });
-
-            const downloadMatrix = async () => {
+            const downloadMatrixCells = async () => {
                 try {
                     const renderedSprites = [];
                     for (const sprite of figureSpec.sprites) {
                         renderedSprites.push(await renderSprite(sprite));
                     }
-                    const matrixCanvas = composeSpecialCauseMatrixCanvas(renderedSprites);
-                    await downloadCanvasAsPng(matrixCanvas, "special_cause_reciprocal_matrix");
+                    const zipBytes = await buildSpecialCauseCellBundle(renderedSprites);
+                    downloadBlobAsFile(
+                        new Blob([zipBytes], {type: "application/zip"}),
+                        "special_cause_reciprocal_matrix_cells.zip"
+                    );
                     if (ignoreStaleRequest()) {
                         return;
                     }
-                    setStatus("Downloaded special_cause_reciprocal_matrix.png.");
+                    setStatus("Downloaded special_cause_reciprocal_matrix_cells.zip.");
                 } catch (err) {
                     console.error(err);
                     if (ignoreStaleRequest()) {
                         return;
                     }
-                    setStatus("Matrix export failed. Please retry.");
+                    setStatus("Matrix cell export failed. Please retry.");
                 } finally {
                     purgeAndRemoveHost(host);
                 }
             };
 
-            downloadMatrix();
-            return "Saving special_cause_reciprocal_matrix.png...";
+            downloadMatrixCells();
+            return "Saving special_cause_reciprocal_matrix_cells.zip...";
         }
         """
 
@@ -1804,6 +1868,7 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
             }
         )
 
+    source_values = json.loads(json.dumps(values, default=str))
     return {
         "kind": SPECIAL_CAUSE_MATRIX_EXPORT_KIND,
         "export_width": SPECIAL_CAUSE_MATRIX_EXPORT_SIZE_PX,
@@ -1814,6 +1879,7 @@ def _build_special_cause_matrix_export_spec(values: dict[str, Any]) -> dict[str,
         "sprites": sprites,
         "bragg_cell_fill_fraction": SPECIAL_CAUSE_MATRIX_BRAGG_CELL_FILL_FRACTION,
         "preserve_relative_l_scale": SPECIAL_CAUSE_MATRIX_PRESERVE_RELATIVE_L_SCALE,
+        "source_values": source_values,
         "debug_layout": False,
     }
 
@@ -2787,10 +2853,10 @@ def build_unified_app(
                                         className="simulation-toolbar-button",
                                     ),
                                     html.Button(
-                                        "Save 3x3 Matrix",
+                                        "Save 3x3 Cells",
                                         id="export-special-cause-matrix-button",
                                         n_clicks=0,
-                                        title="Download a 3x3 special-cause comparison using the reference L = 9 view",
+                                        title="Download cropped special-cause matrix cell images with metadata",
                                         className="simulation-toolbar-button",
                                         style=_special_cause_matrix_export_style(mode),
                                     ),

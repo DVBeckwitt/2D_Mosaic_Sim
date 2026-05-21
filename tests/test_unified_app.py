@@ -991,8 +991,8 @@ def test_unified_app_special_cause_matrix_export_button_is_mode_scoped():
     special_matrix_store = _find_component_by_id(special_app.layout, "special-cause-matrix-export-figure")
     style_callback = _callback_by_output(special_app, "export-special-cause-matrix-button.style")
 
-    assert special_button.children == "Save 3x3 Matrix"
-    assert special_button.title == "Download a 3x3 special-cause comparison using the reference L = 9 view"
+    assert special_button.children == "Save 3x3 Cells"
+    assert special_button.title == "Download cropped special-cause matrix cell images with metadata"
     assert isinstance(special_matrix_store, dcc.Store)
     assert special_matrix_store.storage_type == "memory"
     assert special_button.style == {}
@@ -1013,7 +1013,7 @@ def test_unified_app_special_cause_matrix_export_callback_uses_reference_matrix_
     def fake_build_special_cause_matrix_export_spec(values):
         captured["values"] = values
         return {
-            "kind": "special-cause-matrix-sprite-composite",
+            "kind": "special-cause-matrix-cell-bundle",
             "sprites": [{"L": 9, "theta_deg": 5.0, "figure": {"data": [], "layout": {}}}],
         }
 
@@ -1031,7 +1031,7 @@ def test_unified_app_special_cause_matrix_export_callback_uses_reference_matrix_
 
     assert captured["values"]["ewald_shell_sample_count"] == 3
     assert captured["values"]["center_bragg_only"] is True
-    assert figure_data["kind"] == "special-cause-matrix-sprite-composite"
+    assert figure_data["kind"] == "special-cause-matrix-cell-bundle"
     assert figure_data["sprites"] == [{"L": 9, "theta_deg": 5.0, "figure": {"data": [], "layout": {}}}]
     assert figure_data["export_request"] == 1
 
@@ -1049,12 +1049,13 @@ def test_special_cause_matrix_export_spec_uses_sprite_figures_without_layout_lab
         }
     )
 
-    assert spec["kind"] == "special-cause-matrix-sprite-composite"
+    assert spec["kind"] == "special-cause-matrix-cell-bundle"
     assert spec["theta_values"] == [5.0, 10.0, 15.0]
     assert spec["L_values"] == [3, 6, 9]
     assert len(spec["sprites"]) == 9
     assert spec["bragg_cell_fill_fraction"] >= 0.80
     assert spec["preserve_relative_l_scale"] is False
+    assert spec["source_values"]["center_bragg_only"] is center_bragg_only
     assert all("figure" in sprite for sprite in spec["sprites"])
     assert all("bragg_anchor_figure" in sprite for sprite in spec["sprites"])
     assert "data" not in spec
@@ -1122,12 +1123,18 @@ def test_png_export_callback_targets_rendered_plotly_figure_and_powder_exports()
     assert 'Downloaded reciprocal space, detector view, and centered integration.' in PNG_EXPORT_CLIENTSIDE_CALLBACK
 
 
-def test_special_cause_matrix_export_clientside_callback_composes_cropped_sprites():
+def test_special_cause_matrix_export_clientside_callback_saves_cropped_cell_bundle():
     assert "Plotly.newPlot" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "Plotly.toImage" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "cropSpriteToContent" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "composeSpecialCauseMatrixCanvas" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "downloadCanvasAsPng" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "buildSpecialCauseCellBundle" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "buildZipBytes" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "insertPngTextMetadata" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "special_cause_metadata" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "special_cause_reciprocal_matrix_cells.zip" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "special_cause_reciprocal_matrix_cells.json" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "cells/" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "metadata/" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "bragg_anchor_figure" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "Missing Bragg anchor figure." in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "braggFootprintBboxFromImage" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
@@ -1139,20 +1146,12 @@ def test_special_cause_matrix_export_clientside_callback_composes_cropped_sprite
     assert "relativeBbox" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "braggBbox" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "braggBboxInCrop" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "braggCellFillFraction" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "targetBraggExtentPx" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "braggCenterInCropX" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "braggCenterInCropY" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "ctx.clip()" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "window.__specialCauseMatrixDebug" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "placements" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "scaledBraggWidth" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "braggFillFraction" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "targetL9ExtentPx" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "targetExtent / spriteExtent" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "matrix_defaults" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "source_values" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "relative_extent" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "Plotly.downloadImage" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "special_cause_reciprocal_matrix" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "composeSpecialCauseMatrixCanvas" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "downloadCanvasAsPng" not in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "special-cause-matrix-export-host" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "cleanupExistingMatrixExports" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "document.querySelectorAll" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
@@ -1167,7 +1166,7 @@ def test_special_cause_matrix_export_clientside_callback_composes_cropped_sprite
     )
     assert "currentMatrixExportRequest" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
     assert "requestId !== currentMatrixExportRequest" in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
-    assert "Downloaded special_cause_reciprocal_matrix.png." in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
+    assert "Downloaded special_cause_reciprocal_matrix_cells.zip." in SPECIAL_CAUSE_MATRIX_EXPORT_CLIENTSIDE_CALLBACK
 
 
 def test_powder_qr_clientside_callback_updates_ring_and_cylinder_modes():

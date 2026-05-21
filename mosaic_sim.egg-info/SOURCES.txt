@@ -25,3 +25,5 @@ tests/test_mono.py
 tests/test_specular_reflection_sim.py
 tests/test_unified.py
 tests/test_unified_app.py
+special_cause_matrix_cells.py
+tests/test_special_cause_matrix_cells.py

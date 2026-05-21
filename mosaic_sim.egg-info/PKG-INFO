@@ -6,6 +6,7 @@ Requires-Python: >=3.11
 Requires-Dist: dash>=2.4
 Requires-Dist: numba>=0.59
 Requires-Dist: numpy>=1.26
+Requires-Dist: pillow>=9.2
 Requires-Dist: plotly>=6.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
